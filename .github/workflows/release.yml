@@ -113,12 +113,12 @@ jobs:
       - name: Build binaries (with cross)
         if: matrix.use_cross
         run: |
-          cross build --release --target ${{ matrix.target }} --workspace
+          cross build --release --target ${{ matrix.target }} --workspace --all-features
 
       - name: Build binaries (native)
         if: "!matrix.use_cross"
         run: |
-          cargo build --workspace --release --target ${{ matrix.target }}
+          cargo build --workspace --all-features --release --target ${{ matrix.target }}
 
       - name: Create release archive
         shell: bash
@@ -129,10 +129,10 @@ jobs:
           # Determine archive name
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             ARCHIVE_NAME="torc-${{ matrix.target }}.zip"
-            7z a ../../../release/$ARCHIVE_NAME torc.exe torc-server.exe torc-slurm-job-runner.exe torc-dash.exe torc-htpasswd.exe
+            7z a ../../../release/$ARCHIVE_NAME torc.exe torc-server.exe torc-slurm-job-runner.exe torc-dash.exe torc-htpasswd.exe torc-mcp-server.exe
           else
             ARCHIVE_NAME="torc-${{ matrix.target }}.tar.gz"
-            tar czf ../../../release/$ARCHIVE_NAME torc torc-server torc-slurm-job-runner torc-dash torc-htpasswd
+            tar czf ../../../release/$ARCHIVE_NAME torc torc-server torc-slurm-job-runner torc-dash torc-htpasswd torc-mcp-server
           fi
 
           cd ../../../release
@@ -144,6 +144,20 @@ jobs:
           name: torc-${{ matrix.target }}
           path: release/*
           retention-days: 7
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          SQLX_OFFLINE: "true"
 
   create-release:
     name: Create GitHub Release

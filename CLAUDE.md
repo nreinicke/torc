@@ -13,8 +13,8 @@ client-server architecture where:
   SQLite database for persistence
 - **Unified CLI**: Single `torc` binary providing all client functionality (workflow management, job
   execution, TUI, resource plotting)
-- **Standalone Binaries**: Optional specialized binaries (`torc`, `torc-server`,
-  `torc-slurm-job-runner`) for deployment scenarios
+- **Feature-Gated Binaries**: Optional specialized binaries (`torc-server`, `torc-dash`,
+  `torc-mcp-server`, `torc-slurm-job-runner`) built via feature flags
 - **Python Client**: CLI and library for workflow management (primarily for Python-based workflows)
 
 **Core Concepts:**
@@ -56,7 +56,8 @@ For detailed style guidelines, see `docs/src/style-guide.md`.
 
 ```
 torc/
-├── src/                 # Main torc library and unified CLI
+├── src/                 # Main torc library (single crate, feature-gated)
+│   ├── bin/             # Binary entry points (torc-server, torc-dash, etc.)
 │   ├── client/          # Client modules
 │   │   ├── commands/    # CLI command handlers
 │   │   ├── apis/        # Generated API client
@@ -66,6 +67,7 @@ torc/
 │   │   └── async_cli_command.rs # Non-blocking job execution
 │   ├── server/          # Server implementation modules
 │   │   └── api/         # Modular API implementations
+│   ├── mcp_server/      # MCP server modules (tools, server)
 │   ├── tui/             # Interactive terminal UI modules
 │   ├── run_jobs_cmd.rs  # Job runner command module
 │   ├── tui_runner.rs    # TUI runner command module
@@ -73,8 +75,10 @@ torc/
 │   ├── main.rs          # Unified CLI entry point
 │   ├── lib.rs           # Library root
 │   └── models.rs        # Shared data models
-├── torc-server/         # Standalone server binary
-├── torc-slurm-job-runner/ # Slurm job runner binary
+├── torc-server/         # Server database migrations
+│   └── migrations/      # SQLx migration files
+├── torc-dash/           # Dashboard static assets
+│   └── static/          # Web UI files
 ├── python_client/       # Python CLI client and library
 │   ├── src/torc/        # Python package
 │   └── pyproject.toml   # Python project configuration
@@ -103,11 +107,9 @@ torc/
 ### Server Operations
 
 ```bash
-cd server
-
 # Build and run server (requires DATABASE_URL in .env)
-cargo build -p torc-server
-cargo run -p torc-server --bin torc-server -- run --url localhost -p 8080
+cargo build --features server-bin --bin torc-server
+cargo run --features server-bin --bin torc-server -- run --host localhost -p 8080
 
 # Database migrations
 sqlx migrate run --source torc-server/migrations
@@ -147,14 +149,16 @@ cargo test  -- --test-threads 1
 cargo test test_get_ready_jobs -- --nocapture
 ```
 
-### Standalone Binaries (for deployment)
+### Feature-Gated Binaries
 
 ```bash
 # Build individual binaries
-cargo build --release -p torc
-cargo build --release -p torc-server
-
-# Use standalone binaries
+cargo build --release                          # torc CLI (default features)
+cargo build --release --features server-bin    # torc-server + torc-htpasswd
+cargo build --release --features dash          # torc-dash
+cargo build --release --features mcp-server    # torc-mcp-server
+cargo build --release --features slurm-runner  # torc-slurm-job-runner
+cargo build --release --all-features           # All binaries
 ```
 
 ## Architecture Overview
@@ -190,7 +194,7 @@ The Rust client provides a **unified CLI and library interface** with these key 
    running jobs without blocking the runner
 
 5. **Command Modules**: Binary-specific command modules (`src/run_jobs_cmd.rs`, `src/tui_runner.rs`,
-   `src/plot_resources_cmd.rs`) that are re-used by both the unified CLI and standalone binaries
+   `src/plot_resources_cmd.rs`) that are re-used by the unified CLI and feature-gated binaries
 
 6. **Interactive TUI** (`src/tui/`): Terminal-based UI for workflow monitoring and management
 
@@ -420,15 +424,14 @@ sqlite3 server/db/sqlite/dev.db
 
 ## Development Workflow
 
-1. **Start Server** (standalone binary): `cargo run --bin torc-server -- run`
+1. **Start Server**: `cargo run --features server-bin --bin torc-server -- run`
 2. **Build Unified CLI**: `cargo build --release --bin torc --features "client,tui,plot_resources"`
 3. **Quick Execution**: `torc run examples/sample_workflow.yaml` OR
    `torc submit examples/sample_workflow.yaml`
 4. **Or Explicit**: `torc workflows create examples/sample_workflow.yaml` →
    `torc workflows run <id>`
 
-**Note**: The server is always run as a standalone binary (`torc-server run`), not through the
-unified CLI.
+**Note**: The server is run as a separate binary (`torc-server run`), not through the unified CLI.
 
 ## CLI Commands Quick Reference
 

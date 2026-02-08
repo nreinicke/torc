@@ -37,11 +37,18 @@ Please post comments or new ideas for Torc in the
 
 ### Installation
 
-Download precompiled binaries from the [releases page](https://github.com/NREL/torc/releases) or
-build from source:
+Download precompiled binaries from the [releases page](https://github.com/NREL/torc/releases),
+install from crates.io, or build from source:
 
 ```bash
-cargo build --workspace --release
+# Install from crates.io (CLI only)
+cargo install torc
+
+# Install all binaries (CLI, server, dashboard, MCP server, Slurm runner)
+cargo install torc --features "server-bin,mcp-server,dash,slurm-runner"
+
+# Or build from source
+cargo build --all-features --release
 ```
 
 **macOS users**: The precompiled binaries are not signed with an Apple Developer certificate. macOS
@@ -59,7 +66,7 @@ The unified `torc` CLI provides all workflow management, execution, and monitori
 ### Basic Usage
 
 ```bash
-# 1. Start the Torc server (standalone binary)
+# 1. Start the Torc server
 torc-server run
 # Or with options:
 torc-server run --url localhost --port 8080 --threads 8 --database path/to/db.sqlite
@@ -120,7 +127,7 @@ Torc provides a unified CLI with the following commands:
 - **Workflow Management**: `torc workflows <subcommand>`
 - **Job Management**: `torc jobs <subcommand>`
 - **File Management**: `torc files <subcommand>`
-- **Local Execution**: `torc job-runner <workflow_id>`
+- **Local Execution**: `torc run <workflow_spec_or_id>`
 - **Interactive TUI**: `torc tui`
 - **Resource Visualization**: `torc plot-resources <db_path>`
 - **Reports**: `torc reports <subcommand>`
@@ -130,9 +137,9 @@ Torc provides a unified CLI with the following commands:
 - `--url <URL>` - Specify Torc server URL (or use `TORC_API_URL` env var)
 - `-f, --format <FORMAT>` - Output format: `table` or `json`
 
-Standalone binaries are also available for deployment scenarios:
+Additional binaries are available via feature flags (see installation docs):
 
-- `torc-server` - REST API server (**always run as standalone**, not in unified CLI)
+- `torc-server` - REST API server (run separately from the unified CLI)
 
 ## Why develop another workflow management tool?
 
@@ -165,7 +172,7 @@ Here are the features of Torc that we think differentiate it from other tools:
 - Debugging errors
 
   We run large numbers of simulations on untested input data. Many of them fail. Torc provides
-  automatic resource monitoring, log colletion, and detailed error reporting through raw text,
+  automatic resource monitoring, log collection, and detailed error reporting through raw text,
   tables, and formatted JSON. Torc makes it easy for users to rerun failed jobs after applying
   fixes.
 

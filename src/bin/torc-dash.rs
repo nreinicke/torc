@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Embedded static assets for the dashboard
 #[derive(Embed)]
-#[folder = "static/"]
+#[folder = "torc-dash/static/"]
 struct Assets;
 
 /// Managed server process state

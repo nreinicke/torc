@@ -22,7 +22,7 @@ use rmcp::{ServiceExt, transport::io::stdio};
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use torc_mcp_server::server::TorcMcpServer;
+use torc::mcp_server::server::TorcMcpServer;
 
 /// MCP server for Torc workflow orchestration.
 ///

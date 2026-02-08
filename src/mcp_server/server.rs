@@ -8,9 +8,9 @@ use rmcp::{
 use serde::Deserialize;
 use std::path::PathBuf;
 
-use torc::client::apis::configuration::Configuration;
+use crate::client::apis::configuration::Configuration;
 
-use crate::tools;
+use super::tools;
 
 /// MCP server that exposes Torc workflow operations as tools.
 #[derive(Debug, Clone)]

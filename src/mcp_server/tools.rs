@@ -5,12 +5,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use torc::client::apis::configuration::Configuration;
-use torc::client::apis::default_api;
-use torc::client::commands::pagination::jobs::{JobListParams, paginate_jobs};
-use torc::client::commands::pagination::results::{ResultListParams, paginate_results};
-use torc::client::log_paths;
-use torc::models::{JobStatus, ResourceRequirementsModel};
+use crate::client::apis::configuration::Configuration;
+use crate::client::apis::default_api;
+use crate::client::commands::pagination::jobs::{JobListParams, paginate_jobs};
+use crate::client::commands::pagination::results::{ResultListParams, paginate_results};
+use crate::client::log_paths;
+use crate::models::{JobStatus, ResourceRequirementsModel};
 
 /// Helper to create an internal error
 fn internal_error(msg: String) -> McpError {
@@ -392,8 +392,8 @@ pub fn create_workflow(
     hpc_profile: Option<&str>,
     output_path: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
+    use crate::client::workflow_spec::WorkflowSpec;
     use std::io::Write;
-    use torc::client::workflow_spec::WorkflowSpec;
 
     // Validate action
     if action != "create_workflow" && action != "save_spec_file" && action != "validate" {
@@ -550,10 +550,11 @@ pub fn create_workflow(
     match (action, workflow_type) {
         ("create_workflow", "local") => {
             // Create local workflow using the library function
-            let workflow_id = torc::client::workflow_spec::WorkflowSpec::create_workflow_from_spec(
-                config, temp_path, user, false, false,
-            )
-            .map_err(|e| internal_error(format!("Failed to create workflow: {}", e)))?;
+            let workflow_id =
+                crate::client::workflow_spec::WorkflowSpec::create_workflow_from_spec(
+                    config, temp_path, user, false, false,
+                )
+                .map_err(|e| internal_error(format!("Failed to create workflow: {}", e)))?;
 
             let result = serde_json::json!({
                 "success": true,
@@ -675,15 +676,15 @@ pub fn get_execution_plan(
     config: &Configuration,
     spec_or_id: &str,
 ) -> Result<CallToolResult, McpError> {
-    use std::io::Write;
-    use torc::client::commands::pagination::resource_requirements::{
+    use crate::client::commands::pagination::resource_requirements::{
         ResourceRequirementsListParams, paginate_resource_requirements,
     };
-    use torc::client::commands::pagination::slurm_schedulers::{
+    use crate::client::commands::pagination::slurm_schedulers::{
         SlurmSchedulersListParams, paginate_slurm_schedulers,
     };
-    use torc::client::execution_plan::ExecutionPlan;
-    use torc::client::workflow_spec::WorkflowSpec;
+    use crate::client::execution_plan::ExecutionPlan;
+    use crate::client::workflow_spec::WorkflowSpec;
+    use std::io::Write;
 
     // Try to parse as workflow ID first
     if let Ok(workflow_id) = spec_or_id.parse::<i64>() {
@@ -841,7 +842,7 @@ pub fn analyze_workflow_logs(
     output_dir: &Path,
     workflow_id: i64,
 ) -> Result<CallToolResult, McpError> {
-    use torc::client::commands::logs::analyze_workflow_logs as analyze_logs;
+    use crate::client::commands::logs::analyze_workflow_logs as analyze_logs;
 
     let result = analyze_logs(output_dir, workflow_id)
         .map_err(|e| internal_error(format!("Failed to analyze logs: {}", e)))?;
@@ -872,7 +873,7 @@ pub fn analyze_workflow_logs(
     let sample_errors: Vec<serde_json::Value> = result
         .errors
         .iter()
-        .filter(|e| e.severity == torc::client::commands::logs::ErrorSeverity::Error)
+        .filter(|e| e.severity == crate::client::commands::logs::ErrorSeverity::Error)
         .take(10)
         .map(|e| {
             serde_json::json!({

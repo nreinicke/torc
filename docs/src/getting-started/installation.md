@@ -53,9 +53,9 @@ listed below.
 
 ```
 /scratch/dthom/torc/
-├── 0.10.0/
+├── 0.12.3/
 ├── ...
-└── latest -> 0.10.0  (symlink to current version)
+└── latest -> 0.12.3  (symlink to current version)
 ```
 
 > **Recommended**: Use the `latest` directory. Torc maintains backwards compatibility, so you'll
@@ -84,11 +84,21 @@ export TORC_API_URL="http://torc.hpc.nrel.gov:8080/torc-service/v1"
 **Note:** Be mindful of how much data you store in this database. Delete workflows that you don't
 need any longer. Refer to `torc workflows export --help` for making backups of your workflows.
 
+## Install from crates.io (requires cargo to build)
+
+```bash
+# Install the torc CLI (default)
+cargo install torc
+
+# Install all binaries (server, dashboard, MCP server, Slurm runner)
+cargo install torc --features "server-bin,mcp-server,dash,slurm-runner"
+```
+
 ## Building from Source
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.85 or later (required for the 2024 edition)
 - SQLite 3.35 or later (usually included with Rust via sqlx)
 
 ### Clone the Repository
@@ -114,27 +124,30 @@ sqlx database setup --source torc-server/migrations
 **Build everything (server, client, dashboard, job runners):**
 
 ```bash
-# Development build
-cargo build --workspace
+# Development build (all features)
+cargo build --all-features
 
 # Release build (optimized, recommended)
-cargo build --workspace --release
+cargo build --all-features --release
 ```
 
-**Build individual components:**
+**Build individual components using feature flags:**
 
 ```bash
-# Server
-cargo build --release -p torc-server
+# Client CLI (default features)
+cargo build --release
 
-# Client CLI
-cargo build --release -p torc
+# Server + htpasswd utility
+cargo build --release --features server-bin
 
 # Web Dashboard
-cargo build --release -p torc-dash
+cargo build --release --features dash
+
+# MCP Server
+cargo build --release --features mcp-server
 
 # Slurm job runner
-cargo build --release -p torc-slurm-job-runner
+cargo build --release --features slurm-runner
 ```
 
 Binaries will be in `target/release/`.
@@ -204,7 +217,7 @@ RUST_LOG=debug cargo test -- --nocapture
 
 ```bash
 # Development mode
-cargo run -p torc-server -- run
+cargo run --features server-bin --bin torc-server -- run
 
 # Production mode (release build)
 ./target/release/torc-server run
