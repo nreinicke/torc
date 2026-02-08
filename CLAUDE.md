@@ -437,13 +437,10 @@ unified CLI.
 - `torc run <spec_file|id>` - Create from spec and run locally, or run existing workflow
 - `torc submit <spec_file|id>` - Submit workflow to scheduler (requires pre-configured scheduler
   actions)
-- `torc submit-slurm --account <account> <spec_file>` - Auto-generate Slurm schedulers and submit
 
 **Workflow Management**:
 
 - `torc workflows create <file>` - Create workflow from specification
-- `torc workflows create-slurm --account <account> <file>` - Create workflow with auto-generated
-  Slurm schedulers
 - `torc workflows new` - Create empty workflow interactively
 - `torc workflows list` - List all workflows
 - `torc workflows submit <id>` - Submit workflow to scheduler (requires
@@ -451,16 +448,6 @@ unified CLI.
 - `torc workflows run <id>` - Run workflow locally
 - `torc workflows initialize <id>` - Initialize workflow (set up dependencies without execution)
 - `torc workflows status <id>` - Check workflow status
-- `torc workflows cancel <id>` - Cancel workflow
-
-**Slurm/HPC Commands**:
-
-- `torc slurm generate --account <account> <spec_file>` - Generate Slurm schedulers for a workflow
-- `torc hpc list` - List available HPC profiles
-- `torc hpc detect` - Detect current HPC system
-- `torc hpc show <profile>` - Show profile details
-- `torc hpc partitions <profile>` - List partitions for a profile
-- `torc hpc match <profile> --cpus N --memory SIZE` - Find matching partitions
 
 **Job Management**:
 
@@ -468,18 +455,18 @@ unified CLI.
 - `torc jobs get <job_id>` - Get job details
 - `torc jobs update <job_id>` - Update job status
 
+**Reports**:
+
+- `torc reports summary <workflow_id>` - Workflow execution summary and job statistics
+- `torc reports results <workflow_id>` - Job execution results with resource metrics
+- `torc reports check-resource-utilization <workflow_id>` - Check for resource violations
+
 **Execution**:
 
 - `torc run <workflow_spec_or_id>` - Run workflow locally (top-level command)
 - `torc submit <workflow_spec_or_id>` - Submit workflow to scheduler (top-level command)
 - `torc submit-slurm --account <account> <spec_file>` - Submit with auto-generated Slurm schedulers
 - `torc tui` - Interactive terminal UI
-
-**Reports & Analysis**:
-
-- `torc reports check-resource-utilization <id>` - Check which jobs exceeded resource limits
-- `torc reports results <id>` - Get detailed job execution results
-- `torc reports summary <id>` - Get workflow completion summary
 
 **Global Options** (available on all commands):
 
