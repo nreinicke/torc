@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO job_depends_on (job_id, depends_on_job_id, workflow_id)\n            VALUES ($1, $2, $3)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2637acda6720b01aaebee710ae22e575d8b7976bbbe11adccc2c1abe87312bbe"
+}

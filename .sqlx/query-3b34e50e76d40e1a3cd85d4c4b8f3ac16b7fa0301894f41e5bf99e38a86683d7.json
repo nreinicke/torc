@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT input_hash\n            FROM job_internal\n            WHERE job_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "input_hash",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3b34e50e76d40e1a3cd85d4c4b8f3ac16b7fa0301894f41e5bf99e38a86683d7"
+}

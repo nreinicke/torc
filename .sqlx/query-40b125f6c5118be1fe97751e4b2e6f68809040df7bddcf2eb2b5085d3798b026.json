@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT depends_on_job_id FROM job_depends_on WHERE job_id = $1 ORDER BY depends_on_job_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "depends_on_job_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "40b125f6c5118be1fe97751e4b2e6f68809040df7bddcf2eb2b5085d3798b026"
+}

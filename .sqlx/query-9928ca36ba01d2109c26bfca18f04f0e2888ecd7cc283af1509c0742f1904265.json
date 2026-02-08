@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM slurm_scheduler WHERE workflow_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9928ca36ba01d2109c26bfca18f04f0e2888ecd7cc283af1509c0742f1904265"
+}

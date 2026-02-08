@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT id, status\n            FROM job\n            WHERE workflow_id = $1\n              AND status IN ($2, $3, $4, $5)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6c0bd7d4c2168dab36673f6cbdc6bfd5e77caede5053e0512b269b6c207f69f3"
+}

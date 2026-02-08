@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT user_data_id FROM job_output_user_data WHERE job_id = $1 ORDER BY user_data_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_data_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "666b41e33a825a4df945faa5290d6124e6aac85a641ee4f20a45dc6f539de765"
+}

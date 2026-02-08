@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT workflow_id FROM job WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "workflow_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1debdd994c87403b558e358bf85074aae6f80556909529505ab06f959cf6dbd"
+}

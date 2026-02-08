@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_id FROM job_output_file WHERE job_id = $1 ORDER BY file_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c57401d8e9c101ca01ba416c4ea748ef5548ce148861168af2a41cc57e413d33"
+}

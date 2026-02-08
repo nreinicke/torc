@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT DISTINCT joud.user_data_id\n            FROM job_output_user_data joud\n            INNER JOIN job j ON joud.job_id = j.id\n            INNER JOIN user_data ud ON joud.user_data_id = ud.id\n            WHERE j.workflow_id = $1\n            AND j.status = $2\n            AND ud.data IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_data_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d3c021d26d003c0f19dcc6cc91062d036ef66b550a63480295d9c01248723a78"
+}
