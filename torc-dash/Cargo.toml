@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
+repository.workspace = true
 description = "Torc workflow dashboard - web UI with CLI integration"
 
 [[bin]]
@@ -12,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Torc library for config, client APIs, and network utilities
-torc = { path = "..", features = ["config", "client"] }
+torc = { workspace = true, features = ["config", "client"] }
 
 # Web server
 axum.workspace = true

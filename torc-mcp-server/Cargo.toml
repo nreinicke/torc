@@ -4,14 +4,15 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
-description = "MCP server for Torc workflow orchestration"
+repository.workspace = true
+description = "MCP server for Torc workflow management"
 
 [[bin]]
 name = "torc-mcp-server"
 path = "src/main.rs"
 
 [dependencies]
-torc = { path = "..", features = ["client"] }
+torc = { workspace = true, features = ["client"] }
 clap.workspace = true
 rmcp.workspace = true
 schemars.workspace = true

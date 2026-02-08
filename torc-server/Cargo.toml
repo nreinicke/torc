@@ -4,7 +4,8 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
-description = "Torc workflow orchestration server"
+repository.workspace = true
+description = "Torc workflow management server"
 
 [[bin]]
 name = "torc-server"
@@ -15,7 +16,7 @@ name = "torc-htpasswd"
 path = "src/bin/torc-htpasswd.rs"
 
 [dependencies]
-torc = { path = "..", features = ["server", "config"] }
+torc = { workspace = true, features = ["server", "config"] }
 tokio.workspace = true
 env_logger.workspace = true
 dotenvy.workspace = true
