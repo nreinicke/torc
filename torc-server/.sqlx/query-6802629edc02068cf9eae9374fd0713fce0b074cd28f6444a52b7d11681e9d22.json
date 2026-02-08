@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM local_scheduler WHERE workflow_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6802629edc02068cf9eae9374fd0713fce0b074cd28f6444a52b7d11681e9d22"
+}

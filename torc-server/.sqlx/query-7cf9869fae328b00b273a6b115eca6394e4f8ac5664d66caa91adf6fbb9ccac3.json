@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT DISTINCT jof.file_id\n            FROM job_output_file jof\n            INNER JOIN job j ON jof.job_id = j.id\n            WHERE j.workflow_id = $1\n            AND j.status = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7cf9869fae328b00b273a6b115eca6394e4f8ac5664d66caa91adf6fbb9ccac3"
+}

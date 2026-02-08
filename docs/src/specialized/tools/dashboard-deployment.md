@@ -31,7 +31,7 @@ Before starting, ensure you have:
 
 3. **Initialized the database** (if not using standalone mode):
    ```bash
-   sqlx database setup
+   sqlx database setup --source torc-server/migrations
    ```
 
 ---

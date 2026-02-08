@@ -117,6 +117,8 @@ fn start_process(db_url: &str, db_file: NamedTempFile) -> ServerProcess {
         .arg("--no-dotenv")
         .arg("database")
         .arg("setup")
+        .arg("--source")
+        .arg("torc-server/migrations")
         .env("DATABASE_URL", db_url)
         .status()
         .expect("failed to execute sqlx");
@@ -1454,6 +1456,8 @@ fn start_process_with_access_control(
         .arg("--no-dotenv")
         .arg("database")
         .arg("setup")
+        .arg("--source")
+        .arg("torc-server/migrations")
         .env("DATABASE_URL", db_url)
         .status()
         .expect("failed to execute sqlx");

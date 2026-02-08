@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM remote_worker WHERE workflow_id = $1 AND worker = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a7a4c95d804640e42b29ffe22b327f11f39795ea3aa1eb6bf37834c5ef9564b0"
+}

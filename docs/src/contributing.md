@@ -32,7 +32,7 @@ cargo install sqlx-cli --no-default-features --features sqlite
 echo "DATABASE_URL=sqlite:torc.db" > .env
 
 # Run migrations
-sqlx migrate run
+sqlx migrate run --source torc-server/migrations
 ```
 
 5. **Build and test:**
@@ -77,15 +77,15 @@ If you need to modify the database schema:
 
 ```bash
 # Create new migration
-sqlx migrate add <migration_name>
+sqlx migrate add --source torc-server/migrations <migration_name>
 
-# Edit the generated SQL file in migrations/
+# Edit the generated SQL file in torc-server/migrations/
 
 # Run migration
-sqlx migrate run
+sqlx migrate run --source torc-server/migrations
 
 # To revert
-sqlx migrate revert
+sqlx migrate revert --source torc-server/migrations
 ```
 
 ## Submitting Changes

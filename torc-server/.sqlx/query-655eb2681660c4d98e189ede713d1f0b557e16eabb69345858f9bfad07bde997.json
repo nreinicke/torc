@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    SELECT id, data as \"data: Option<String>\"\n                    FROM user_data\n                    WHERE id = $1\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "data: Option<String>",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "655eb2681660c4d98e189ede713d1f0b557e16eabb69345858f9bfad07bde997"
+}

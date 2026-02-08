@@ -108,7 +108,7 @@ set the environment variable `DATABASE_URL`.
 ```bash
 # Install sqlx-cli if needed
 cargo install sqlx-cli --no-default-features --features sqlite
-sqlx database setup
+sqlx database setup --source torc-server/migrations
 ```
 
 **Build everything (server, client, dashboard, job runners):**

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO job_output_user_data (job_id, user_data_id)\n                VALUES ($1, $2)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "45d8582e9d88c9c2b0a268da06a607e9cb7ab6733ce81bc32c858d17f0f9977a"
+}

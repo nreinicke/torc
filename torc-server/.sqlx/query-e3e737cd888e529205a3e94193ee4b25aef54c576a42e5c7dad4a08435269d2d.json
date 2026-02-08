@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE job\n            SET status = $1\n            WHERE workflow_id = $2 AND (status = $3 OR status = $4)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "e3e737cd888e529205a3e94193ee4b25aef54c576a42e5c7dad4a08435269d2d"
+}

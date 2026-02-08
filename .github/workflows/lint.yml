@@ -54,7 +54,7 @@ jobs:
           cargo install sqlx-cli --no-default-features --features sqlite
           mkdir -p db/sqlite
           DATABASE_URL=sqlite:db/sqlite/dev.db sqlx database create
-          DATABASE_URL=sqlite:db/sqlite/dev.db sqlx migrate run
+          DATABASE_URL=sqlite:db/sqlite/dev.db sqlx migrate run --source torc-server/migrations
 
       - name: Run Clippy
         run: cargo clippy --all --all-targets --all-features -- -D warnings

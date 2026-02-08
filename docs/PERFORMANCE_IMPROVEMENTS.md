@@ -214,7 +214,7 @@ The migration has been tested and applied successfully. To verify in your enviro
 
 ```bash
 # Check migration status
-sqlx migrate info
+sqlx migrate info --source torc-server/migrations
 
 # Should show: 20251105030141/installed add database indexes
 ```
@@ -224,7 +224,7 @@ sqlx migrate info
 If needed, the indexes can be removed:
 
 ```bash
-sqlx migrate revert
+sqlx migrate revert --source torc-server/migrations
 ```
 
 This will drop all 17 indexes without affecting data.

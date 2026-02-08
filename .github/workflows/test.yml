@@ -80,7 +80,7 @@ jobs:
 
       - name: Setup database
         run: |
-          sqlx database setup
+          sqlx database setup --source torc-server/migrations
         env:
           DATABASE_URL: sqlite:db/sqlite/dev.db
 

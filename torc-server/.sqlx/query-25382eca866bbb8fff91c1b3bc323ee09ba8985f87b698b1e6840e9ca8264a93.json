@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM job_depends_on WHERE job_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "25382eca866bbb8fff91c1b3bc323ee09ba8985f87b698b1e6840e9ca8264a93"
+}

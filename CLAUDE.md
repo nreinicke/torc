@@ -110,8 +110,8 @@ cargo build -p torc-server
 cargo run -p torc-server --bin torc-server -- run --url localhost -p 8080
 
 # Database migrations
-sqlx migrate run
-sqlx migrate revert
+sqlx migrate run --source torc-server/migrations
+sqlx migrate revert --source torc-server/migrations
 ```
 
 ### Unified CLI Operations
