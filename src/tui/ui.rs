@@ -198,7 +198,9 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("d", Style::default().fg(Color::Yellow)),
             Span::raw(": delete | "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
-            Span::raw(": refresh"),
+            Span::raw(": refresh | "),
+            Span::styled("a", Style::default().fg(Color::Yellow)),
+            Span::raw(": all users"),
         ])]
     };
 
@@ -301,11 +303,19 @@ fn draw_server_url(f: &mut Frame, area: Rect, app: &App) {
 
     // Add user display
     let user_display = app.get_current_user_display();
+    let user_color = if app.show_all_users {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
     spans.extend(vec![
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-        Span::styled("◎ ", Style::default().fg(Color::Cyan)),
+        Span::styled("◎ ", Style::default().fg(user_color)),
         Span::styled("User: ", Style::default().fg(Color::White)),
-        Span::styled(user_display, Style::default().fg(Color::Cyan)),
+        Span::styled(user_display, Style::default().fg(user_color)),
+        Span::styled(" ", Style::default()),
+        Span::styled("a", Style::default().fg(Color::Yellow)),
+        Span::styled(": toggle", Style::default().fg(Color::DarkGray)),
     ]);
 
     let text = vec![Line::from(spans)];
