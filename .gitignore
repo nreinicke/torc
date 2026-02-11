@@ -2,7 +2,6 @@
 /target/
 /torc-server/target/
 /torc/target/
-Cargo.lock
 
 # Database files
 /db/*
