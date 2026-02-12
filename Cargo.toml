@@ -5,7 +5,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.13.1"
+version = "0.14.0"
 authors = ["Daniel Thom", "Joseph McKinsey"]
 license = "BSD-3-Clause"
 edition = "2024"
@@ -14,7 +14,7 @@ description = "Workflow management system"
 
 [workspace.dependencies]
 # Self-reference for sub-crates (version only specified here)
-torc = { version = "0.13.1", path = "." }
+torc = { version = "0.14.0", path = "." }
 
 # Shared dependencies
 serde = { version = "1.0", features = ["derive"] }
@@ -125,11 +125,6 @@ description.workspace = true
 name = "torc"
 path = "src/main.rs"
 required-features = ["client", "tui", "plot_resources"]
-
-[[bin]]
-name = "generate-cli-docs"
-path = "src/bin/generate-cli-docs.rs"
-required-features = ["client", "tui", "plot_resources", "cli-docs"]
 
 [[bin]]
 name = "torc-server"
@@ -264,6 +259,7 @@ dash = [
 slurm-runner = [
     "client",
 ]
+dist = ["client", "tui", "plot_resources", "server-bin", "mcp-server", "dash", "slurm-runner"]
 cli-docs = ["dep:clap-markdown"]
 conversion = ["frunk", "frunk_derives", "frunk_core", "frunk-enum-core", "frunk-enum-derive"]
 

@@ -213,6 +213,8 @@ impl HpcInterface for SlurmInterface {
         filename: &Path,
         config: &HashMap<String, String>,
         start_one_worker_per_node: bool,
+        tls_ca_cert: Option<&str>,
+        tls_insecure: bool,
     ) -> Result<()> {
         let mut script = format!(
             "#!/bin/bash\n\
@@ -250,7 +252,9 @@ impl HpcInterface for SlurmInterface {
         }
 
         script.push('\n');
-        script.push_str(&format!("TORC_URL=\"{}\"\n\n", server_url));
+        script.push_str(&format!("TORC_URL=\"{}\"\n", server_url));
+
+        script.push('\n');
 
         // Build the torc-slurm-job-runner command
         let mut command = format!(
@@ -260,6 +264,16 @@ impl HpcInterface for SlurmInterface {
 
         if let Some(max_jobs) = max_parallel_jobs {
             command.push_str(&format!(" --max-parallel-jobs {}", max_jobs));
+        }
+
+        // Propagate TLS settings as CLI flags.
+        // Values are single-quoted to prevent shell interpretation of special characters.
+        if let Some(ca_cert) = tls_ca_cert {
+            let escaped = ca_cert.replace('\'', "'\\''");
+            command.push_str(&format!(" --tls-ca-cert '{}'", escaped));
+        }
+        if tls_insecure {
+            command.push_str(" --tls-insecure");
         }
 
         // Add the command with optional srun prefix
