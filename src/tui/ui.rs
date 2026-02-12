@@ -274,10 +274,12 @@ fn draw_server_url(f: &mut Frame, area: Rect, app: &App) {
             version_check::VersionMismatchSeverity::Patch => Color::Yellow,
             version_check::VersionMismatchSeverity::None => Color::Green,
         };
-        spans.push(Span::styled(
-            format!(" (server v{})", server_version),
-            Style::default().fg(version_color),
-        ));
+        let display = if let Some(ref api_ver) = version_result.server_api_version {
+            format!(" (server {} API {})", server_version, api_ver)
+        } else {
+            format!(" (server {})", server_version)
+        };
+        spans.push(Span::styled(display, Style::default().fg(version_color)));
     }
 
     spans.extend(vec![
