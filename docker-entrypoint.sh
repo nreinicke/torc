@@ -1,0 +1,56 @@
+#!/bin/sh
+set -e
+
+# If the first argument is not "torc-server", exec the command directly.
+# This allows: docker run image torc workflows list
+#              docker run image sh
+if [ "$1" != "torc-server" ]; then
+  exec "$@"
+fi
+
+# Build the torc-server command from environment variables.
+# Shift past "torc-server" and "run" to collect any extra user-provided args.
+shift
+if [ "$1" = "run" ]; then
+  shift
+fi
+
+# Auth file is required since --require-auth is always enabled
+if [ -z "$TORC_AUTH_FILE" ]; then
+  echo "ERROR: TORC_AUTH_FILE environment variable is required." >&2
+  echo "Set it to the path of an htpasswd file mounted into the container." >&2
+  echo "Example: -e TORC_AUTH_FILE=/data/htpasswd -v ./htpasswd:/data/htpasswd:ro" >&2
+  exit 1
+fi
+
+# At least one admin user is required for managing access groups
+if [ -z "$TORC_ADMIN_USER" ]; then
+  echo "ERROR: TORC_ADMIN_USER environment variable is required." >&2
+  echo "Set it to a comma-separated list of admin usernames." >&2
+  echo "Example: -e TORC_ADMIN_USER=admin or -e TORC_ADMIN_USER=alice,bob" >&2
+  exit 1
+fi
+
+set -- torc-server run \
+  --host 0.0.0.0 \
+  --port "${TORC_PORT:-8080}" \
+  --database "${TORC_DATABASE:-/data/torc.db}" \
+  --log-dir "${TORC_LOG_DIR:-/data}" \
+  --log-level "${TORC_LOG_LEVEL:-info}" \
+  --completion-check-interval-secs "${TORC_COMPLETION_INTERVAL:-30}" \
+  --require-auth \
+  --enforce-access-control \
+  --auth-file ${TORC_AUTH_FILE} \
+  "$@"
+
+# Append --admin-user flags for each comma-separated user in TORC_ADMIN_USER
+if [ -n "$TORC_ADMIN_USER" ]; then
+  OLD_IFS="$IFS"
+  IFS=','
+  for user in $TORC_ADMIN_USER; do
+    set -- "$@" --admin-user "$user"
+  done
+  IFS="$OLD_IFS"
+fi
+
+exec "$@"
