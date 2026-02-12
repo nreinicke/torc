@@ -56,5 +56,5 @@ pub use report_models::{
 
 // Version checking utilities
 pub use version_check::{
-    VersionCheckResult, VersionMismatchSeverity, check_and_warn, check_version,
+    ServerInfo, VersionCheckResult, VersionMismatchSeverity, check_and_warn, check_version,
 };

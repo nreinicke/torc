@@ -2301,7 +2301,9 @@ async fn server_status_handler(State(state): State<Arc<AppState>>) -> impl IntoR
 #[derive(Serialize)]
 struct VersionResponse {
     version: String,
+    api_version: String,
     server_version: Option<String>,
+    server_api_version: Option<String>,
     version_mismatch: Option<String>,
     mismatch_severity: Option<String>,
 }
@@ -2324,7 +2326,7 @@ async fn version_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
     .await
     .ok();
 
-    let (server_version, version_mismatch, mismatch_severity) = match result {
+    let (server_version, server_api_version, version_mismatch, mismatch_severity) = match result {
         Some(result) => match &result.server_version {
             Some(server_ver) => {
                 let severity_str = match result.severity {
@@ -2338,11 +2340,16 @@ async fn version_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 } else {
                     None
                 };
-                (Some(server_ver.clone()), mismatch_msg, severity_str)
+                (
+                    Some(server_ver.clone()),
+                    result.server_api_version.clone(),
+                    mismatch_msg,
+                    severity_str,
+                )
             }
-            None => (None, None, None),
+            None => (None, None, None, None),
         },
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
 
     // Extract just the semver from server version (strip git hash suffix for display)
@@ -2352,7 +2359,9 @@ async fn version_handler(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
     Json(VersionResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        api_version: version_check::CLIENT_API_VERSION.to_string(),
         server_version: server_version_display,
+        server_api_version,
         version_mismatch,
         mismatch_severity,
     })

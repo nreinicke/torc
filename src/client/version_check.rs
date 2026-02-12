@@ -1,13 +1,26 @@
-//! Version checking utilities for comparing client and server versions.
+//! Version checking utilities for comparing client and server API versions.
 //!
-//! This module provides functions to check version compatibility between
+//! This module provides functions to check API version compatibility between
 //! client applications and the torc-server, with appropriate warning levels.
+//!
+//! The HTTP API has its own semver version (e.g., "0.8.0") that is independent
+//! of the crate/binary version. This allows the client to change frequently
+//! without implying server incompatibility. The API version only bumps when the
+//! HTTP contract changes.
 
 use crate::client::apis::configuration::Configuration;
 use crate::client::apis::default_api;
 
 /// The current version of this binary, set at compile time.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The API version that this client expects from the server.
+///
+/// Bump this only when the HTTP API contract changes:
+/// - Patch: bug fix in an existing endpoint (response field fix, etc.)
+/// - Minor: new endpoint, new optional field, new query parameter
+/// - Major: removed endpoint, renamed field, changed semantics
+pub const CLIENT_API_VERSION: &str = "0.8.0";
 
 /// The git commit hash of this binary, set at compile time via build.rs.
 pub const GIT_HASH: &str = env!("GIT_HASH");
@@ -25,16 +38,16 @@ pub fn version_with_hash() -> String {
     format!("{}-{}{}", CLIENT_VERSION, GIT_HASH, GIT_DIRTY)
 }
 
-/// Severity level for version mismatches.
+/// Severity level for API version mismatches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionMismatchSeverity {
-    /// Versions match exactly - no warning needed.
+    /// API versions match exactly - no warning needed.
     None,
     /// Only patch version differs - minor warning.
     Patch,
-    /// Minor version of client is higher than server - strong warning.
+    /// Client API minor version is higher than server - some features may not work.
     Minor,
-    /// Major version differs - error condition.
+    /// API major version differs - incompatible.
     Major,
 }
 
@@ -50,14 +63,27 @@ impl VersionMismatchSeverity {
     }
 }
 
-/// Result of a version check operation.
+/// Information retrieved from the server's /version endpoint.
+#[derive(Debug, Clone)]
+pub struct ServerInfo {
+    /// The server's binary version (e.g., "0.14.0 (abc1234)").
+    pub version: String,
+    /// The server's API version (e.g., "0.8.0").
+    pub api_version: Option<String>,
+}
+
+/// Result of an API version check operation.
 #[derive(Debug, Clone)]
 pub struct VersionCheckResult {
-    /// The client (local) version.
+    /// The client binary version.
     pub client_version: String,
-    /// The server version (if successfully retrieved).
+    /// The server binary version (if successfully retrieved).
     pub server_version: Option<String>,
-    /// The severity of any version mismatch.
+    /// The client API version.
+    pub client_api_version: String,
+    /// The server API version (if successfully retrieved).
+    pub server_api_version: Option<String>,
+    /// The severity of any API version mismatch.
     pub severity: VersionMismatchSeverity,
     /// A human-readable message describing the result.
     pub message: String,
@@ -69,19 +95,41 @@ impl VersionCheckResult {
         Self {
             client_version: CLIENT_VERSION.to_string(),
             server_version: None,
+            client_api_version: CLIENT_API_VERSION.to_string(),
+            server_api_version: None,
             severity: VersionMismatchSeverity::None,
             message: "Could not check server version".to_string(),
         }
     }
 
     /// Creates a new result for a successful version check.
-    pub fn new(client_version: &str, server_version: &str) -> Self {
-        let severity = compare_versions(client_version, server_version);
-        let message = format_version_message(client_version, server_version, severity);
+    pub fn from_server_info(server_info: &ServerInfo) -> Self {
+        let (severity, message) = match &server_info.api_version {
+            Some(server_api) => {
+                let severity = compare_versions(CLIENT_API_VERSION, server_api);
+                let message = format_api_version_message(
+                    CLIENT_API_VERSION,
+                    server_api,
+                    &server_info.version,
+                    severity,
+                );
+                (severity, message)
+            }
+            None => {
+                // Old server that doesn't report api_version — fall back to
+                // comparing binary versions (pre-API-versioning behavior).
+                let severity = compare_versions(CLIENT_VERSION, &server_info.version);
+                let message =
+                    format_legacy_version_message(CLIENT_VERSION, &server_info.version, severity);
+                (severity, message)
+            }
+        };
 
         Self {
-            client_version: client_version.to_string(),
-            server_version: Some(server_version.to_string()),
+            client_version: CLIENT_VERSION.to_string(),
+            server_version: Some(server_info.version.clone()),
+            client_api_version: CLIENT_API_VERSION.to_string(),
+            server_api_version: server_info.api_version.clone(),
             severity,
             message,
         }
@@ -154,8 +202,47 @@ pub fn compare_versions(client_version: &str, server_version: &str) -> VersionMi
     VersionMismatchSeverity::None
 }
 
-/// Formats a human-readable message for the version check result.
-fn format_version_message(
+/// Formats a human-readable message for an API version mismatch.
+fn format_api_version_message(
+    client_api: &str,
+    server_api: &str,
+    server_version: &str,
+    severity: VersionMismatchSeverity,
+) -> String {
+    match severity {
+        VersionMismatchSeverity::None => {
+            format!(
+                "API version {} matches server (server {})",
+                client_api, server_version
+            )
+        }
+        VersionMismatchSeverity::Patch => {
+            format!(
+                "API version mismatch: client API {} vs server API {} \
+                 (server {}) - patch difference, should be compatible",
+                client_api, server_api, server_version
+            )
+        }
+        VersionMismatchSeverity::Minor => {
+            format!(
+                "API version mismatch: client API {} is newer than server API {} \
+                 (server {}) - some client features may not be supported by this server",
+                client_api, server_api, server_version
+            )
+        }
+        VersionMismatchSeverity::Major => {
+            format!(
+                "API version incompatible: client API {} vs server API {} \
+                 (server {}) - major version mismatch, client and server are not compatible",
+                client_api, server_api, server_version
+            )
+        }
+    }
+}
+
+/// Formats a human-readable message when the server doesn't report an API version
+/// (pre-API-versioning server). Falls back to comparing binary versions.
+fn format_legacy_version_message(
     client_version: &str,
     server_version: &str,
     severity: VersionMismatchSeverity,
@@ -172,42 +259,61 @@ fn format_version_message(
         }
         VersionMismatchSeverity::Minor => {
             format!(
-                "Warning: Client version {} is newer than server {} - some features may not work",
+                "Client version {} is newer than server {} \
+                 - server does not report API version, some features may not work",
                 client_version, server_version
             )
         }
         VersionMismatchSeverity::Major => {
             format!(
-                "Error: Major version mismatch - client {} vs server {} - incompatible versions",
+                "Major version mismatch: client {} vs server {} \
+                 - server does not report API version, client and server are likely incompatible",
                 client_version, server_version
             )
         }
     }
 }
 
-/// Fetches the server version from the API.
-pub fn get_server_version(config: &Configuration) -> Option<String> {
+/// Fetches server information from the /version endpoint.
+pub fn get_server_info(config: &Configuration) -> Option<ServerInfo> {
     match default_api::get_version(config) {
         Ok(value) => {
-            // The server returns the version as a JSON string
-            if let Some(version) = value.as_str() {
-                Some(version.to_string())
-            } else {
-                // Try to extract from object if wrapped
-                value
+            if value.is_object() {
+                // New structured response: { "version": "...", "api_version": "...", ... }
+                let version = value
                     .get("version")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
+                    .map(|s| s.to_string())?;
+                let api_version = value
+                    .get("api_version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                Some(ServerInfo {
+                    version,
+                    api_version,
+                })
+            } else {
+                // Legacy response: plain string (pre-API-versioning server)
+                value.as_str().map(|version| ServerInfo {
+                    version: version.to_string(),
+                    api_version: None,
+                })
             }
         }
         Err(_) => None,
     }
 }
 
-/// Performs a version check between the client and server.
+/// Fetches the server version string from the API.
+/// Returns the binary version for display purposes (e.g., in log messages).
+pub fn get_server_version(config: &Configuration) -> Option<String> {
+    get_server_info(config).map(|info| info.version)
+}
+
+/// Performs an API version check between the client and server.
 pub fn check_version(config: &Configuration) -> VersionCheckResult {
-    match get_server_version(config) {
-        Some(server_version) => VersionCheckResult::new(CLIENT_VERSION, &server_version),
+    match get_server_info(config) {
+        Some(server_info) => VersionCheckResult::from_server_info(&server_info),
         None => VersionCheckResult::server_unreachable(),
     }
 }

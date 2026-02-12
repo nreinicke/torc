@@ -374,12 +374,19 @@ impl JobRunner {
             .server_version
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
+        let server_api_version = version_result
+            .server_api_version
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
 
         info!(
-            "Starting torc job runner version={} server_version={} workflow_id={} hostname={} output_dir={} resources={:?} rules={:?} \
+            "Starting torc job runner version={} client_api_version={} server_version={} server_api_version={} \
+            workflow_id={} hostname={} output_dir={} resources={:?} rules={:?} \
             job_completion_poll_interval={}s max_parallel_jobs={:?} end_time={:?} strict_scheduler_match={}",
             version,
+            version_check::CLIENT_API_VERSION,
             server_version,
+            server_api_version,
             self.workflow_id,
             hostname,
             self.output_dir.display(),

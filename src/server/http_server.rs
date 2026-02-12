@@ -2685,9 +2685,11 @@ where
             "get_version() - X-Span-ID: {:?}",
             Has::<XSpanIdString>::get(context).0.clone()
         );
-        Ok(GetVersionResponse::SuccessfulResponse(serde_json::json!(
-            full_version()
-        )))
+        Ok(GetVersionResponse::SuccessfulResponse(serde_json::json!({
+            "version": full_version(),
+            "api_version": API_VERSION,
+            "git_hash": GIT_HASH
+        })))
     }
 
     /// Retrieve all workflows.

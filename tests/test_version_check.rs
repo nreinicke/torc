@@ -1,6 +1,8 @@
 //! Tests for version checking utilities.
 
-use torc::client::version_check::{VersionMismatchSeverity, compare_versions, parse_version};
+use torc::client::version_check::{
+    ServerInfo, VersionCheckResult, VersionMismatchSeverity, compare_versions, parse_version,
+};
 
 #[test]
 fn test_parse_version() {
@@ -45,7 +47,7 @@ fn test_compare_versions_minor_client_higher() {
 
 #[test]
 fn test_compare_versions_minor_server_higher() {
-    // Server being newer is just a patch-level concern
+    // Server being newer is just a patch-level concern (backward compatible)
     assert_eq!(
         compare_versions("0.8.0", "0.9.0"),
         VersionMismatchSeverity::Patch
@@ -62,4 +64,95 @@ fn test_compare_versions_major_diff() {
         compare_versions("0.8.0", "1.0.0"),
         VersionMismatchSeverity::Major
     );
+}
+
+// --- Tests for API version checking via VersionCheckResult ---
+
+#[test]
+fn test_version_check_with_api_version_match() {
+    let info = ServerInfo {
+        version: "0.14.0 (abc1234)".to_string(),
+        api_version: Some("0.8.0".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.severity, VersionMismatchSeverity::None);
+    assert!(result.message.contains("API version"));
+    assert!(result.message.contains("matches"));
+}
+
+#[test]
+fn test_version_check_with_api_version_patch_diff() {
+    let info = ServerInfo {
+        version: "0.14.0 (abc1234)".to_string(),
+        api_version: Some("0.8.1".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.severity, VersionMismatchSeverity::Patch);
+    assert!(result.message.contains("patch difference"));
+}
+
+#[test]
+fn test_version_check_with_api_version_client_newer() {
+    let info = ServerInfo {
+        version: "0.12.0 (abc1234)".to_string(),
+        api_version: Some("0.7.0".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.severity, VersionMismatchSeverity::Minor);
+    assert!(result.message.contains("newer than server API"));
+    assert!(result.message.contains("not be supported"));
+}
+
+#[test]
+fn test_version_check_with_api_version_major_diff() {
+    let info = ServerInfo {
+        version: "2.0.0 (abc1234)".to_string(),
+        api_version: Some("1.0.0".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.severity, VersionMismatchSeverity::Major);
+    assert!(result.message.contains("incompatible"));
+}
+
+#[test]
+fn test_version_check_legacy_server_no_api_version() {
+    // Pre-API-versioning server returns no api_version — falls back to
+    // comparing binary versions.
+    let info = ServerInfo {
+        version: "0.13.0 (abc1234)".to_string(),
+        api_version: None,
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert!(result.server_api_version.is_none());
+    // Severity depends on CLIENT_VERSION vs "0.13.0" — we just check
+    // that it doesn't panic and produces a legacy-style message.
+    assert!(
+        result.message.contains("Version")
+            || result.message.contains("version")
+            || result.message.contains("matches")
+    );
+}
+
+#[test]
+fn test_version_check_server_newer_api_is_patch() {
+    // Server has a newer minor API version — that's backward compatible,
+    // reported as Patch severity.
+    let info = ServerInfo {
+        version: "0.15.0 (abc1234)".to_string(),
+        api_version: Some("0.9.0".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.severity, VersionMismatchSeverity::Patch);
+}
+
+#[test]
+fn test_version_check_result_fields() {
+    let info = ServerInfo {
+        version: "0.14.0 (abc1234)".to_string(),
+        api_version: Some("0.8.0".to_string()),
+    };
+    let result = VersionCheckResult::from_server_info(&info);
+    assert_eq!(result.server_version, Some("0.14.0 (abc1234)".to_string()));
+    assert_eq!(result.server_api_version, Some("0.8.0".to_string()));
+    assert_eq!(result.client_api_version, "0.8.0");
 }
