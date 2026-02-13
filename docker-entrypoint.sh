@@ -8,6 +8,13 @@ if [ "$1" != "torc-server" ]; then
   exec "$@"
 fi
 
+# Only apply the env-var-based rewrite for "torc-server" with no subcommand
+# or with the "run" subcommand. For other subcommands, execute as-is.
+# This allows: docker run image torc-server --version
+if [ -n "$2" ] && [ "$2" != "run" ]; then
+  exec "$@"
+fi
+
 # Build the torc-server command from environment variables.
 # Shift past "torc-server" and "run" to collect any extra user-provided args.
 shift
@@ -24,10 +31,10 @@ if [ -z "$TORC_AUTH_FILE" ]; then
 fi
 
 # At least one admin user is required for managing access groups
-if [ -z "$TORC_ADMIN_USER" ]; then
-  echo "ERROR: TORC_ADMIN_USER environment variable is required." >&2
+if [ -z "$TORC_ADMIN_USERS" ]; then
+  echo "ERROR: TORC_ADMIN_USERS environment variable is required." >&2
   echo "Set it to a comma-separated list of admin usernames." >&2
-  echo "Example: -e TORC_ADMIN_USER=admin or -e TORC_ADMIN_USER=alice,bob" >&2
+  echo "Example: -e TORC_ADMIN_USERS=admin or -e TORC_ADMIN_USERS=alice,bob" >&2
   exit 1
 fi
 
@@ -43,11 +50,11 @@ set -- torc-server run \
   --auth-file ${TORC_AUTH_FILE} \
   "$@"
 
-# Append --admin-user flags for each comma-separated user in TORC_ADMIN_USER
-if [ -n "$TORC_ADMIN_USER" ]; then
+# Append --admin-user flags for each comma-separated user in TORC_ADMIN_USERS
+if [ -n "$TORC_ADMIN_USERS" ]; then
   OLD_IFS="$IFS"
   IFS=','
-  for user in $TORC_ADMIN_USER; do
+  for user in $TORC_ADMIN_USERS; do
     set -- "$@" --admin-user "$user"
   done
   IFS="$OLD_IFS"

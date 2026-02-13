@@ -9,10 +9,10 @@
 #   # Run with required env vars
 #   docker run -d -p 8080:8080 \
 #     -e TORC_AUTH_FILE=/data/htpasswd \
-#     -e TORC_ADMIN_USER=admin \
+#     -e TORC_ADMIN_USERS=admin \
 #     -v ./htpasswd:/data/htpasswd:ro \
 #     -v torc-data:/data \
-#     ghcr.io/natlabr/torc:0.14.0
+#     ghcr.io/daniel-thom/torc:0.14.0
 #
 #   # Run torc CLI
 #   docker run --rm ghcr.io/daniel-thom/torc:0.14.0 torc --version
@@ -30,6 +30,7 @@ LABEL org.opencontainers.image.title="torc" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 
 # Download release binaries and remove curl afterward to keep image small
+# This is going to use pixi as soon as images are stored on conda-forge.
 RUN apk add --no-cache ca-certificates curl sqlite tmux && \
     curl -fsSL "https://github.com/NatLabRockies/torc/releases/download/v${VERSION}/torc-x86_64-unknown-linux-musl.tar.gz" \
       | tar xz -C /usr/local/bin/ && \
