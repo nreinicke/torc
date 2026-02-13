@@ -1,0 +1,40 @@
+# cargo-release configuration
+# Install: cargo install cargo-release
+# Usage:   cargo release patch --execute  (0.14.0 -> 0.14.1)
+#          cargo release minor --execute  (0.14.0 -> 0.15.0)
+#          cargo release major --execute  (0.14.0 -> 1.0.0)
+#
+# By default, cargo-release does a dry run. Add --execute to apply changes.
+
+# Create a git tag like "v0.15.0"
+tag-prefix = "v"
+tag-name = "{{prefix}}{{version}}"
+
+# Update the workspace dependency self-reference in Cargo.toml
+[[pre-release-replacements]]
+file = "Cargo.toml"
+search = 'torc = \{ version = "[^"]+", path = "\." \}'
+replace = 'torc = { version = "{{version}}", path = "." }'
+
+# Keep Python client version in sync
+[[pre-release-replacements]]
+file = "python_client/pyproject.toml"
+search = '^version = "[^"]+"'
+replace = 'version = "{{version}}"'
+
+# Dockerfile usage comment
+[[pre-release-replacements]]
+file = "Dockerfile"
+search = "VERSION=\\d+\\.\\d+\\.\\d+"
+replace = "VERSION={{version}}"
+
+# Documentation installation references
+[[pre-release-replacements]]
+file = "docs/src/getting-started/installation.md"
+search = "├── \\d+\\.\\d+\\.\\d+/"
+replace = "├── {{version}}/"
+
+[[pre-release-replacements]]
+file = "docs/src/getting-started/installation.md"
+search = "latest -> \\d+\\.\\d+\\.\\d+"
+replace = "latest -> {{version}}"
