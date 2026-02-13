@@ -1,10 +1,10 @@
 # Usage:
 #   # Build
-#   docker build --build-arg VERSION=0.14.0 -t ghcr.io/daniel-thom/torc:0.14.0 .
+#   docker build --build-arg VERSION=0.14.0 -t ghcr.io/natlabrockies/torc:0.14.0 .
 #
 #   # Push to GitHub Container Registry
 #   echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
-#   docker push ghcr.io/daniel-thom/torc:0.14.0
+#   docker push ghcr.io/natlabrockies/torc:0.14.0
 #
 #   # Run with required env vars
 #   docker run -d -p 8080:8080 \
@@ -12,10 +12,10 @@
 #     -e TORC_ADMIN_USERS=admin \
 #     -v ./htpasswd:/data/htpasswd:ro \
 #     -v torc-data:/data \
-#     ghcr.io/daniel-thom/torc:0.14.0
+#     ghcr.io/natlabrockies/torc:0.14.0
 #
 #   # Run torc CLI
-#   docker run --rm ghcr.io/daniel-thom/torc:0.14.0 torc --version
+#   docker run --rm ghcr.io/natlabrockies/torc:0.14.0 torc --version
 
 FROM alpine:3.23
 
@@ -47,7 +47,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8080
 
-USER 1001
+USER 1001:0
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["torc-server", "run"]

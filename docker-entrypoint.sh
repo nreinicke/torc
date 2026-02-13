@@ -61,7 +61,9 @@ if [ -n "$TORC_ADMIN_USERS" ]; then
   IFS=','
   for user in $TORC_ADMIN_USERS; do
     user=$(printf '%s\n' "$user" | xargs)
-    set -- "$@" --admin-user "$user"
+    if [ -n "$user" ]; then
+      set -- "$@" --admin-user "$user"
+    fi
   done
   IFS="$OLD_IFS"
 fi
