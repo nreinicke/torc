@@ -44,11 +44,16 @@ set -- torc-server run \
   --database "${TORC_DATABASE:-/data/torc.db}" \
   --log-dir "${TORC_LOG_DIR:-/data}" \
   --log-level "${TORC_LOG_LEVEL:-info}" \
-  --completion-check-interval-secs "${TORC_COMPLETION_INTERVAL:-30}" \
+  --completion-check-interval-secs "${TORC_COMPLETION_CHECK_INTERVAL_SECS:-30}" \
   --require-auth \
   --enforce-access-control \
   --auth-file "${TORC_AUTH_FILE}" \
   "$@"
+
+# Optionally set the number of worker threads
+if [ -n "$TORC_THREADS" ]; then
+  set -- "$@" --threads "$TORC_THREADS"
+fi
 
 # Append --admin-user flags for each comma-separated user in TORC_ADMIN_USERS
 if [ -n "$TORC_ADMIN_USERS" ]; then

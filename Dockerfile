@@ -20,7 +20,7 @@
 FROM alpine:3.23
 
 ARG VERSION
-RUN test -n "$VERSION" || (echo "ERROR: VERSION build arg is required" && exit 1)
+RUN test -n "$VERSION" || (echo "ERROR: VERSION build arg is required" >&2 && exit 1)
 
 LABEL org.opencontainers.image.title="torc" \
       org.opencontainers.image.description="Distributed workflow orchestration system" \
