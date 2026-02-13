@@ -47,7 +47,7 @@ set -- torc-server run \
   --completion-check-interval-secs "${TORC_COMPLETION_INTERVAL:-30}" \
   --require-auth \
   --enforce-access-control \
-  --auth-file ${TORC_AUTH_FILE} \
+  --auth-file "${TORC_AUTH_FILE}" \
   "$@"
 
 # Append --admin-user flags for each comma-separated user in TORC_ADMIN_USERS
@@ -55,6 +55,7 @@ if [ -n "$TORC_ADMIN_USERS" ]; then
   OLD_IFS="$IFS"
   IFS=','
   for user in $TORC_ADMIN_USERS; do
+    user=$(printf '%s\n' "$user" | xargs)
     set -- "$@" --admin-user "$user"
   done
   IFS="$OLD_IFS"
