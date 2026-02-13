@@ -4,9 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torc-client"
-# Note: Do not update manually. Use bump-my-version, such as
-# $ bump-my-version bump minor
-# After running the command, rebuild the OpenAPI packages from /db_service.
+# Note: Do not update manually. Use cargo-release from the repo root, such as
+# $ cargo release minor --execute
 version = "0.14.0"
 description = "Workflow management system"
 requires-python = ">=3.11,<3.14"
