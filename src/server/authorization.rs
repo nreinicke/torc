@@ -18,6 +18,8 @@ pub enum AccessCheckResult {
     Denied(String),
     /// Resource was not found
     NotFound(String),
+    /// An internal error occurred during the check
+    InternalError(String),
 }
 
 impl AccessCheckResult {
@@ -36,6 +38,12 @@ pub struct AuthorizationService {
 }
 
 impl AuthorizationService {
+    /// If true, authorization checks are enforced
+    /// If false, all access is allowed (for backward compatibility)
+    pub fn enforce_access_control(&self) -> bool {
+        self.enforce_access_control
+    }
+
     /// Create a new authorization service
     pub fn new(pool: Arc<SqlitePool>, enforce_access_control: bool) -> Self {
         Self {
@@ -67,12 +75,34 @@ impl AuthorizationService {
         auth: &Option<Authorization>,
         workflow_id: i64,
     ) -> AccessCheckResult {
-        // If access control is not enforced, allow everything
+        // 1. Check if workflow exists and get owner (always do this to ensure 404s are accurate)
+        let workflow_owner: String = match sqlx::query("SELECT user FROM workflow WHERE id = $1")
+            .bind(workflow_id)
+            .fetch_optional(self.pool.as_ref())
+            .await
+        {
+            Ok(Some(row)) => row.get("user"),
+            Ok(None) => {
+                return AccessCheckResult::NotFound(format!(
+                    "Workflow not found with ID: {}",
+                    workflow_id
+                ));
+            }
+            Err(e) => {
+                warn!(
+                    "Database error checking workflow {} existence: {}",
+                    workflow_id, e
+                );
+                return AccessCheckResult::InternalError("Database error".to_string());
+            }
+        };
+
+        // 2. If access control is not enforced, allow everything else
         if !self.enforce_access_control {
             return AccessCheckResult::Allowed;
         }
 
-        let user_name = match Self::get_username(auth) {
+        let username = match Self::get_username(auth) {
             Some(name) => name,
             None => {
                 // Anonymous users have no access when access control is enforced
@@ -84,38 +114,16 @@ impl AuthorizationService {
 
         debug!(
             "Checking workflow access for user '{}' on workflow {}",
-            user_name, workflow_id
+            username, workflow_id
         );
 
-        // Check if workflow exists and get owner
-        let workflow_owner: Option<String> =
-            match sqlx::query("SELECT user FROM workflow WHERE id = $1")
-                .bind(workflow_id)
-                .fetch_optional(self.pool.as_ref())
-                .await
-            {
-                Ok(Some(row)) => Some(row.get("user")),
-                Ok(None) => {
-                    return AccessCheckResult::NotFound(format!(
-                        "Workflow not found with ID: {}",
-                        workflow_id
-                    ));
-                }
-                Err(e) => {
-                    warn!("Database error checking workflow owner: {}", e);
-                    return AccessCheckResult::Denied(format!("Database error: {}", e));
-                }
-            };
-
-        // Check if user is the owner
-        if let Some(owner) = workflow_owner
-            && owner == user_name
-        {
-            debug!("User '{}' is owner of workflow {}", user_name, workflow_id);
+        // 3. Check if user is the owner
+        if workflow_owner == username {
+            debug!("User '{}' is owner of workflow {}", username, workflow_id);
             return AccessCheckResult::Allowed;
         }
 
-        // Check if user has group-based access
+        // 4. Check if user has group-based access
         let has_group_access: bool = match sqlx::query(
             r#"
             SELECT EXISTS(
@@ -127,31 +135,31 @@ impl AuthorizationService {
             "#,
         )
         .bind(workflow_id)
-        .bind(user_name)
+        .bind(username)
         .fetch_one(self.pool.as_ref())
         .await
         {
             Ok(row) => row.get::<i32, _>("has_access") == 1,
             Err(e) => {
                 warn!("Database error checking group access: {}", e);
-                return AccessCheckResult::Denied(format!("Database error: {}", e));
+                return AccessCheckResult::InternalError("Database error".to_string());
             }
         };
 
         if has_group_access {
             debug!(
                 "User '{}' has group access to workflow {}",
-                user_name, workflow_id
+                username, workflow_id
             );
             AccessCheckResult::Allowed
         } else {
             debug!(
                 "User '{}' denied access to workflow {}",
-                user_name, workflow_id
+                username, workflow_id
             );
             AccessCheckResult::Denied(format!(
                 "User '{}' does not have access to workflow {}",
-                user_name, workflow_id
+                username, workflow_id
             ))
         }
     }
@@ -162,34 +170,111 @@ impl AuthorizationService {
         auth: &Option<Authorization>,
         job_id: i64,
     ) -> AccessCheckResult {
+        // 1. Get the workflow ID for this job (always do this to ensure 404s are accurate)
+        let workflow_id: i64 = match sqlx::query("SELECT workflow_id FROM job WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(self.pool.as_ref())
+            .await
+        {
+            Ok(Some(row)) => row.get("workflow_id"),
+            Ok(None) => {
+                return AccessCheckResult::NotFound(format!("Job not found with ID: {}", job_id));
+            }
+            Err(e) => {
+                warn!(
+                    "Database error getting job workflow for job {}: {}",
+                    job_id, e
+                );
+                return AccessCheckResult::InternalError("Database error".to_string());
+            }
+        };
+
+        // 2. If access control is not enforced, allow everything else
         if !self.enforce_access_control {
             return AccessCheckResult::Allowed;
         }
 
-        // Get the workflow ID for this job
-        let workflow_id: Option<i64> =
-            match sqlx::query("SELECT workflow_id FROM job WHERE id = $1")
-                .bind(job_id)
-                .fetch_optional(self.pool.as_ref())
-                .await
-            {
-                Ok(Some(row)) => Some(row.get("workflow_id")),
-                Ok(None) => {
-                    return AccessCheckResult::NotFound(format!(
-                        "Job not found with ID: {}",
-                        job_id
-                    ));
-                }
-                Err(e) => {
-                    warn!("Database error getting job workflow: {}", e);
-                    return AccessCheckResult::Denied(format!("Database error: {}", e));
-                }
-            };
+        // 3. Delegate to workflow access check
+        self.check_workflow_access(auth, workflow_id).await
+    }
 
-        match workflow_id {
-            Some(wf_id) => self.check_workflow_access(auth, wf_id).await,
-            None => AccessCheckResult::NotFound(format!("Job not found with ID: {}", job_id)),
+    /// Known tables that have a workflow_id column and can be used with
+    /// check_resource_access. This whitelist prevents SQL injection even if
+    /// the character validation is bypassed.
+    const VALID_RESOURCE_TABLES: &'static [&'static str] = &[
+        "compute_node",
+        "event",
+        "failure_handler",
+        "file",
+        "job",
+        "local_scheduler",
+        "resource_requirements",
+        "result",
+        "scheduled_compute_node",
+        "slurm_scheduler",
+        "user_data",
+    ];
+
+    /// Check if a user can access a resource that has a workflow_id column
+    pub async fn check_resource_access(
+        &self,
+        auth: &Option<Authorization>,
+        resource_id: i64,
+        table_name: &str,
+    ) -> AccessCheckResult {
+        // Validate table name against whitelist of known resource tables
+        if !Self::VALID_RESOURCE_TABLES.contains(&table_name) {
+            warn!(
+                "Invalid table name provided to check_resource_access: {}",
+                table_name
+            );
+            return AccessCheckResult::Denied("Invalid resource type".to_string());
         }
+
+        // 1. Get the workflow ID for this resource (always do this to ensure 404s are accurate)
+        let sql = format!("SELECT workflow_id FROM {} WHERE id = $1", table_name);
+        let workflow_id: i64 = match sqlx::query(&sql)
+            .bind(resource_id)
+            .fetch_optional(self.pool.as_ref())
+            .await
+        {
+            Ok(Some(row)) => row.get("workflow_id"),
+            Ok(None) => {
+                return AccessCheckResult::NotFound(format!(
+                    "Resource not found in {} with ID: {}",
+                    table_name, resource_id
+                ));
+            }
+            Err(e) => {
+                warn!(
+                    "Database error getting workflow for {} ID {}: {}",
+                    table_name, resource_id, e
+                );
+                return AccessCheckResult::InternalError("Database error".to_string());
+            }
+        };
+
+        // 2. If access control is not enforced, allow everything else
+        if !self.enforce_access_control {
+            return AccessCheckResult::Allowed;
+        }
+
+        // 3. Delegate to workflow access check
+        self.check_workflow_access(auth, workflow_id).await
+    }
+
+    /// Check if a user can access a workflow status
+    pub async fn check_workflow_status_access(
+        &self,
+        auth: &Option<Authorization>,
+        status_id: i64,
+    ) -> AccessCheckResult {
+        if !self.enforce_access_control {
+            return AccessCheckResult::Allowed;
+        }
+
+        // workflow_status ID is the same as workflow ID
+        self.check_workflow_access(auth, status_id).await
     }
 
     /// Get all workflow IDs that a user can access
@@ -203,7 +288,7 @@ impl AuthorizationService {
             return Ok(None);
         }
 
-        let user_name = match Self::get_username(auth) {
+        let username = match Self::get_username(auth) {
             Some(name) => name,
             None => {
                 // Anonymous users have no access
@@ -224,7 +309,7 @@ impl AuthorizationService {
             WHERE ugm.user_name = $1
             "#,
         )
-        .bind(user_name)
+        .bind(username)
         .fetch_all(self.pool.as_ref())
         .await
         {
@@ -274,7 +359,7 @@ impl AuthorizationService {
             return AccessCheckResult::Allowed;
         }
 
-        let user_name = match Self::get_username(auth) {
+        let username = match Self::get_username(auth) {
             Some(name) => name,
             None => {
                 return AccessCheckResult::Denied(
@@ -293,26 +378,23 @@ impl AuthorizationService {
             ) as is_admin
             "#,
         )
-        .bind(user_name)
+        .bind(username)
         .fetch_one(self.pool.as_ref())
         .await
         {
             Ok(row) => row.get::<i32, _>("is_admin") == 1,
             Err(e) => {
                 warn!("Database error checking admin status: {}", e);
-                return AccessCheckResult::Denied(format!("Database error: {}", e));
+                return AccessCheckResult::InternalError("Database error".to_string());
             }
         };
 
         if is_admin {
-            debug!("User '{}' is a system administrator", user_name);
+            debug!("User '{}' is a system administrator", username);
             AccessCheckResult::Allowed
         } else {
-            debug!("User '{}' is not a system administrator", user_name);
-            AccessCheckResult::Denied(format!(
-                "User '{}' is not a system administrator",
-                user_name
-            ))
+            debug!("User '{}' is not a system administrator", username);
+            AccessCheckResult::Denied(format!("User '{}' is not a system administrator", username))
         }
     }
 
@@ -332,7 +414,7 @@ impl AuthorizationService {
             return AccessCheckResult::Allowed;
         }
 
-        let user_name = match Self::get_username(auth) {
+        let username = match Self::get_username(auth) {
             Some(name) => name,
             None => {
                 return AccessCheckResult::Denied(
@@ -356,8 +438,8 @@ impl AuthorizationService {
                     ));
                 }
                 Err(e) => {
-                    warn!("Database error checking group: {}", e);
-                    return AccessCheckResult::Denied(format!("Database error: {}", e));
+                    warn!("Database error checking group {}: {}", group_id, e);
+                    return AccessCheckResult::InternalError("Database error".to_string());
                 }
             };
 
@@ -383,26 +465,29 @@ impl AuthorizationService {
             ) as is_admin
             "#,
         )
-        .bind(user_name)
+        .bind(username)
         .bind(group_id)
         .fetch_one(self.pool.as_ref())
         .await
         {
             Ok(row) => row.get::<i32, _>("is_admin") == 1,
             Err(e) => {
-                warn!("Database error checking group admin status: {}", e);
-                return AccessCheckResult::Denied(format!("Database error: {}", e));
+                warn!(
+                    "Database error checking group {} admin status for user '{}': {}",
+                    group_id, username, e
+                );
+                return AccessCheckResult::InternalError("Database error".to_string());
             }
         };
 
         if is_group_admin {
-            debug!("User '{}' is an admin of group {}", user_name, group_id);
+            debug!("User '{}' is an admin of group {}", username, group_id);
             AccessCheckResult::Allowed
         } else {
-            debug!("User '{}' is not an admin of group {}", user_name, group_id);
+            debug!("User '{}' is not an admin of group {}", username, group_id);
             AccessCheckResult::Denied(format!(
                 "User '{}' is not an admin of group {}",
-                user_name, group_id
+                username, group_id
             ))
         }
     }
@@ -422,7 +507,7 @@ impl AuthorizationService {
             return AccessCheckResult::Allowed;
         }
 
-        let user_name = match Self::get_username(auth) {
+        let username = match Self::get_username(auth) {
             Some(name) => name,
             None => {
                 return AccessCheckResult::Denied(
@@ -447,16 +532,16 @@ impl AuthorizationService {
                 }
                 Err(e) => {
                     warn!("Database error checking workflow owner: {}", e);
-                    return AccessCheckResult::Denied(format!("Database error: {}", e));
+                    return AccessCheckResult::InternalError("Database error".to_string());
                 }
             };
 
         if let Some(owner) = workflow_owner
-            && owner == user_name
+            && owner == username
         {
             debug!(
                 "User '{}' is owner of workflow {}, allowed to manage group access",
-                user_name, workflow_id
+                username, workflow_id
             );
             return AccessCheckResult::Allowed;
         }
@@ -514,5 +599,37 @@ mod tests {
         assert!(AccessCheckResult::Allowed.is_allowed());
         assert!(!AccessCheckResult::Denied("test".to_string()).is_allowed());
         assert!(!AccessCheckResult::NotFound("test".to_string()).is_allowed());
+    }
+
+    #[test]
+    fn test_valid_resource_tables() {
+        // All tables used in authorize_resource! macro calls must be in the whitelist
+        let expected_tables = [
+            "compute_node",
+            "event",
+            "failure_handler",
+            "file",
+            "job",
+            "local_scheduler",
+            "resource_requirements",
+            "result",
+            "scheduled_compute_node",
+            "slurm_scheduler",
+            "user_data",
+        ];
+        for table in &expected_tables {
+            assert!(
+                AuthorizationService::VALID_RESOURCE_TABLES.contains(table),
+                "Table '{}' should be in VALID_RESOURCE_TABLES",
+                table
+            );
+        }
+    }
+
+    #[test]
+    fn test_invalid_table_not_in_whitelist() {
+        assert!(!AuthorizationService::VALID_RESOURCE_TABLES.contains(&"workflow"));
+        assert!(!AuthorizationService::VALID_RESOURCE_TABLES.contains(&"nonexistent"));
+        assert!(!AuthorizationService::VALID_RESOURCE_TABLES.contains(&"'; DROP TABLE--"));
     }
 }

@@ -62,6 +62,162 @@ fn full_version() -> String {
 
 const MAX_RECORD_TRANSFER_COUNT: i64 = 10_000;
 
+macro_rules! forbidden_error {
+    ($reason:expr) => {
+        models::ErrorResponse::new(serde_json::json!({
+            "error": "Forbidden",
+            "message": $reason
+        }))
+    };
+}
+
+macro_rules! not_found_error {
+    ($reason:expr) => {
+        models::ErrorResponse::new(serde_json::json!({
+            "error": "NotFound",
+            "message": $reason
+        }))
+    };
+}
+
+macro_rules! authorize_workflow {
+    ($self:ident, $workflow_id:expr, $context:expr, $response_enum:ident) => {
+        match $self
+            .check_workflow_access_for_context($workflow_id, $context)
+            .await
+        {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
+macro_rules! authorize_resource {
+    ($self:ident, $resource_id:expr, $table_name:expr, $context:expr, $response_enum:ident) => {
+        match $self
+            .check_resource_access_for_context($resource_id, $table_name, $context)
+            .await
+        {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
+macro_rules! authorize_job {
+    ($self:ident, $job_id:expr, $context:expr, $response_enum:ident) => {
+        match $self.check_job_access_for_context($job_id, $context).await {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
+macro_rules! authorize_group_admin {
+    ($self:ident, $group_id:expr, $context:expr, $response_enum:ident) => {
+        match $self
+            .check_group_admin_access_for_context($group_id, $context)
+            .await
+        {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
+macro_rules! authorize_admin {
+    ($self:ident, $context:expr, $response_enum:ident) => {
+        match $self.check_admin_access_for_context($context).await {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
+macro_rules! authorize_workflow_group {
+    ($self:ident, $workflow_id:expr, $group_id:expr, $context:expr, $response_enum:ident) => {
+        match $self
+            .check_workflow_group_access_for_context($workflow_id, $group_id, $context)
+            .await
+        {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(reason) => {
+                return Ok($response_enum::ForbiddenErrorResponse(forbidden_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::NotFound(reason) => {
+                return Ok($response_enum::NotFoundErrorResponse(not_found_error!(
+                    reason
+                )));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+    };
+}
+
 /// Process optional offset and limit parameters and return concrete values.
 /// Returns (offset, limit) where:
 /// - offset defaults to 0 if not provided
@@ -2070,6 +2226,50 @@ where
             .check_job_access(&auth, job_id)
             .await
     }
+
+    /// Helper to extract authorization from context and check admin access
+    async fn check_admin_access_for_context(&self, context: &C) -> AccessCheckResult {
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+        self.authorization_service.check_admin_access(&auth).await
+    }
+
+    /// Helper to extract authorization from context and check group admin access
+    async fn check_group_admin_access_for_context(
+        &self,
+        group_id: i64,
+        context: &C,
+    ) -> AccessCheckResult {
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+        self.authorization_service
+            .check_group_admin_access(&auth, group_id)
+            .await
+    }
+
+    /// Helper to extract authorization from context and check workflow group access
+    async fn check_workflow_group_access_for_context(
+        &self,
+        workflow_id: i64,
+        group_id: i64,
+        context: &C,
+    ) -> AccessCheckResult {
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+        self.authorization_service
+            .check_workflow_group_access(&auth, workflow_id, group_id)
+            .await
+    }
+
+    /// Helper to extract authorization from context and check resource access
+    async fn check_resource_access_for_context(
+        &self,
+        resource_id: i64,
+        table_name: &str,
+        context: &C,
+    ) -> AccessCheckResult {
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+        self.authorization_service
+            .check_resource_access(&auth, resource_id, table_name)
+            .await
+    }
 }
 
 #[async_trait]
@@ -2083,19 +2283,7 @@ where
         body: models::ComputeNodeModel,
         context: &C,
     ) -> Result<CreateComputeNodeResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateComputeNodeResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
+        authorize_workflow!(self, body.workflow_id, context, CreateComputeNodeResponse);
 
         let result = self
             .compute_nodes_api
@@ -2130,18 +2318,7 @@ where
         body: models::EventModel,
         context: &C,
     ) -> Result<CreateEventResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateEventResponse::NotFoundErrorResponse(error_response));
-        }
-
+        authorize_workflow!(self, body.workflow_id, context, CreateEventResponse);
         self.events_api.create_event(body, context).await
     }
 
@@ -2151,18 +2328,7 @@ where
         file: models::FileModel,
         context: &C,
     ) -> Result<CreateFileResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(file.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", file.workflow_id)
-            }));
-            return Ok(CreateFileResponse::NotFoundErrorResponse(error_response));
-        }
-
+        authorize_workflow!(self, file.workflow_id, context, CreateFileResponse);
         self.files_api.create_file(file, context).await
     }
 
@@ -2172,16 +2338,7 @@ where
         mut job: models::JobModel,
         context: &C,
     ) -> Result<CreateJobResponse, ApiError> {
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(job.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", job.workflow_id)
-            }));
-            return Ok(CreateJobResponse::NotFoundErrorResponse(error_response));
-        }
+        authorize_workflow!(self, job.workflow_id, context, CreateJobResponse);
 
         if job.resource_requirements_id.is_none() {
             let default_id = self
@@ -2219,17 +2376,7 @@ where
             }
         }
 
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(first_workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", first_workflow_id)
-            }));
-            return Ok(CreateJobsResponse::NotFoundErrorResponse(error_response));
-        }
+        authorize_workflow!(self, first_workflow_id, context, CreateJobsResponse);
 
         // Get default resource requirements for this workflow once
         let default_resource_requirements_id = self
@@ -2252,20 +2399,12 @@ where
         body: models::LocalSchedulerModel,
         context: &C,
     ) -> Result<CreateLocalSchedulerResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateLocalSchedulerResponse::DefaultErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(
+            self,
+            body.workflow_id,
+            context,
+            CreateLocalSchedulerResponse
+        );
         self.schedulers_api
             .create_local_scheduler(body, context)
             .await
@@ -2277,20 +2416,12 @@ where
         body: models::FailureHandlerModel,
         context: &C,
     ) -> Result<CreateFailureHandlerResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateFailureHandlerResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(
+            self,
+            body.workflow_id,
+            context,
+            CreateFailureHandlerResponse
+        );
         self.failure_handlers_api
             .create_failure_handler(body, context)
             .await
@@ -2302,6 +2433,14 @@ where
         id: i64,
         context: &C,
     ) -> Result<GetFailureHandlerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "failure_handler",
+            context,
+            GetFailureHandlerResponse
+        );
+
         self.failure_handlers_api
             .get_failure_handler(id, context)
             .await
@@ -2315,6 +2454,7 @@ where
         limit: Option<i64>,
         context: &C,
     ) -> Result<ListFailureHandlersResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListFailureHandlersResponse);
         let (offset, limit) = process_pagination_params(offset, limit)?;
         self.failure_handlers_api
             .list_failure_handlers(workflow_id, offset, limit, context)
@@ -2328,6 +2468,14 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteFailureHandlerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "failure_handler",
+            context,
+            DeleteFailureHandlerResponse
+        );
+
         self.failure_handlers_api
             .delete_failure_handler(id, body, context)
             .await
@@ -2350,20 +2498,12 @@ where
             ));
         }
 
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateResourceRequirementsResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(
+            self,
+            body.workflow_id,
+            context,
+            CreateResourceRequirementsResponse
+        );
         self.resource_requirements_api
             .create_resource_requirements(body, context)
             .await
@@ -2375,18 +2515,7 @@ where
         body: models::ResultModel,
         context: &C,
     ) -> Result<CreateResultResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateResultResponse::NotFoundErrorResponse(error_response));
-        }
-
+        authorize_workflow!(self, body.workflow_id, context, CreateResultResponse);
         self.results_api.create_result(body, context).await
     }
 
@@ -2396,19 +2525,12 @@ where
         body: models::ScheduledComputeNodesModel,
         context: &C,
     ) -> Result<CreateScheduledComputeNodeResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateScheduledComputeNodeResponse::DefaultErrorResponse(
-                error_response,
-            ));
-        }
+        authorize_workflow!(
+            self,
+            body.workflow_id,
+            context,
+            CreateScheduledComputeNodeResponse
+        );
 
         let workflow_id = body.workflow_id;
         let scheduler_id = body.scheduler_id;
@@ -2447,20 +2569,12 @@ where
         body: models::SlurmSchedulerModel,
         context: &C,
     ) -> Result<CreateSlurmSchedulerResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateSlurmSchedulerResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(
+            self,
+            body.workflow_id,
+            context,
+            CreateSlurmSchedulerResponse
+        );
         self.schedulers_api
             .create_slurm_scheduler(body, context)
             .await
@@ -2473,6 +2587,7 @@ where
         workers: Vec<String>,
         context: &C,
     ) -> Result<CreateRemoteWorkersResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, CreateRemoteWorkersResponse);
         self.remote_workers_api
             .create_remote_workers(workflow_id, workers, context)
             .await
@@ -2484,6 +2599,7 @@ where
         workflow_id: i64,
         context: &C,
     ) -> Result<ListRemoteWorkersResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListRemoteWorkersResponse);
         self.remote_workers_api
             .list_remote_workers(workflow_id, context)
             .await
@@ -2496,6 +2612,7 @@ where
         worker: String,
         context: &C,
     ) -> Result<DeleteRemoteWorkerResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteRemoteWorkerResponse);
         self.remote_workers_api
             .delete_remote_worker(workflow_id, worker, context)
             .await
@@ -2509,20 +2626,7 @@ where
         producer_job_id: Option<i64>,
         context: &C,
     ) -> Result<CreateUserDataResponse, ApiError> {
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(body.workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", body.workflow_id)
-            }));
-            return Ok(CreateUserDataResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(self, body.workflow_id, context, CreateUserDataResponse);
         self.user_data_api
             .create_user_data(body, consumer_job_id, producer_job_id, context)
             .await
@@ -2531,9 +2635,21 @@ where
     /// Store a workflow.
     async fn create_workflow(
         &self,
-        body: models::WorkflowModel,
+        mut body: models::WorkflowModel,
         context: &C,
     ) -> Result<CreateWorkflowResponse, ApiError> {
+        // Overwrite user with authenticated username if authentication is enabled
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+        if let Some(username) = AuthorizationService::get_username(&auth) {
+            if body.user != username {
+                info!(
+                    "Workflow user field '{}' overwritten with authenticated user '{}'",
+                    body.user, username
+                );
+            }
+            body.user = username.to_string();
+        }
+
         let response = self.workflows_api.create_workflow(body, context).await?;
         match response {
             CreateWorkflowResponse::SuccessfulResponse(w) => {
@@ -2552,6 +2668,12 @@ where
                     .create_resource_requirements(rr, context)
                     .await?;
                 Ok(CreateWorkflowResponse::SuccessfulResponse(w))
+            }
+            CreateWorkflowResponse::ForbiddenErrorResponse(err) => {
+                Ok(CreateWorkflowResponse::ForbiddenErrorResponse(err))
+            }
+            CreateWorkflowResponse::NotFoundErrorResponse(err) => {
+                Ok(CreateWorkflowResponse::NotFoundErrorResponse(err))
             }
             CreateWorkflowResponse::DefaultErrorResponse(err) => {
                 Ok(CreateWorkflowResponse::DefaultErrorResponse(err))
@@ -2579,49 +2701,23 @@ where
             }
         };
 
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", workflow_id)
-            }));
-            return Ok(CreateWorkflowActionResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
-
+        authorize_workflow!(self, workflow_id, context, CreateWorkflowActionResponse);
         self.workflow_actions_api
             .create_workflow_action(workflow_id, action_model, context)
             .await
     }
 
-    /// Get all workflow actions for a workflow.
     async fn get_workflow_actions(
         &self,
         workflow_id: i64,
         context: &C,
     ) -> Result<GetWorkflowActionsResponse, ApiError> {
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", workflow_id)
-            }));
-            return Ok(GetWorkflowActionsResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
+        authorize_workflow!(self, workflow_id, context, GetWorkflowActionsResponse);
         self.workflow_actions_api
             .get_workflow_actions(workflow_id, context)
             .await
     }
 
-    /// Get pending (unexecuted) workflow actions for a workflow.
     #[instrument(level = "debug", skip(self, context), fields(workflow_id))]
     async fn get_pending_actions(
         &self,
@@ -2629,29 +2725,12 @@ where
         trigger_types: Option<Vec<String>>,
         context: &C,
     ) -> Result<GetPendingActionsResponse, ApiError> {
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", workflow_id)
-            }));
-            return Ok(GetPendingActionsResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
+        authorize_workflow!(self, workflow_id, context, GetPendingActionsResponse);
         self.workflow_actions_api
             .get_pending_actions(workflow_id, trigger_types, context)
             .await
     }
 
-    /// Atomically claim a workflow action for execution.
-    #[instrument(
-        level = "debug",
-        skip(self, body, context),
-        fields(workflow_id, action_id)
-    )]
     async fn claim_action(
         &self,
         workflow_id: i64,
@@ -2662,18 +2741,7 @@ where
         // Parse compute_node_id from body (optional - can be null for login node submissions)
         let compute_node_id = body.get("compute_node_id").and_then(|v| v.as_i64());
 
-        // Check if workflow exists
-        let workflow_exists = self
-            .workflows_api
-            .does_workflow_exist(workflow_id, context)
-            .await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", workflow_id)
-            }));
-            return Ok(ClaimActionResponse::NotFoundErrorResponse(error_response));
-        }
-
+        authorize_workflow!(self, workflow_id, context, ClaimActionResponse);
         self.workflow_actions_api
             .claim_action(workflow_id, action_id, compute_node_id, context)
             .await
@@ -2692,7 +2760,6 @@ where
         })))
     }
 
-    /// Retrieve all workflows.
     async fn list_workflows(
         &self,
         offset: Option<i64>,
@@ -2728,6 +2795,10 @@ where
             None
         };
 
+        // If a specific user is requested, we need to check if the caller can list that user's workflows
+        // or at least handle the filtering in the sub-api. For now, we allow the sub-api to handle
+        // the user filter, but we still apply access control filtering if enabled.
+
         self.workflows_api
             .list_workflows_filtered(
                 processed_offset,
@@ -2754,7 +2825,6 @@ where
         Ok(response)
     }
 
-    /// Cancel a workflow. Workers will detect the status change and cancel jobs.
     async fn cancel_workflow(
         &self,
         id: i64,
@@ -2767,27 +2837,7 @@ where
             Has::<XSpanIdString>::get(context).0.clone()
         );
 
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(CancelWorkflowResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(CancelWorkflowResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, id, context, CancelWorkflowResponse);
         let result = self
             .workflows_api
             .cancel_workflow(id, body, context)
@@ -2796,125 +2846,134 @@ where
         Ok(result)
     }
 
-    /// Delete all compute node records for one workflow.
     async fn delete_compute_nodes(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteComputeNodesResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteComputeNodesResponse);
         self.compute_nodes_api
             .delete_compute_nodes(workflow_id, body, context)
             .await
     }
 
-    /// Delete all events for one workflow.
     async fn delete_events(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteEventsResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteEventsResponse);
         self.events_api
             .delete_events(workflow_id, body, context)
             .await
     }
 
-    /// Delete all files for one workflow.
     async fn delete_files(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteFilesResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteFilesResponse);
         self.files_api
             .delete_files(workflow_id, body, context)
             .await
     }
 
-    /// Delete all jobs for one workflow.
     async fn delete_jobs(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteJobsResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteJobsResponse);
         self.jobs_api.delete_jobs(workflow_id, body, context).await
     }
 
-    /// Delete all local schedulers for one workflow.
     async fn delete_local_schedulers(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteLocalSchedulersResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteLocalSchedulersResponse);
         self.schedulers_api
             .delete_local_schedulers(workflow_id, body, context)
             .await
     }
 
-    /// Delete all resource requirements records for one workflow.
     async fn delete_all_resource_requirements(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteAllResourceRequirementsResponse, ApiError> {
+        authorize_workflow!(
+            self,
+            workflow_id,
+            context,
+            DeleteAllResourceRequirementsResponse
+        );
         self.resource_requirements_api
             .delete_all_resource_requirements(workflow_id, body, context)
             .await
     }
 
-    /// Delete all job results for one workflow.
     async fn delete_results(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteResultsResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteResultsResponse);
         self.results_api
             .delete_results(workflow_id, body, context)
             .await
     }
 
-    /// Delete all scheduled compute node records for one workflow.
     async fn delete_scheduled_compute_nodes(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteScheduledComputeNodesResponse, ApiError> {
+        authorize_workflow!(
+            self,
+            workflow_id,
+            context,
+            DeleteScheduledComputeNodesResponse
+        );
         self.schedulers_api
             .delete_scheduled_compute_nodes(workflow_id, body, context)
             .await
     }
 
-    /// Retrieve all Slurm compute node configurations for one workflow.
     async fn delete_slurm_schedulers(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteSlurmSchedulersResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteSlurmSchedulersResponse);
         self.schedulers_api
             .delete_slurm_schedulers(workflow_id, body, context)
             .await
     }
 
-    /// Delete all user data records for one workflow.
     async fn delete_all_user_data(
         &self,
         workflow_id: i64,
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteAllUserDataResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, DeleteAllUserDataResponse);
         self.user_data_api
             .delete_all_user_data(workflow_id, body, context)
             .await
     }
 
-    /// Retrieve all compute node records for one workflow.
     async fn list_compute_nodes(
         &self,
         workflow_id: i64,
@@ -2927,6 +2986,7 @@ where
         scheduled_compute_node_id: Option<i64>,
         context: &C,
     ) -> Result<ListComputeNodesResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListComputeNodesResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.compute_nodes_api
             .list_compute_nodes(
@@ -2943,7 +3003,6 @@ where
             .await
     }
 
-    /// Retrieve all events for one workflow.
     async fn list_events(
         &self,
         workflow_id: i64,
@@ -2955,6 +3014,7 @@ where
         after_timestamp: Option<i64>,
         context: &C,
     ) -> Result<ListEventsResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListEventsResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.events_api
             .list_events(
@@ -2970,7 +3030,6 @@ where
             .await
     }
 
-    /// Retrieve all files for one workflow.
     async fn list_files(
         &self,
         workflow_id: i64,
@@ -2984,6 +3043,7 @@ where
         is_output: Option<bool>,
         context: &C,
     ) -> Result<ListFilesResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListFilesResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.files_api
             .list_files(
@@ -3016,30 +3076,7 @@ where
         active_compute_node_id: Option<i64>,
         context: &C,
     ) -> Result<ListJobsResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListJobsResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListJobsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, workflow_id, context, ListJobsResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.jobs_api
             .list_jobs(
@@ -3066,36 +3103,12 @@ where
         limit: Option<i64>,
         context: &C,
     ) -> Result<ListJobDependenciesResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListJobDependenciesResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListJobDependenciesResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, workflow_id, context, ListJobDependenciesResponse);
         self.workflows_api
             .list_job_dependencies(workflow_id, offset, limit, context)
             .await
     }
 
-    /// Retrieve job-file relationships for one workflow.
     async fn list_job_file_relationships(
         &self,
         workflow_id: i64,
@@ -3103,36 +3116,12 @@ where
         limit: Option<i64>,
         context: &C,
     ) -> Result<ListJobFileRelationshipsResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListJobFileRelationshipsResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListJobFileRelationshipsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, workflow_id, context, ListJobFileRelationshipsResponse);
         self.workflows_api
             .list_job_file_relationships(workflow_id, offset, limit, context)
             .await
     }
 
-    /// Retrieve job-user_data relationships for one workflow.
     async fn list_job_user_data_relationships(
         &self,
         workflow_id: i64,
@@ -3140,38 +3129,17 @@ where
         limit: Option<i64>,
         context: &C,
     ) -> Result<ListJobUserDataRelationshipsResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(
-                    ListJobUserDataRelationshipsResponse::ForbiddenErrorResponse(
-                        models::ErrorResponse::new(serde_json::json!({
-                            "error": "Forbidden",
-                            "message": reason
-                        })),
-                    ),
-                );
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListJobUserDataRelationshipsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(
+            self,
+            workflow_id,
+            context,
+            ListJobUserDataRelationshipsResponse
+        );
         self.workflows_api
             .list_job_user_data_relationships(workflow_id, offset, limit, context)
             .await
     }
 
-    /// Retrieve local schedulers for one workflow.
     async fn list_local_schedulers(
         &self,
         workflow_id: i64,
@@ -3183,30 +3151,7 @@ where
         num_cpus: Option<i64>,
         context: &C,
     ) -> Result<ListLocalSchedulersResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListLocalSchedulersResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListLocalSchedulersResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, workflow_id, context, ListLocalSchedulersResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.schedulers_api
             .list_local_schedulers(
@@ -3222,7 +3167,6 @@ where
             .await
     }
 
-    /// Retrieve all resource requirements records for one workflow.
     async fn list_resource_requirements(
         &self,
         workflow_id: i64,
@@ -3239,30 +3183,7 @@ where
         reverse_sort: Option<bool>,
         context: &C,
     ) -> Result<ListResourceRequirementsResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListResourceRequirementsResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListResourceRequirementsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
-
+        authorize_workflow!(self, workflow_id, context, ListResourceRequirementsResponse);
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.resource_requirements_api
             .list_resource_requirements(
@@ -3283,7 +3204,6 @@ where
             .await
     }
 
-    /// Retrieve all job results for one workflow.
     async fn list_results(
         &self,
         workflow_id: i64,
@@ -3315,29 +3235,7 @@ where
             Has::<XSpanIdString>::get(context).0.clone()
         );
 
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListResultsResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListResultsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, workflow_id, context, ListResultsResponse);
 
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.results_api
@@ -3358,7 +3256,6 @@ where
             .await
     }
 
-    /// Retrieve scheduled compute node records for one workflow.
     async fn list_scheduled_compute_nodes(
         &self,
         workflow_id: i64,
@@ -3371,29 +3268,12 @@ where
         status: Option<String>,
         context: &C,
     ) -> Result<ListScheduledComputeNodesResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListScheduledComputeNodesResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListScheduledComputeNodesResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(
+            self,
+            workflow_id,
+            context,
+            ListScheduledComputeNodesResponse
+        );
 
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.schedulers_api
@@ -3411,7 +3291,6 @@ where
             .await
     }
 
-    /// Retrieve a Slurm compute node configuration.
     async fn list_slurm_schedulers(
         &self,
         workflow_id: i64,
@@ -3430,29 +3309,7 @@ where
         _: Option<String>,
         context: &C,
     ) -> Result<ListSlurmSchedulersResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListSlurmSchedulersResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListSlurmSchedulersResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, workflow_id, context, ListSlurmSchedulersResponse);
 
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.schedulers_api
@@ -3467,7 +3324,6 @@ where
             .await
     }
 
-    /// Retrieve all user data records for one workflow.
     async fn list_user_data(
         &self,
         workflow_id: i64,
@@ -3481,29 +3337,7 @@ where
         is_ephemeral: Option<bool>,
         context: &C,
     ) -> Result<ListUserDataResponse, ApiError> {
-        // Check access control
-        match self
-            .check_workflow_access_for_context(workflow_id, context)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(ListUserDataResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(ListUserDataResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, workflow_id, context, ListUserDataResponse);
 
         let (processed_offset, processed_limit) = process_pagination_params(offset, limit)?;
         self.user_data_api
@@ -3522,47 +3356,27 @@ where
             .await
     }
 
-    /// Retrieve a compute node by ID.
     async fn get_compute_node(
         &self,
         id: i64,
         context: &C,
     ) -> Result<GetComputeNodeResponse, ApiError> {
+        authorize_resource!(self, id, "compute_node", context, GetComputeNodeResponse);
         self.compute_nodes_api.get_compute_node(id, context).await
     }
 
-    /// Retrieve an event by ID.
     async fn get_event(&self, id: i64, context: &C) -> Result<GetEventResponse, ApiError> {
+        authorize_resource!(self, id, "event", context, GetEventResponse);
         self.events_api.get_event(id, context).await
     }
 
-    /// Retrieve a file.
     async fn get_file(&self, id: i64, context: &C) -> Result<GetFileResponse, ApiError> {
+        authorize_resource!(self, id, "file", context, GetFileResponse);
         self.files_api.get_file(id, context).await
     }
 
-    /// Retrieve a job.
     async fn get_job(&self, id: i64, context: &C) -> Result<GetJobResponse, ApiError> {
-        // Check access control (via workflow)
-        match self.check_job_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(GetJobResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(GetJobResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_job!(self, id, context, GetJobResponse);
         self.jobs_api.get_job(id, context).await
     }
 
@@ -3572,6 +3386,14 @@ where
         id: i64,
         context: &C,
     ) -> Result<GetLocalSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "local_scheduler",
+            context,
+            GetLocalSchedulerResponse
+        );
+
         self.schedulers_api.get_local_scheduler(id, context).await
     }
 
@@ -3589,6 +3411,10 @@ where
             scheduler_config_id,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        // Check access control
+        authorize_workflow!(self, id, context, GetReadyJobRequirementsResponse);
+
         error!("get_ready_job_requirements operation is not implemented");
         Err(ApiError("Api-Error: Operation is NOT implemented".into()))
     }
@@ -3599,6 +3425,14 @@ where
         id: i64,
         context: &C,
     ) -> Result<GetResourceRequirementsResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "resource_requirements",
+            context,
+            GetResourceRequirementsResponse
+        );
+
         self.resource_requirements_api
             .get_resource_requirements(id, context)
             .await
@@ -3606,6 +3440,10 @@ where
 
     /// Retrieve a job result.
     async fn get_result(&self, id: i64, context: &C) -> Result<GetResultResponse, ApiError> {
+        // Check access control
+        // Result is linked to workflow via workflow_result
+        authorize_resource!(self, id, "result", context, GetResultResponse);
+
         self.results_api.get_result(id, context).await
     }
 
@@ -3615,6 +3453,13 @@ where
         id: i64,
         context: &C,
     ) -> Result<GetScheduledComputeNodeResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "scheduled_compute_node",
+            context,
+            GetScheduledComputeNodeResponse
+        );
         self.schedulers_api
             .get_scheduled_compute_node(id, context)
             .await
@@ -3626,65 +3471,35 @@ where
         id: i64,
         context: &C,
     ) -> Result<GetSlurmSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "slurm_scheduler",
+            context,
+            GetSlurmSchedulerResponse
+        );
         self.schedulers_api.get_slurm_scheduler(id, context).await
     }
 
     /// Retrieve a user data record.
     async fn get_user_data(&self, id: i64, context: &C) -> Result<GetUserDataResponse, ApiError> {
+        authorize_resource!(self, id, "user_data", context, GetUserDataResponse);
+
         self.user_data_api.get_user_data(id, context).await
     }
 
     /// Retrieve a workflow.
     async fn get_workflow(&self, id: i64, context: &C) -> Result<GetWorkflowResponse, ApiError> {
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(GetWorkflowResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(GetWorkflowResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, GetWorkflowResponse);
         self.workflows_api.get_workflow(id, context).await
     }
 
-    /// Return the workflow status.
     async fn get_workflow_status(
         &self,
         id: i64,
         context: &C,
     ) -> Result<GetWorkflowStatusResponse, ApiError> {
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(GetWorkflowStatusResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(GetWorkflowStatusResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, GetWorkflowStatusResponse);
         self.workflows_api.get_workflow_status(id, context).await
     }
 
@@ -3713,27 +3528,7 @@ where
             body,
             Has::<XSpanIdString>::get(context).0.clone()
         );
-
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(InitializeJobsResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(InitializeJobsResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, InitializeJobsResponse);
 
         // Clear in-memory failure tracking for this workflow when (re)initializing
         if let Ok(mut set) = self.workflows_with_failures.write() {
@@ -4032,6 +3827,7 @@ where
         id: i64,
         context: &C,
     ) -> Result<IsWorkflowCompleteResponse, ApiError> {
+        authorize_workflow!(self, id, context, IsWorkflowCompleteResponse);
         self.workflows_api.is_workflow_complete(id, context).await
     }
 
@@ -4040,6 +3836,7 @@ where
         id: i64,
         context: &C,
     ) -> Result<IsWorkflowUninitializedResponse, ApiError> {
+        authorize_workflow!(self, id, context, IsWorkflowUninitializedResponse);
         self.workflows_api
             .is_workflow_uninitialized(id, context)
             .await
@@ -4047,6 +3844,7 @@ where
 
     /// Retrieve all job IDs for one workflow.
     async fn list_job_ids(&self, id: i64, context: &C) -> Result<ListJobIdsResponse, ApiError> {
+        authorize_workflow!(self, id, context, ListJobIdsResponse);
         self.jobs_api.list_job_ids(id, context).await
     }
 
@@ -4056,6 +3854,7 @@ where
         id: i64,
         context: &C,
     ) -> Result<ListMissingUserDataResponse, ApiError> {
+        authorize_workflow!(self, id, context, ListMissingUserDataResponse);
         self.user_data_api.list_missing_user_data(id, context).await
     }
 
@@ -4065,6 +3864,7 @@ where
         id: i64,
         context: &C,
     ) -> Result<ListRequiredExistingFilesResponse, ApiError> {
+        authorize_workflow!(self, id, context, ListRequiredExistingFilesResponse);
         self.files_api
             .list_required_existing_files(id, context)
             .await
@@ -4077,6 +3877,8 @@ where
         body: models::ComputeNodeModel,
         context: &C,
     ) -> Result<UpdateComputeNodeResponse, ApiError> {
+        authorize_resource!(self, id, "compute_node", context, UpdateComputeNodeResponse);
+
         let result = self
             .compute_nodes_api
             .update_compute_node(id, body.clone(), context)
@@ -4111,6 +3913,8 @@ where
         body: serde_json::Value,
         context: &C,
     ) -> Result<UpdateEventResponse, ApiError> {
+        authorize_resource!(self, id, "event", context, UpdateEventResponse);
+
         self.events_api.update_event(id, body, context).await
     }
 
@@ -4121,6 +3925,8 @@ where
         body: models::FileModel,
         context: &C,
     ) -> Result<UpdateFileResponse, ApiError> {
+        authorize_resource!(self, id, "file", context, UpdateFileResponse);
+
         self.files_api.update_file(id, body, context).await
     }
 
@@ -4132,35 +3938,25 @@ where
         context: &C,
     ) -> Result<UpdateJobResponse, ApiError> {
         // Check access control (via workflow)
-        match self.check_job_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(UpdateJobResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(UpdateJobResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_job!(self, id, context, UpdateJobResponse);
+
         self.jobs_api.update_job(id, body, context).await
     }
 
-    /// Update a local scheduler.
     async fn update_local_scheduler(
         &self,
         id: i64,
         body: models::LocalSchedulerModel,
         context: &C,
     ) -> Result<UpdateLocalSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "local_scheduler",
+            context,
+            UpdateLocalSchedulerResponse
+        );
+
         self.schedulers_api
             .update_local_scheduler(id, body, context)
             .await
@@ -4173,6 +3969,14 @@ where
         body: models::ResourceRequirementsModel,
         context: &C,
     ) -> Result<UpdateResourceRequirementsResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "resource_requirements",
+            context,
+            UpdateResourceRequirementsResponse
+        );
+
         let result = self
             .resource_requirements_api
             .update_resource_requirements(id, body, context)
@@ -4218,6 +4022,8 @@ where
         body: models::ResultModel,
         context: &C,
     ) -> Result<UpdateResultResponse, ApiError> {
+        authorize_resource!(self, id, "result", context, UpdateResultResponse);
+
         self.results_api.update_result(id, body, context).await
     }
 
@@ -4228,6 +4034,14 @@ where
         body: models::ScheduledComputeNodesModel,
         context: &C,
     ) -> Result<UpdateScheduledComputeNodeResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "scheduled_compute_node",
+            context,
+            UpdateScheduledComputeNodeResponse
+        );
+
         self.schedulers_api
             .update_scheduled_compute_node(id, body, context)
             .await
@@ -4240,6 +4054,14 @@ where
         body: models::SlurmSchedulerModel,
         context: &C,
     ) -> Result<UpdateSlurmSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "slurm_scheduler",
+            context,
+            UpdateSlurmSchedulerResponse
+        );
+
         self.schedulers_api
             .update_slurm_scheduler(id, body, context)
             .await
@@ -4252,6 +4074,8 @@ where
         body: models::UserDataModel,
         context: &C,
     ) -> Result<UpdateUserDataResponse, ApiError> {
+        authorize_resource!(self, id, "user_data", context, UpdateUserDataResponse);
+
         self.user_data_api.update_user_data(id, body, context).await
     }
 
@@ -4262,26 +4086,7 @@ where
         body: models::WorkflowModel,
         context: &C,
     ) -> Result<UpdateWorkflowResponse, ApiError> {
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(UpdateWorkflowResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(UpdateWorkflowResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, UpdateWorkflowResponse);
         self.workflows_api.update_workflow(id, body, context).await
     }
 
@@ -4292,26 +4097,7 @@ where
         body: models::WorkflowStatusModel,
         context: &C,
     ) -> Result<UpdateWorkflowStatusResponse, ApiError> {
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(UpdateWorkflowStatusResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(UpdateWorkflowStatusResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, UpdateWorkflowStatusResponse);
 
         // Clear in-memory failure tracking when workflow is being archived
         if body.is_archived == Some(true)
@@ -4345,6 +4131,9 @@ where
             strict_scheduler_match,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        authorize_workflow!(self, id, context, ClaimJobsBasedOnResources);
+
         let status = match self.get_workflow_status(id, context).await {
             Ok(GetWorkflowStatusResponse::SuccessfulResponse(status)) => status,
             Ok(_) => {
@@ -4395,6 +4184,8 @@ where
             body,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        authorize_workflow!(self, id, context, ClaimNextJobsResponse);
 
         let workflow_id = id;
         let job_limit = limit.unwrap_or(10);
@@ -4447,26 +4238,6 @@ where
             "claim_next_jobs: workflow_id={}, limit={}",
             workflow_id, job_limit
         );
-
-        // First check if the workflow exists
-        let workflow_exists = sqlx::query("SELECT id FROM workflow WHERE id = $1")
-            .bind(workflow_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| {
-                error!("Database error checking workflow existence: {}", e);
-                ApiError("Database error".to_string())
-            })?;
-
-        if workflow_exists.is_none() {
-            // Rollback the transaction since we're returning early
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", workflow_id)
-            }));
-            return Ok(ClaimNextJobsResponse::DefaultErrorResponse(error_response));
-        }
 
         // Query the job table directly for ready jobs using the indexed status column
         let ready_status = models::JobStatus::Ready.to_int();
@@ -4644,6 +4415,8 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<ProcessChangedJobInputsResponse, ApiError> {
+        authorize_workflow!(self, id, context, ProcessChangedJobInputsResponse);
+
         let dry_run_value = dry_run.unwrap_or(false);
         self.jobs_api
             .process_changed_job_inputs(id, body, dry_run_value, context)
@@ -4657,6 +4430,8 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteComputeNodeResponse, ApiError> {
+        authorize_resource!(self, id, "compute_node", context, DeleteComputeNodeResponse);
+
         self.compute_nodes_api
             .delete_compute_node(id, body, context)
             .await
@@ -4669,6 +4444,8 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteEventResponse, ApiError> {
+        authorize_resource!(self, id, "event", context, DeleteEventResponse);
+
         self.events_api.delete_event(id, body, context).await
     }
 
@@ -4679,6 +4456,8 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteFileResponse, ApiError> {
+        authorize_resource!(self, id, "file", context, DeleteFileResponse);
+
         self.files_api.delete_file(id, body, context).await
     }
 
@@ -4690,25 +4469,8 @@ where
         context: &C,
     ) -> Result<DeleteJobResponse, ApiError> {
         // Check access control (via workflow)
-        match self.check_job_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(DeleteJobResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(DeleteJobResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_job!(self, id, context, DeleteJobResponse);
+
         self.jobs_api.delete_job(id, body, context).await
     }
 
@@ -4719,6 +4481,14 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteLocalSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "local_scheduler",
+            context,
+            DeleteLocalSchedulerResponse
+        );
+
         self.schedulers_api
             .delete_local_scheduler(id, body, context)
             .await
@@ -4731,6 +4501,14 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteResourceRequirementsResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "resource_requirements",
+            context,
+            DeleteResourceRequirementsResponse
+        );
+
         self.resource_requirements_api
             .delete_resource_requirements(id, body, context)
             .await
@@ -4743,6 +4521,8 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteResultResponse, ApiError> {
+        authorize_resource!(self, id, "result", context, DeleteResultResponse);
+
         self.results_api.delete_result(id, body, context).await
     }
 
@@ -4753,6 +4533,14 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteScheduledComputeNodeResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "scheduled_compute_node",
+            context,
+            DeleteScheduledComputeNodeResponse
+        );
+
         self.schedulers_api
             .delete_scheduled_compute_node(id, body, context)
             .await
@@ -4765,6 +4553,14 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteSlurmSchedulerResponse, ApiError> {
+        authorize_resource!(
+            self,
+            id,
+            "slurm_scheduler",
+            context,
+            DeleteSlurmSchedulerResponse
+        );
+
         self.schedulers_api
             .delete_slurm_scheduler(id, body, context)
             .await
@@ -4777,10 +4573,11 @@ where
         body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteUserDataResponse, ApiError> {
+        authorize_resource!(self, id, "user_data", context, DeleteUserDataResponse);
+
         self.user_data_api.delete_user_data(id, body, context).await
     }
 
-    /// Delete a workflow.
     async fn delete_workflow(
         &self,
         id: i64,
@@ -4792,27 +4589,7 @@ where
             id,
             Has::<XSpanIdString>::get(context).0.clone()
         );
-
-        // Check access control
-        match self.check_workflow_access_for_context(id, context).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(DeleteWorkflowResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(DeleteWorkflowResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow!(self, id, context, DeleteWorkflowResponse);
 
         // Clear in-memory failure tracking for this workflow
         if let Ok(mut set) = self.workflows_with_failures.write() {
@@ -4839,16 +4616,7 @@ where
             Has::<XSpanIdString>::get(context).0.clone()
         );
 
-        // Check if workflow exists
-        let workflow_exists = self.workflows_api.does_workflow_exist(id, context).await?;
-        if !workflow_exists {
-            let error_response = models::ErrorResponse::new(serde_json::json!({
-                "message": format!("Workflow not found with ID: {}", id)
-            }));
-            return Ok(ResetJobStatusResponse::NotFoundErrorResponse(
-                error_response,
-            ));
-        }
+        authorize_workflow!(self, id, context, ResetJobStatusResponse);
 
         let failed_only_value = failed_only.unwrap_or(false);
         let result = self
@@ -4900,6 +4668,8 @@ where
             force,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        authorize_workflow!(self, id, context, ResetWorkflowStatusResponse);
 
         // Clear in-memory failure tracking for this workflow
         if let Ok(mut set) = self.workflows_with_failures.write() {
@@ -4992,6 +4762,8 @@ where
                 ManageStatusChangeResponse::UnprocessableContentErrorResponse(error_response),
             );
         }
+
+        authorize_job!(self, id, context, ManageStatusChangeResponse);
 
         // 1. Call get_job. If the job doesn't exist, return a 404.
         let mut job = match self.jobs_api.get_job(id, context).await? {
@@ -5097,19 +4869,22 @@ where
             body,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        authorize_job!(self, id, context, StartJobResponse);
+
         let mut job = match self.jobs_api.get_job(id, context).await? {
             GetJobResponse::SuccessfulResponse(job) => job,
             GetJobResponse::ForbiddenErrorResponse(err) => {
                 error!("Access denied for job {}: {:?}", id, err);
-                return Err(ApiError("Access denied for job".to_string()));
+                return Ok(StartJobResponse::ForbiddenErrorResponse(err));
             }
             GetJobResponse::NotFoundErrorResponse(err) => {
                 error!("Job not found {}: {:?}", id, err);
-                return Err(ApiError("Job not found".to_string()));
+                return Ok(StartJobResponse::NotFoundErrorResponse(err));
             }
             GetJobResponse::DefaultErrorResponse(err) => {
                 error!("Failed to get job {}: {:?}", id, err);
-                return Err(ApiError("Failed to get job".to_string()));
+                return Ok(StartJobResponse::DefaultErrorResponse(err));
             }
         };
         match job.status {
@@ -5206,6 +4981,9 @@ where
             result,
             Has::<XSpanIdString>::get(context).0.clone()
         );
+
+        authorize_job!(self, id, context, CompleteJobResponse);
+
         // 1. Verify job status is terminal (finished executing)
         if !status.is_terminal() {
             error!(
@@ -5218,20 +4996,20 @@ where
             )));
         }
 
-        // 1. Ensure the job exists.
+        // Fetch the job and check for access/existence errors.
         let mut job = match self.jobs_api.get_job(id, context).await? {
             GetJobResponse::SuccessfulResponse(job) => job,
             GetJobResponse::ForbiddenErrorResponse(err) => {
                 error!("Access denied for job {}: {:?}", id, err);
-                return Err(ApiError("Access denied for job".to_string()));
+                return Ok(CompleteJobResponse::ForbiddenErrorResponse(err));
             }
             GetJobResponse::NotFoundErrorResponse(err) => {
                 error!("Job not found {}: {:?}", id, err);
-                return Err(ApiError("Job not found".to_string()));
+                return Ok(CompleteJobResponse::NotFoundErrorResponse(err));
             }
             GetJobResponse::DefaultErrorResponse(err) => {
                 error!("Failed to get job {}: {:?}", id, err);
-                return Err(ApiError("Failed to get job".to_string()));
+                return Ok(CompleteJobResponse::DefaultErrorResponse(err));
             }
         };
 
@@ -5245,6 +5023,30 @@ where
             );
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!("Job {} is already complete with status {:?}", id, current_status)
+            }));
+            return Ok(CompleteJobResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
+
+        // Validate ResultModel matches this job
+        if result.job_id != id {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": format!(
+                    "ResultModel job_id {} does not match target job_id {}",
+                    result.job_id, id
+                )
+            }));
+            return Ok(CompleteJobResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
+        if result.workflow_id != job.workflow_id {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": format!(
+                    "ResultModel workflow_id {} does not match job's workflow_id {}",
+                    result.workflow_id, job.workflow_id
+                )
             }));
             return Ok(CompleteJobResponse::UnprocessableContentErrorResponse(
                 error_response,
@@ -5287,13 +5089,17 @@ where
                 );
                 result.id
             }
+            CreateResultResponse::ForbiddenErrorResponse(err) => {
+                error!("Forbidden to add result for job {}: {:?}", id, err);
+                return Ok(CompleteJobResponse::ForbiddenErrorResponse(err));
+            }
             CreateResultResponse::NotFoundErrorResponse(err) => {
                 error!("Failed to add result for job {}: {:?}", id, err);
-                return Err(ApiError("Failed to add result".to_string()));
+                return Ok(CompleteJobResponse::NotFoundErrorResponse(err));
             }
             CreateResultResponse::DefaultErrorResponse(err) => {
                 error!("Failed to add result for job {}: {:?}", id, err);
-                return Err(ApiError("Failed to add result".to_string()));
+                return Ok(CompleteJobResponse::DefaultErrorResponse(err));
             }
         };
 
@@ -5431,13 +5237,8 @@ where
         max_retries: i32,
         context: &C,
     ) -> Result<RetryJobResponse, ApiError> {
-        debug!(
-            "retry_job({}, {}, {}) - X-Span-ID: {:?}",
-            id,
-            run_id,
-            max_retries,
-            Has::<XSpanIdString>::get(context).0.clone()
-        );
+        authorize_job!(self, id, context, RetryJobResponse);
+
         let result = self
             .jobs_api
             .retry_job(id, run_id, max_retries, context)
@@ -5934,27 +5735,7 @@ where
         context: &C,
     ) -> Result<CreateAccessGroupResponse, ApiError> {
         // Only system administrators can create access groups
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self.authorization_service.check_admin_access(&auth).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(CreateAccessGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                // This shouldn't happen for admin access check, but handle it
-                return Ok(CreateAccessGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_admin!(self, context, CreateAccessGroupResponse);
 
         self.access_groups_api
             .create_access_group(body, context)
@@ -5987,44 +5768,19 @@ where
         context: &C,
     ) -> Result<DeleteAccessGroupResponse, ApiError> {
         // Only system administrators can delete access groups
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self.authorization_service.check_admin_access(&auth).await {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(DeleteAccessGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(DeleteAccessGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_admin!(self, context, DeleteAccessGroupResponse);
 
         // Cannot delete system groups (like the admin group)
         match self.authorization_service.is_system_group(id).await {
             Ok(true) => {
                 return Ok(DeleteAccessGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": "Cannot delete system groups"
-                    })),
+                    forbidden_error!("Cannot delete system groups"),
                 ));
             }
             Ok(false) => {}
             Err(e) => {
                 return Ok(DeleteAccessGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": e
-                    })),
+                    not_found_error!(e),
                 ));
             }
         }
@@ -6042,30 +5798,7 @@ where
     ) -> Result<AddUserToGroupResponse, ApiError> {
         // Group admins or system admins can add users to groups
         // Note: check_group_admin_access already blocks modifications to the admin group
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self
-            .authorization_service
-            .check_group_admin_access(&auth, group_id)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(AddUserToGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(AddUserToGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_group_admin!(self, group_id, context, AddUserToGroupResponse);
 
         self.access_groups_api
             .add_user_to_group(group_id, body, context)
@@ -6080,30 +5813,7 @@ where
     ) -> Result<RemoveUserFromGroupResponse, ApiError> {
         // Group admins or system admins can remove users from groups
         // Note: check_group_admin_access already blocks modifications to the admin group
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self
-            .authorization_service
-            .check_group_admin_access(&auth, group_id)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(RemoveUserFromGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(RemoveUserFromGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_group_admin!(self, group_id, context, RemoveUserFromGroupResponse);
 
         self.access_groups_api
             .remove_user_from_group(group_id, &user_name, context)
@@ -6143,30 +5853,13 @@ where
         context: &C,
     ) -> Result<AddWorkflowToGroupResponse, ApiError> {
         // Workflow owner or group admin can add workflows to groups
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self
-            .authorization_service
-            .check_workflow_group_access(&auth, workflow_id, group_id)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(AddWorkflowToGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(AddWorkflowToGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow_group!(
+            self,
+            workflow_id,
+            group_id,
+            context,
+            AddWorkflowToGroupResponse
+        );
 
         self.access_groups_api
             .add_workflow_to_group(workflow_id, group_id, context)
@@ -6180,30 +5873,13 @@ where
         context: &C,
     ) -> Result<RemoveWorkflowFromGroupResponse, ApiError> {
         // Workflow owner or group admin can remove workflows from groups
-        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
-        match self
-            .authorization_service
-            .check_workflow_group_access(&auth, workflow_id, group_id)
-            .await
-        {
-            AccessCheckResult::Allowed => {}
-            AccessCheckResult::Denied(reason) => {
-                return Ok(RemoveWorkflowFromGroupResponse::ForbiddenErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "Forbidden",
-                        "message": reason
-                    })),
-                ));
-            }
-            AccessCheckResult::NotFound(reason) => {
-                return Ok(RemoveWorkflowFromGroupResponse::NotFoundErrorResponse(
-                    models::ErrorResponse::new(serde_json::json!({
-                        "error": "NotFound",
-                        "message": reason
-                    })),
-                ));
-            }
-        }
+        authorize_workflow_group!(
+            self,
+            workflow_id,
+            group_id,
+            context,
+            RemoveWorkflowFromGroupResponse
+        );
 
         self.access_groups_api
             .remove_workflow_from_group(workflow_id, group_id, context)
@@ -6217,6 +5893,8 @@ where
         limit: Option<i64>,
         context: &C,
     ) -> Result<ListWorkflowGroupsResponse, ApiError> {
+        authorize_workflow!(self, workflow_id, context, ListWorkflowGroupsResponse);
+
         let (offset, limit) = process_pagination_params(offset, limit)?;
         self.access_groups_api
             .list_workflow_groups(workflow_id, offset, limit, context)
@@ -6229,6 +5907,37 @@ where
         user_name: String,
         context: &C,
     ) -> Result<CheckWorkflowAccessResponse, ApiError> {
+        let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
+
+        // If access control is enabled, we need to check if the caller is authorized to perform this check
+        if self.authorization_service.enforce_access_control() {
+            match auth {
+                None => {
+                    return Ok(CheckWorkflowAccessResponse::ForbiddenErrorResponse(
+                        forbidden_error!("Authentication required"),
+                    ));
+                }
+                Some(ref a) => {
+                    if a.subject != user_name {
+                        // Caller is checking someone else, check if they are an admin
+                        if !self
+                            .authorization_service
+                            .check_admin_access(&auth)
+                            .await
+                            .is_allowed()
+                        {
+                            return Ok(CheckWorkflowAccessResponse::ForbiddenErrorResponse(
+                                forbidden_error!(format!(
+                                    "Only admins can check access for other users (requester: {}, requested: {})",
+                                    a.subject, user_name
+                                )),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         self.access_groups_api
             .check_workflow_access(workflow_id, &user_name, context)
             .await

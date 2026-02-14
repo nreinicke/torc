@@ -824,12 +824,12 @@ fn test_jobs_update_restriction_cannot_change_status(start_server: &ServerProces
     let config = &start_server.config;
 
     // Create test workflow and job
-    let workflow = create_test_workflow(config, "test_status_change_restriction_workflow");
+    let workflow = create_test_workflow(config, "test_status_change_workflow");
     let workflow_id = workflow.id.unwrap();
-    let job = create_test_job(config, workflow_id, "test_no_status_change");
+    let job = create_test_job(config, workflow_id, "test_status_change");
     let job_id = job.id.unwrap();
 
-    // Job should be in Uninitialized status (can be updated)
+    // Job should be in Uninitialized status
     let current_job = default_api::get_job(config, job_id).expect("Failed to get job");
     assert_eq!(
         current_job.status.unwrap(),
@@ -837,30 +837,30 @@ fn test_jobs_update_restriction_cannot_change_status(start_server: &ServerProces
         "Job should start in Uninitialized status"
     );
 
-    // Try to update status to "ready" via API - should fail
+    // Attempt to update status to "ready" via API - should fail
     let mut job_to_update = current_job.clone();
     job_to_update.status = Some(JobStatus::Ready);
 
     let result = default_api::update_job(config, job_id, job_to_update);
     assert!(
         result.is_err(),
-        "Should fail when attempting to change job status field via API"
+        "Should not be able to change job status via update_job API"
     );
 
-    // Verify error message mentions status is immutable
-    let error_msg = format!("{:?}", result.unwrap_err());
+    // Verify the error message indicates status immutability
+    let err_str = format!("{:?}", result.unwrap_err());
     assert!(
-        error_msg.contains("immutable") || error_msg.contains("Cannot update job status"),
-        "Error message should indicate status field is immutable, got: {}",
-        error_msg
+        err_str.contains("immutable") || err_str.contains("Cannot update job status"),
+        "Error should mention status immutability, got: {}",
+        err_str
     );
 
-    // Verify the status hasn't changed
-    let final_job = default_api::get_job(config, job_id).expect("Failed to get job");
+    // Verify the job status hasn't changed
+    let job_after = default_api::get_job(config, job_id).expect("Failed to get job after update");
     assert_eq!(
-        final_job.status.unwrap(),
+        job_after.status.unwrap(),
         JobStatus::Uninitialized,
-        "Job status should remain unchanged"
+        "Job status should remain Uninitialized after rejected update"
     );
 }
 
