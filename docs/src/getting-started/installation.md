@@ -172,7 +172,7 @@ docker run --rm ghcr.io/natlabrockies/torc:latest \
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/NLR/torc.git
+git clone https://github.com/NatLabRockies/torc.git
 cd torc
 ```
 
