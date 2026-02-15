@@ -173,6 +173,31 @@ const WORKFLOW_STATUS_COLUMNS: &[&str] = &[
     "has_detected_need_to_run_completion_script",
 ];
 
+/// Combined allowed sort columns for workflow listing queries (workflow + status columns).
+const ALL_WORKFLOW_COLUMNS: &[&str] = &[
+    "id",
+    "name",
+    "user",
+    "description",
+    "timestamp",
+    "compute_node_expiration_buffer_seconds",
+    "compute_node_wait_for_new_jobs_seconds",
+    "compute_node_ignore_workflow_completion",
+    "compute_node_wait_for_healthy_database_minutes",
+    "compute_node_min_time_for_new_jobs_seconds",
+    "jobs_sort_method",
+    "resource_monitor_config",
+    "slurm_defaults",
+    "use_pending_failed",
+    "project",
+    "metadata",
+    "status_id",
+    "run_id",
+    "is_archived",
+    "is_canceled",
+    "has_detected_need_to_run_completion_script",
+];
+
 impl WorkflowsApiImpl {
     pub fn new(context: ApiContext) -> Self {
         Self { context }
@@ -350,6 +375,7 @@ impl WorkflowsApiImpl {
                     validated_sort_by,
                     reverse_sort,
                     default_sort_column,
+                    ALL_WORKFLOW_COLUMNS,
                 )
                 .build()
         } else {
@@ -361,6 +387,7 @@ impl WorkflowsApiImpl {
                     validated_sort_by,
                     reverse_sort,
                     default_sort_column,
+                    ALL_WORKFLOW_COLUMNS,
                 )
                 .build()
         };
