@@ -63,7 +63,7 @@ torc hpc partitions <profile-name>
 ```
 
 > **Note:** If your HPC system isn't detected, see [Custom HPC Profile](./custom-hpc-profile.md) or
-> [request built-in support](https://github.com/NREL/torc/issues).
+> [request built-in support](https://github.com/NatLabRockies/torc/issues).
 
 ## Create a Workflow with Resource Requirements
 
@@ -140,7 +140,7 @@ Once jobs complete:
 torc results list <workflow-id>
 ```
 
-Job output is stored in the `output/` directory by default.
+Job output is stored in the `torc_output/` directory by default.
 
 ## Example: Multi-Stage Pipeline
 
