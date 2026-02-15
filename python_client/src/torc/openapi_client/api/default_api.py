@@ -14356,7 +14356,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AccessGroupModel",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -14425,7 +14426,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AccessGroupModel",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -14494,7 +14496,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "AccessGroupModel",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -20345,6 +20348,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -20417,6 +20422,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -20489,6 +20496,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -22104,7 +22113,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListUserGroupMembershipsResponse",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -22181,7 +22191,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListUserGroupMembershipsResponse",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -22258,7 +22269,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListUserGroupMembershipsResponse",
-            '404': "DefaultErrorResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -27374,6 +27386,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -27450,6 +27464,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
@@ -27526,6 +27542,8 @@ class DefaultApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ListAccessGroupsResponse",
+            '403': "ForbiddenErrorResponse",
+            '404': "NotFoundErrorResponse",
             '500': "DefaultErrorResponse",
         }
         response_data = self.api_client.call_api(
