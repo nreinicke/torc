@@ -48,7 +48,7 @@ bcrypt = "0.18"
 rpassword = "7.3"
 
 # TUI-specific
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 petgraph = "0.8"
 
