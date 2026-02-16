@@ -48,11 +48,12 @@ use crate::client::apis::configuration::Configuration;
 use crate::client::apis::default_api;
 use crate::client::commands::hpc::create_registry_with_config_public;
 use crate::client::commands::pagination::{
-    EventListParams, FileListParams, JobListParams, ResourceRequirementsListParams,
-    ResultListParams, ScheduledComputeNodeListParams, SlurmSchedulersListParams,
-    UserDataListParams, WorkflowListParams, paginate_events, paginate_files, paginate_jobs,
-    paginate_resource_requirements, paginate_results, paginate_scheduled_compute_nodes,
-    paginate_slurm_schedulers, paginate_user_data, paginate_workflows,
+    ComputeNodeListParams, EventListParams, FileListParams, JobListParams,
+    ResourceRequirementsListParams, ResultListParams, ScheduledComputeNodeListParams,
+    SlurmSchedulersListParams, UserDataListParams, WorkflowListParams, paginate_compute_nodes,
+    paginate_events, paginate_files, paginate_jobs, paginate_resource_requirements,
+    paginate_results, paginate_scheduled_compute_nodes, paginate_slurm_schedulers,
+    paginate_user_data, paginate_workflows,
 };
 use crate::client::commands::slurm::{
     GroupByStrategy, WalltimeStrategy, generate_schedulers_for_workflow,
@@ -3675,8 +3676,18 @@ fn handle_export(
         }
     };
 
-    // Optionally get results
+    // Optionally get results (and compute nodes, which results reference)
     if include_results {
+        // Export compute nodes first - results have a foreign key to compute_node
+        export.compute_nodes =
+            match paginate_compute_nodes(config, workflow_id, ComputeNodeListParams::new()) {
+                Ok(nodes) => Some(nodes),
+                Err(e) => {
+                    print_error("listing compute nodes", &e);
+                    std::process::exit(1);
+                }
+            };
+
         let result_params = ResultListParams {
             workflow_id,
             all_runs: Some(true), // Include results from all runs
@@ -4102,6 +4113,67 @@ fn handle_import(
         }
     }
 
+    // Track actual import counts (not export file counts)
+    let mut imported_compute_nodes: usize = 0;
+    let mut imported_results: usize = 0;
+
+    // Import compute nodes if present (required for results, which reference them)
+    if !skip_results && let Some(ref compute_nodes) = export.compute_nodes {
+        for cn in compute_nodes {
+            let old_id = cn.id.unwrap();
+            let mut new_cn = cn.clone();
+            new_cn.id = None;
+            new_cn.workflow_id = new_workflow_id;
+            // Clear scheduler_config_id - the original scheduler won't exist
+            new_cn.scheduler_config_id = None;
+            // Mark as inactive since this is historical data
+            new_cn.is_active = Some(false);
+
+            match default_api::create_compute_node(config, new_cn) {
+                Ok(created) => {
+                    mappings.compute_nodes.insert(old_id, created.id.unwrap());
+                    imported_compute_nodes += 1;
+                }
+                Err(e) => {
+                    print_error("creating compute node", &e);
+                    // Continue - we'll skip results that reference this node
+                }
+            }
+        }
+    }
+
+    // If we have results but no compute node mappings (e.g., old export files without
+    // compute_nodes section), create a placeholder compute node so results can be imported.
+    let placeholder_compute_node_id = if !skip_results
+        && export.results.as_ref().is_some_and(|r| !r.is_empty())
+        && mappings.compute_nodes.is_empty()
+    {
+        let placeholder = models::ComputeNodeModel::new(
+            new_workflow_id,
+            "imported".to_string(),
+            0, // pid
+            chrono::Utc::now().to_rfc3339(),
+            1,                      // num_cpus
+            1.0,                    // memory_gb
+            0,                      // num_gpus
+            1,                      // num_nodes
+            "imported".to_string(), // compute_node_type
+            None,                   // scheduler
+        );
+        match default_api::create_compute_node(config, placeholder) {
+            Ok(created) => {
+                imported_compute_nodes += 1;
+                Some(created.id.unwrap())
+            }
+            Err(e) => {
+                print_error("creating placeholder compute node for results", &e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Import results if present and not skipped
     if !skip_results && let Some(ref results) = export.results {
         for result in results {
@@ -4115,10 +4187,24 @@ fn handle_import(
                 // Skip this result if we can't remap the job_id
                 continue;
             }
+            // Remap compute_node_id - use mapping if available, fall back to placeholder
+            if let Some(new_cn_id) = mappings.remap_compute_node_id(new_result.compute_node_id) {
+                new_result.compute_node_id = new_cn_id;
+            } else if let Some(placeholder_id) = placeholder_compute_node_id {
+                new_result.compute_node_id = placeholder_id;
+            } else {
+                // Skip this result if we have no compute node to assign
+                continue;
+            }
 
-            if let Err(e) = default_api::create_result(config, new_result) {
-                print_error("creating result", &e);
-                // Continue anyway - results are optional
+            match default_api::create_result(config, new_result) {
+                Ok(_) => {
+                    imported_results += 1;
+                }
+                Err(e) => {
+                    print_error("creating result", &e);
+                    // Continue anyway - results are optional
+                }
             }
         }
     }
@@ -4127,7 +4213,7 @@ fn handle_import(
     // that would be recreated by new operations on the imported workflow.
     // The skip_events flag exists for future use or special cases.
 
-    // Calculate stats
+    // Calculate stats - use actual import counts for results/compute_nodes
     let stats = ExportImportStats::from_export(&export);
 
     if format == "json" {
@@ -4140,12 +4226,19 @@ fn handle_import(
                 "jobs": stats.jobs,
                 "files": stats.files,
                 "user_data": stats.user_data,
+                "results": imported_results,
+                "compute_nodes": imported_compute_nodes,
             })
         );
     } else {
-        eprintln!(
-            "Imported workflow '{}' as ID {} ({} jobs, {} files, status reset)",
+        let mut summary = format!(
+            "Imported workflow '{}' as ID {} ({} jobs, {} files",
             workflow_name, new_workflow_id, stats.jobs, stats.files
         );
+        if imported_results > 0 {
+            summary.push_str(&format!(", {} results", imported_results));
+        }
+        summary.push_str(", status reset)");
+        eprintln!("{}", summary);
     }
 }
