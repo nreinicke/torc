@@ -83,7 +83,7 @@ sysinfo = "0.29"
 hostname = "0.4.1"
 json5 = "0.4"
 serde_yaml = "0.9"
-tabled = "0.17"
+tabled = "0.20"
 kdl = "6.5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 nvml-wrapper = "0.10"
