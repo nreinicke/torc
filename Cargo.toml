@@ -44,7 +44,7 @@ url = "2.5"
 validator = { version = "0.16", features = ["derive"] }
 mime = "0.3"
 futures = "0.3"
-bcrypt = "0.15"
+bcrypt = "0.18"
 rpassword = "7.3"
 
 # TUI-specific
