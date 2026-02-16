@@ -74,7 +74,7 @@ anyhow = "1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 dotenvy = "0.15.7"
 iso8601 = "0.6"
-jsonwebtoken = "9.3.0"
+jsonwebtoken = "10.3.0"
 sha2 = "0.10"
 
 # Client-specific
