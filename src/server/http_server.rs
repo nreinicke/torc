@@ -18,7 +18,7 @@ use crate::server::api::SchedulersApi;
 use crate::server::api::UserDataApi;
 use crate::server::api::WorkflowActionsApi;
 use crate::server::api::WorkflowsApi;
-use crate::server::api::database_error_with_msg;
+use crate::server::api::{database_error_with_msg, database_lock_aware_error};
 use crate::server::api_types::*;
 use crate::server::auth::MakeHtpasswdAuthenticator;
 use crate::server::authorization::{AccessCheckResult, AuthorizationService};
@@ -613,7 +613,7 @@ where
                 "Failed to begin transaction for workflow {}: {}",
                 workflow_id, e
             );
-            return Err(database_error_with_msg(e, "Failed to begin transaction"));
+            return Err(database_lock_aware_error(e, "Failed to begin transaction"));
         }
     };
 
@@ -643,7 +643,10 @@ where
                 "Database error fetching completed jobs for workflow {}: {}",
                 workflow_id, e
             );
-            return Err(database_error_with_msg(e, "Failed to fetch completed jobs"));
+            return Err(database_lock_aware_error(
+                e,
+                "Failed to fetch completed jobs",
+            ));
         }
     };
 
@@ -713,7 +716,10 @@ where
             "Database error marking jobs as processed for workflow {}: {}",
             workflow_id, e
         );
-        return Err(database_error_with_msg(e, "Failed to mark jobs processed"));
+        return Err(database_lock_aware_error(
+            e,
+            "Failed to mark jobs processed",
+        ));
     }
 
     // Commit the transaction
@@ -722,7 +728,7 @@ where
             "Failed to commit transaction for workflow {}: {}",
             workflow_id, e
         );
-        return Err(database_error_with_msg(e, "Failed to commit transaction"));
+        return Err(database_lock_aware_error(e, "Failed to commit transaction"));
     }
 
     info!(
@@ -1521,7 +1527,7 @@ impl<C> Server<C> {
                     Ok(result) => result.rows_affected(),
                     Err(e) => {
                         debug!("batch_unblock_jobs_tx: cancellation query failed: {}", e);
-                        return Err(database_error_with_msg(e, "Failed to update job status"));
+                        return Err(database_lock_aware_error(e, "Failed to update job status"));
                     }
                 };
 
@@ -1575,7 +1581,7 @@ impl<C> Server<C> {
             Ok(rows) => rows,
             Err(e) => {
                 debug!("batch_unblock_jobs_tx: ready query failed: {}", e);
-                return Err(database_error_with_msg(e, "Failed to update job status"));
+                return Err(database_lock_aware_error(e, "Failed to update job status"));
             }
         };
 
