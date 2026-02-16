@@ -94,7 +94,10 @@ pub fn run(
     Ok(())
 }
 
-fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
+fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     use app::{DetailViewType, Focus, JobAction, PopupType, WorkflowAction};
 
     loop {
