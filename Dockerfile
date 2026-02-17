@@ -32,8 +32,7 @@ LABEL org.opencontainers.image.title="torc" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates sqlite tmux
+RUN apk add --no-cache ca-certificates sqlite
 
 # Copy pre-extracted release binaries from the build context
 COPY artifact/torc artifact/torc-server artifact/torc-slurm-job-runner \
