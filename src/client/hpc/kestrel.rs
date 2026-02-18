@@ -1,7 +1,7 @@
 //! NLR Kestrel HPC profile
 //!
 //! Kestrel is NLR's flagship HPC system featuring:
-//! - 2,240 standard CPU nodes (104 cores, 240GB RAM each)
+//! - 2,240 standard CPU nodes (104 cores, ~240 GiB RAM each)
 //! - 156 GPU nodes with 4x NVIDIA H100 GPUs (80GB each)
 //! - Various specialized partitions for different workload types
 //!
@@ -42,7 +42,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "debug".to_string(),
             description: "Nodes dedicated to developing and troubleshooting jobs".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 3600, // 1 hour
             max_nodes: Some(2),
             max_nodes_per_user: Some(2),
@@ -61,7 +61,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "short".to_string(),
             description: "Nodes that prefer jobs with walltimes <= 4 hours".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000, // ~240G usable (984256M total but we use practical limit)
+            memory_mb: 246_064,
             max_walltime_secs: 4 * 3600, // 4 hours
             max_nodes: Some(2240),
             max_nodes_per_user: None,
@@ -80,7 +80,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "standard".to_string(),
             description: "Nodes that prefer jobs with walltimes <= 2 days".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 2 * 24 * 3600, // 2 days
             max_nodes: Some(2240),
             max_nodes_per_user: Some(1050),
@@ -99,7 +99,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "long".to_string(),
             description: "Nodes that prefer jobs with walltimes > 2 days (max 10 days)".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 10 * 24 * 3600, // 10 days
             max_nodes: Some(430),
             max_nodes_per_user: Some(215),
@@ -118,7 +118,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "medmem".to_string(),
             description: "Nodes with 1TB of RAM".to_string(),
             cpus_per_node: 104,
-            memory_mb: 1_000_000,              // ~1TB
+            memory_mb: 984_256,
             max_walltime_secs: 10 * 24 * 3600, // 10 days
             max_nodes: Some(64),
             max_nodes_per_user: Some(32),
@@ -176,7 +176,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             description: "CPU nodes with dual network interface cards for multi-node jobs"
                 .to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 2 * 24 * 3600, // 2 days
             max_nodes: Some(512),
             max_nodes_per_user: Some(256),
@@ -195,7 +195,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "hbwl".to_string(),
             description: "HBW nodes for jobs > 2 days (max 10 days)".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 10 * 24 * 3600, // 10 days
             max_nodes: Some(128),
             max_nodes_per_user: Some(64),
@@ -214,7 +214,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "nvme".to_string(),
             description: "CPU nodes with 1.7TB NVMe local drives".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 2 * 24 * 3600, // 2 days
             max_nodes: Some(256),
             max_nodes_per_user: Some(128),
@@ -233,7 +233,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "shared".to_string(),
             description: "Nodes that can be shared by multiple users and jobs".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 2 * 24 * 3600, // 2 days
             max_nodes: Some(128),
             max_nodes_per_user: Some(64),
@@ -252,7 +252,7 @@ fn kestrel_partitions() -> Vec<HpcPartition> {
             name: "sharedl".to_string(),
             description: "Shared nodes for jobs > 2 days".to_string(),
             cpus_per_node: 104,
-            memory_mb: 240_000,
+            memory_mb: 246_064,
             max_walltime_secs: 10 * 24 * 3600, // Docs say 2 days but listing says 10 days pattern
             max_nodes: Some(32),
             max_nodes_per_user: Some(16),

@@ -215,7 +215,7 @@ fn test_kestrel_standard_partition() {
         .expect("Standard partition not found");
 
     assert_eq!(standard.cpus_per_node, 104);
-    assert_eq!(standard.memory_mb, 240_000);
+    assert_eq!(standard.memory_mb, 246_064);
     assert_eq!(standard.max_walltime_secs, 172800); // 48 hours
     assert!(standard.gpus_per_node.is_none());
 }
@@ -1055,8 +1055,8 @@ fn test_generate_schedulers_sets_memory() {
     let scheduler = &spec.slurm_schedulers.as_ref().unwrap()[0];
     // Memory should be set to the partition's max memory, not the job's requirement.
     // This allows jobs to use more memory than their estimates.
-    // Kestrel standard partition has 240,000 MB = 234g.
-    assert_eq!(scheduler.mem.as_deref(), Some("234g"));
+    // Kestrel standard partition has 246,064 MB = 240g.
+    assert_eq!(scheduler.mem.as_deref(), Some("240g"));
 }
 
 #[rstest]
@@ -1380,10 +1380,10 @@ fn test_generate_schedulers_stage_aware_for_dependent_jobs() {
 #[rstest]
 fn test_generate_schedulers_memory_constrained_allocation() {
     // Create 10 jobs that are memory-heavy: 8 CPUs, 120GB each
-    // On Kestrel standard nodes (104 CPUs, 240GB):
+    // On Kestrel standard nodes (104 CPUs, 246,064MB):
     // - CPU-based: 104/8 = 13 jobs per node
-    // - Memory-based: 240,000MB / 122,880MB = ~1.95 = 1 job per node
-    // Memory should be the limiting factor, so we need 10 nodes for 10 jobs
+    // - Memory-based: 246,064MB / 122,880MB = 2 jobs per node
+    // Memory should be the limiting factor
     let jobs: Vec<JobSpec> = (0..10)
         .map(|i| JobSpec {
             name: format!("memory_job_{}", i),
@@ -1431,14 +1431,14 @@ fn test_generate_schedulers_memory_constrained_allocation() {
 
     let action = &actions[0];
     // 10 jobs, 120GB memory each, 1 hour runtime
-    // Concurrent by memory: 240GB / 120GB = 2 (but actually 240000MB / 122880MB = 1.95, so 1)
+    // Concurrent by memory: 246,064MB / 122,880MB = 2 jobs per node
     // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 1 concurrent × 4 time slots = 4 jobs
-    // Allocations needed: ceil(10 / 4) = 3
+    // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
+    // Allocations needed: ceil(10 / 8) = 2
     assert_eq!(
         action.num_allocations,
-        Some(3),
-        "Should allocate 3 nodes for 10 memory-heavy jobs (1 concurrent × 4 time slots = 4 jobs per allocation)"
+        Some(2),
+        "Should allocate 2 nodes for 10 memory-heavy jobs (2 concurrent × 4 time slots = 8 jobs per allocation)"
     );
 }
 
@@ -1450,7 +1450,7 @@ fn test_generate_schedulers_cpu_vs_memory_constraint() {
         description: Some("Test CPU vs memory constraints".to_string()),
         jobs: vec![
             // 4 CPU-limited jobs: 52 CPUs, 60GB each
-            // On 104 CPU / 240GB node: 104/52=2 by CPU, 240000/61440=3.9 by memory -> CPU wins (2 per node)
+            // On 104 CPU / 246,064MB node: 104/52=2 by CPU, 246064/61440=4 by memory -> CPU wins (2 per node)
             // 4 jobs / 2 per node = 2 allocations
             JobSpec {
                 name: "cpu_job_1".to_string(),
@@ -1507,8 +1507,8 @@ fn test_generate_schedulers_cpu_vs_memory_constraint() {
 
     // 4 jobs, 52 CPUs each, 60GB memory, 1 hour runtime
     // Concurrent by CPU: 104/52 = 2 jobs per node
-    // Concurrent by memory: 240000/61440 = 3.9 = 3 jobs per node
-    // Concurrent = min(2, 3) = 2 jobs per node (CPU-limited)
+    // Concurrent by memory: 246064/61440 = 4 jobs per node
+    // Concurrent = min(2, 4) = 2 jobs per node (CPU-limited)
     // Time slots: 4h walltime / 1h runtime = 4 sequential batches
     // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
     // Allocations needed: ceil(4 / 8) = 1
