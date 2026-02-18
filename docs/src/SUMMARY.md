@@ -65,10 +65,10 @@
 # Execution Modes
 
 - [HPC & Slurm](./specialized/hpc/index.md)
-  - [Submit a Workflow to Slurm](./specialized/hpc/submit-slurm-workflow.md)
-  - [Slurm Workflows](./specialized/hpc/slurm-workflows.md)
+  - [Slurm Overview](./specialized/hpc/slurm-workflows.md)
+  - [Submitting Slurm Workflows](./specialized/hpc/submit-slurm-workflow.md)
+  - [Advanced Slurm Configuration](./specialized/hpc/slurm.md)
   - [Debugging Slurm Workflows](./specialized/hpc/debugging-slurm.md)
-  - [Working with Slurm](./specialized/hpc/slurm.md)
   - [HPC Profiles](./specialized/hpc/hpc-profiles.md)
   - [HPC Profiles Reference](./specialized/hpc/hpc-profiles-reference.md)
   - [HPC Deployment](./specialized/hpc/hpc-deployment.md)

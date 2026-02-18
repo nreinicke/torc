@@ -173,7 +173,7 @@ The execution plan helps you verify that:
 ## See Also
 
 - [Web Dashboard](../monitoring/dashboard.md) — Full dashboard documentation
-- [Slurm Workflows](../../specialized/hpc/slurm-workflows.md) — Understanding Slurm integration
+- [Slurm Overview](../../specialized/hpc/slurm-workflows.md) — Understanding Slurm integration
 - [Workflow Actions](../../specialized/design/workflow-actions.md) — How actions trigger scheduler
   allocations
 - [Subgraphs Example](https://github.com/NatLabRockies/torc/tree/main/examples/subgraphs) — Complete

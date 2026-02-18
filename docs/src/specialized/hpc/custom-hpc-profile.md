@@ -368,4 +368,4 @@ information and we'll add it for you.
 
 - [Working with HPC Profiles](./hpc-profiles.md) - General HPC profile usage
 - [HPC Profiles Reference](./hpc-profiles-reference.md) - Complete configuration options
-- [Slurm Workflows](./slurm-workflows.md) - Simplified Slurm approach
+- [Slurm Overview](./slurm-workflows.md) - Simplified Slurm approach

@@ -248,5 +248,5 @@ tail -100 /scratch/$USER/torc/logs/torc-server*.log
 
 - [Configuration Reference](../../core/reference/configuration.md)
 - [HPC Profiles Reference](./hpc-profiles-reference.md)
-- [Working with Slurm](./slurm.md)
+- [Advanced Slurm Configuration](./slurm.md)
 - [Server Deployment](../admin/server-deployment.md)

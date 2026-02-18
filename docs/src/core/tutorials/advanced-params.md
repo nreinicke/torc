@@ -354,6 +354,7 @@ See these example files for hyperparameter sweep patterns:
 
 - [Multi-Stage Workflows with Barriers](./multi-stage-barrier.md) - Essential for scaling to
   thousands of jobs
-- [Working with Slurm](../../specialized/hpc/slurm.md) - Deploy grid searches on HPC clusters
+- [Advanced Slurm Configuration](../../specialized/hpc/slurm.md) - Deploy grid searches on HPC
+  clusters
 - [Resource Monitoring](../monitoring/resource-monitoring.md) - Track resource usage across your
   sweep

@@ -1,4 +1,4 @@
-# Slurm Workflows
+# Slurm Overview
 
 This document explains how Torc simplifies running workflows on Slurm-based HPC systems. The key
 insight is that **you don't need to understand Slurm schedulers or workflow actions** to run
@@ -501,7 +501,7 @@ output, and submit the reviewed configuration with `torc submit`.
 ## Advanced: Manual Scheduler Configuration
 
 For advanced users who need fine-grained control, you can define schedulers and actions manually.
-See [Working with Slurm](./slurm.md) for details.
+See [Advanced Slurm Configuration](./slurm.md) for details.
 
 Common reasons for manual configuration:
 
@@ -544,6 +544,6 @@ torc hpc match kestrel --cpus 32 --memory 64g --walltime 2h --gpus 2
 - [Visualizing Workflow Structure](../../core/workflows/visualizing-workflows.md) — Execution plans
   and DAG visualization
 - [HPC Profiles](./hpc-profiles.md) — Detailed HPC profile usage
-- [Working with Slurm](./slurm.md) — Advanced Slurm configuration
+- [Advanced Slurm Configuration](./slurm.md) — Manual Slurm scheduler setup
 - [Resource Requirements Reference](../../core/reference/resources.md) — Complete specification
 - [Workflow Actions](../design/workflow-actions.md) — Understanding actions

@@ -422,6 +422,6 @@ Generated walltime uses `HH:MM:SS` format (e.g., `04:00:00`).
 
 - [Working with HPC Profiles](./hpc-profiles.md)
 - [Custom HPC Profile Tutorial](./custom-hpc-profile.md)
-- [Working with Slurm](./slurm.md)
+- [Advanced Slurm Configuration](./slurm.md)
 - [Resource Requirements](../../core/reference/resources.md)
 - [Configuration Reference](../../core/reference/configuration.md)

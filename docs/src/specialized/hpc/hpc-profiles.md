@@ -159,14 +159,14 @@ See [Configuration Reference](../../core/reference/configuration.md) for full co
 ## Using Profiles with Slurm Workflows
 
 HPC profiles are used by Slurm-related commands to automatically generate scheduler configurations.
-See [Working with Slurm](./slurm.md) for details on:
+See [Advanced Slurm Configuration](./slurm.md) for details on:
 
 - `torc submit-slurm` - Submit workflows with auto-generated schedulers
 - `torc workflows create-slurm` - Create workflows with auto-generated schedulers
 
 ## See Also
 
-- [Working with Slurm](./slurm.md)
+- [Advanced Slurm Configuration](./slurm.md)
 - [Custom HPC Profile Tutorial](./custom-hpc-profile.md)
 - [HPC Profiles Reference](./hpc-profiles-reference.md)
 - [Configuration Reference](../../core/reference/configuration.md)

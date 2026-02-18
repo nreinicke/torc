@@ -297,7 +297,7 @@ ls -la /scratch/checkpoints/
 
 ## See Also
 
-- [Working with Slurm](./slurm.md) - General Slurm configuration
+- [Advanced Slurm Configuration](./slurm.md) - Manual Slurm scheduler setup
 - [Managing Resources](./resources.md) - Resource requirements configuration
 - [Debugging Workflows](./debugging.md) - Troubleshooting workflow issues
 - [Slurm sbatch --signal option](https://slurm.schedmd.com/sbatch.html#OPT_signal) - Customize which

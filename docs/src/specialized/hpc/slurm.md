@@ -1,9 +1,9 @@
-# Working with Slurm
+# Advanced Slurm Configuration
 
 This guide covers advanced Slurm configuration for users who need fine-grained control over their
 HPC workflows.
 
-> **For most users**: See [Slurm Workflows](./slurm-workflows.md) for the recommended approach using
+> **For most users**: See [Slurm Overview](./slurm-workflows.md) for the recommended approach using
 > `torc submit-slurm`. You don't need to manually configure schedulers or actions—Torc handles this
 > automatically.
 
@@ -314,7 +314,7 @@ curl $TORC_API_URL/health
 
 ## See Also
 
-- [Slurm Workflows](./slurm-workflows.md) — Simplified workflow approach
+- [Slurm Overview](./slurm-workflows.md) — Simplified workflow approach
 - [HPC Profiles](./hpc-profiles.md) — Automatic partition matching
 - [Workflow Actions](../design/workflow-actions.md) — Action system details
 - [Debugging Slurm Workflows](./debugging-slurm.md) — Troubleshooting guide

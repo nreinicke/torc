@@ -204,8 +204,8 @@ This shows what schedulers and actions Torc will create without submitting anyth
 ## Next Steps
 
 - [CLI Cheat Sheet](../core/reference/cli-cheatsheet.md) — Quick reference for all common commands
-- [Slurm Workflows](./slurm-workflows.md) — How Torc manages Slurm
+- [Slurm Overview](./slurm-workflows.md) — How Torc manages Slurm
 - [Resource Requirements](../../core/reference/resources.md) — All resource options
 - [HPC Profiles](./hpc-profiles.md) — Managing HPC configurations
-- [Working with Slurm](./slurm.md) — Advanced Slurm configuration
+- [Advanced Slurm Configuration](./slurm.md) — Manual Slurm scheduler setup
 - [Debugging Slurm Workflows](./debugging-slurm.md) — Troubleshooting

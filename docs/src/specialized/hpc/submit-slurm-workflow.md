@@ -1,4 +1,4 @@
-# How to Submit a Workflow to Slurm
+# Submitting Slurm Workflows
 
 Submit a workflow specification to a Slurm-based HPC system with automatic scheduler generation.
 
@@ -53,5 +53,5 @@ torc submit-slurm --help
 
 ## See Also
 
-- [Slurm Workflows](../../specialized/hpc/slurm-workflows.md) — Full Slurm integration guide
+- [Slurm Overview](../../specialized/hpc/slurm-workflows.md) — Full Slurm integration guide
 - [HPC Profiles](../../specialized/hpc/hpc-profiles.md) — Available HPC system configurations

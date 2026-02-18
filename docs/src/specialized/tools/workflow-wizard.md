@@ -335,4 +335,4 @@ In this tutorial, you learned:
 
 - [Diamond Workflow](./diamond.md) - Learn about file-based implicit dependencies
 - [Simple Parameterization](./simple-params.md) - Create parameter sweeps programmatically
-- [Working with Slurm](../hpc/slurm.md) - Advanced Slurm configuration
+- [Advanced Slurm Configuration](../hpc/slurm.md) - Manual Slurm scheduler setup
