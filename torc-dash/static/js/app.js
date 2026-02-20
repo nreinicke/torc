@@ -47,7 +47,7 @@ class TorcDashboard {
         this.debugJobs = [];
         this.selectedDebugJob = null;
         this.currentLogTab = 'stdout';
-        this.debugOutputDir = 'output';
+        this.debugOutputDir = 'torc_output';
 
         // Resource plots tab state
         this.resourceDatabases = [];

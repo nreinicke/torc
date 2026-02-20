@@ -399,7 +399,7 @@ Object.assign(TorcDashboard.prototype, {
         }
 
         // Get stored output directory or default
-        const outputDir = localStorage.getItem('torc-job-logs-output-dir') || 'output';
+        const outputDir = localStorage.getItem('torc-job-logs-output-dir') || 'torc_output';
         const currentLogTab = this._jobLogTab || 'stdout';
 
         // Build run selector if multiple runs
@@ -412,7 +412,7 @@ Object.assign(TorcDashboard.prototype, {
                 <div class="job-logs-controls">
                     <div class="job-logs-control-group">
                         <label for="job-logs-output-dir">Output Directory:</label>
-                        <input type="text" id="job-logs-output-dir" value="${this.escapeHtml(outputDir)}" placeholder="output">
+                        <input type="text" id="job-logs-output-dir" value="${this.escapeHtml(outputDir)}" placeholder="torc_output">
                     </div>
                     ${data.results.length > 1 ? `
                         <div class="job-logs-control-group">
@@ -484,7 +484,7 @@ Object.assign(TorcDashboard.prototype, {
         }
 
         // Get output directory
-        const outputDir = document.getElementById('job-logs-output-dir')?.value || 'output';
+        const outputDir = document.getElementById('job-logs-output-dir')?.value || 'torc_output';
         const isStdout = (this._jobLogTab || 'stdout') === 'stdout';
 
         // Construct log file path based on naming convention

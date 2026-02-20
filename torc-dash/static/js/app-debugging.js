@@ -41,7 +41,7 @@ Object.assign(TorcDashboard.prototype, {
         }
 
         // Get output directory from the input field
-        this.debugOutputDir = document.getElementById('debug-output-dir')?.value || 'output';
+        this.debugOutputDir = document.getElementById('debug-output-dir')?.value || 'torc_output';
 
         try {
             // Get jobs and results for the workflow
@@ -220,7 +220,7 @@ Object.assign(TorcDashboard.prototype, {
             return;
         }
 
-        const outputDir = document.getElementById('debug-output-dir')?.value || 'output';
+        const outputDir = document.getElementById('debug-output-dir')?.value || 'torc_output';
         const errorsOnly = document.getElementById('slurm-errors-only')?.checked || false;
         const resultsContainer = document.getElementById('slurm-logs-results');
 
@@ -339,7 +339,7 @@ Object.assign(TorcDashboard.prototype, {
             return;
         }
 
-        const outputDir = document.getElementById('debug-output-dir')?.value || 'output';
+        const outputDir = document.getElementById('debug-output-dir')?.value || 'torc_output';
         const resultsContainer = document.getElementById('slurm-sacct-results');
 
         resultsContainer.innerHTML = '<div class="loading-indicator">Collecting sacct data...</div>';

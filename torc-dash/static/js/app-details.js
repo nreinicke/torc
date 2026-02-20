@@ -697,7 +697,7 @@ Object.assign(TorcDashboard.prototype, {
         this.currentSlurmLogTab = 'stdout';
 
         // Get output directory from the debugging tab or use default
-        const outputDir = document.getElementById('debug-output-dir')?.value || 'output';
+        const outputDir = document.getElementById('debug-output-dir')?.value || 'torc_output';
         this.slurmLogsOutputDir = outputDir;
 
         // Update modal title and info
@@ -744,7 +744,7 @@ Object.assign(TorcDashboard.prototype, {
         // Construct the log file path based on the naming convention
         // stdout: {output_dir}/slurm_output_wf{workflow_id}_sl{slurm_job_id}.o
         // stderr: {output_dir}/slurm_output_wf{workflow_id}_sl{slurm_job_id}.e
-        const outputDir = this.slurmLogsOutputDir || 'output';
+        const outputDir = this.slurmLogsOutputDir || 'torc_output';
         const extension = this.currentSlurmLogTab === 'stdout' ? 'o' : 'e';
         const workflowId = this.selectedWorkflowId || 0;
         const filePath = `${outputDir}/slurm_output_wf${workflowId}_sl${this.currentSlurmJobId}.${extension}`;

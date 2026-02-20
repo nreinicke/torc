@@ -17,7 +17,7 @@ Object.assign(TorcDashboard.prototype, {
     },
 
     async scanResourceDatabases() {
-        const baseDir = document.getElementById('resource-db-dir')?.value || 'output/resource_utilization';
+        const baseDir = document.getElementById('resource-db-dir')?.value || 'torc_output/resource_utilization';
         const listContainer = document.getElementById('resource-db-list');
 
         if (!listContainer) return;

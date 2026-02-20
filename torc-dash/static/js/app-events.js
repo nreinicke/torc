@@ -143,7 +143,9 @@ Object.assign(TorcDashboard.prototype, {
         }
 
         if (this.events.length === 0) {
-            container.innerHTML = '<div class="placeholder-message">Waiting for events... (SSE connected)</div>';
+            const connected = this._eventSource && this._eventSource.readyState !== EventSource.CLOSED;
+            const statusText = connected ? 'Waiting for events... (SSE connected)' : 'No events yet (SSE not connected)';
+            container.innerHTML = `<div class="placeholder-message">${statusText}</div>`;
             return;
         }
 
