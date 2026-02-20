@@ -524,8 +524,18 @@ async fn proxy_handler(
 
 // ============== CLI Command Handlers ==============
 
-/// Extract workflow ID from CLI output like "Created workflow 123" or "ID: 123"
+/// Extract workflow ID from CLI output.
+/// Tries JSON first ({"workflow_id": 123}), then falls back to text patterns
+/// like "Created workflow 123" or "ID: 123".
 fn extract_workflow_id(stdout: &str) -> Option<String> {
+    // Try JSON parsing first
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout)
+        && let Some(id) = json.get("workflow_id")
+    {
+        return Some(id.to_string().trim_matches('"').to_string());
+    }
+
+    // Fall back to text pattern matching
     for line in stdout.lines() {
         if line.contains("Created workflow") {
             // Extract the number after "Created workflow"
@@ -703,7 +713,7 @@ async fn cli_create_handler(
         // Spec is a file path
         run_torc_command(
             &state.torc_bin,
-            &["workflows", "create", &req.spec],
+            &["-f", "json", "workflows", "create", &req.spec],
             &state.api_url,
         )
         .await
@@ -722,7 +732,7 @@ async fn cli_create_handler(
 
         let result = run_torc_command(
             &state.torc_bin,
-            &["workflows", "create", &temp_path],
+            &["-f", "json", "workflows", "create", &temp_path],
             &state.api_url,
         )
         .await;
@@ -815,7 +825,14 @@ async fn cli_create_slurm_handler(
 
     let result = if req.is_file {
         // Spec is a file path
-        let mut args = vec!["workflows", "create-slurm", "--account", &req.account];
+        let mut args = vec![
+            "-f",
+            "json",
+            "workflows",
+            "create-slurm",
+            "--account",
+            &req.account,
+        ];
         if let Some(ref profile) = req.profile {
             args.push("--hpc-profile");
             args.push(profile);
@@ -835,7 +852,14 @@ async fn cli_create_slurm_handler(
             });
         }
 
-        let mut args = vec!["workflows", "create-slurm", "--account", &req.account];
+        let mut args = vec![
+            "-f",
+            "json",
+            "workflows",
+            "create-slurm",
+            "--account",
+            &req.account,
+        ];
         if let Some(ref profile) = req.profile {
             args.push("--hpc-profile");
             args.push(profile);

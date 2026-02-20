@@ -217,6 +217,26 @@ body {
     gap: 8px;
 }
 
+.sidebar-dark-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    margin-top: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.sidebar-dark-toggle:hover {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.dark-toggle-icon {
+    font-size: 14px;
+}
+
 .connection-status {
     display: flex;
     align-items: center;
@@ -1829,14 +1849,16 @@ textarea.text-input {
     padding: 8px 16px;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
     font-size: 13px;
+    font-weight: 500;
     transition: var(--transition);
 }
 
 .plot-tab:hover {
-    background: var(--bg-tertiary);
+    background: var(--border-color);
 }
 
 .plot-tab.active {
@@ -2077,16 +2099,18 @@ textarea.text-input {
 .resource-preset-btn {
     padding: 6px 12px;
     font-size: 12px;
+    font-weight: 500;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
-    background: var(--bg-primary);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
     transition: var(--transition);
 }
 
 .resource-preset-btn:hover {
     border-color: var(--primary-color);
-    background: rgba(0, 123, 255, 0.05);
+    background: var(--border-color);
 }
 
 .resource-preset-btn.selected {

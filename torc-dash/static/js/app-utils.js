@@ -118,4 +118,23 @@ Object.assign(TorcDashboard.prototype, {
 
         return escaped;
     },
+
+    /**
+     * Extract workflow ID from CLI output.
+     * Tries JSON first ({"workflow_id": 123}), then falls back to text patterns.
+     */
+    extractWorkflowId(stdout) {
+        if (!stdout) return null;
+        try {
+            const data = JSON.parse(stdout);
+            if (data.workflow_id != null) return String(data.workflow_id);
+        } catch (e) {
+            // Not JSON, try text patterns
+        }
+        const match = stdout.match(/Created workflow\s+(\S+)/i);
+        if (match) return match[1];
+        const idMatch = stdout.match(/ID:\s*(\S+)/);
+        if (idMatch) return idMatch[1];
+        return null;
+    },
 });

@@ -823,12 +823,9 @@ Object.assign(TorcDashboard.prototype, {
                 await this.loadWorkflows();
 
                 const shouldInit = document.getElementById('create-option-initialize')?.checked;
-                const shouldRun = document.getElementById('create-option-run')?.checked;
-                const idMatch = result.stdout?.match(/workflow[_\s]?id[:\s]+([a-zA-Z0-9-]+)/i);
-                if (idMatch) {
-                    const workflowId = idMatch[1];
-                    if (shouldInit) await this.initializeWorkflow(workflowId);
-                    if (shouldRun) await this.runWorkflow(workflowId);
+                const workflowId = this.extractWorkflowId(result.stdout);
+                if (workflowId && shouldInit) {
+                    await this.initializeWorkflow(workflowId);
                 }
             } else {
                 this.showToast('Error: ' + (result.stderr || result.stdout || 'Unknown error'), 'error');

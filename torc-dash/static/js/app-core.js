@@ -23,6 +23,9 @@ Object.assign(TorcDashboard.prototype, {
         if (themeSelector) themeSelector.value = theme;
         if (themeSelectorGroup) themeSelectorGroup.style.display = darkMode ? 'block' : 'none';
 
+        // Sync sidebar dark mode toggle
+        this.updateSidebarDarkToggle(darkMode);
+
         const refreshInterval = localStorage.getItem('torc-refresh-interval') || '30';
         const intervalInput = document.getElementById('refresh-interval');
         if (intervalInput) intervalInput.value = refreshInterval;
@@ -51,6 +54,7 @@ Object.assign(TorcDashboard.prototype, {
             } else {
                 this.removeAllThemes();
             }
+            this.updateSidebarDarkToggle(e.target.checked);
         });
 
         // Apply theme immediately when selector changes
@@ -58,6 +62,18 @@ Object.assign(TorcDashboard.prototype, {
             this.applyTheme(e.target.value);
             localStorage.setItem('torc-theme', e.target.value);
         });
+
+        // Sidebar dark mode toggle
+        document.getElementById('sidebar-dark-toggle')?.addEventListener('click', () => {
+            this.toggleDarkMode();
+        });
+    },
+
+    updateSidebarDarkToggle(isDark) {
+        const icon = document.getElementById('dark-toggle-icon');
+        const label = document.getElementById('dark-toggle-label');
+        if (icon) icon.innerHTML = isDark ? '&#9788;' : '&#9790;';
+        if (label) label.textContent = isDark ? 'Light Mode' : 'Dark Mode';
     },
 
     applyTheme(theme) {
@@ -119,6 +135,7 @@ Object.assign(TorcDashboard.prototype, {
             if (selector) selector.value = nextTheme.id;
             const selectorGroup = document.getElementById('theme-selector-group');
             if (selectorGroup) selectorGroup.style.display = 'block';
+            this.updateSidebarDarkToggle(true);
         } else {
             document.body.classList.remove('dark-mode');
             this.removeAllThemes();
@@ -129,6 +146,7 @@ Object.assign(TorcDashboard.prototype, {
             if (checkbox) checkbox.checked = false;
             const selectorGroup = document.getElementById('theme-selector-group');
             if (selectorGroup) selectorGroup.style.display = 'none';
+            this.updateSidebarDarkToggle(false);
         }
 
         this.showToast(`Theme: ${nextTheme.name}`, 'info');
@@ -152,6 +170,7 @@ Object.assign(TorcDashboard.prototype, {
             document.body.classList.remove('dark-mode');
             this.removeAllThemes();
         }
+        this.updateSidebarDarkToggle(darkMode);
 
         this.showToast('Settings saved', 'success');
 
@@ -198,14 +217,18 @@ Object.assign(TorcDashboard.prototype, {
             dagVisualizer.loadJobDependencies(this.selectedWorkflowId);
         }
 
-        // Sync events workflow selector with selected workflow and clear badge
+        // Sync events workflow selector with selected workflow and start SSE stream
         if (tabName === 'events') {
             const badge = document.getElementById('event-badge');
             if (badge) badge.style.display = 'none';
             if (this.selectedWorkflowId) {
                 const eventsSelector = document.getElementById('events-workflow-selector');
-                if (eventsSelector) {
+                if (eventsSelector && eventsSelector.value !== this.selectedWorkflowId) {
                     eventsSelector.value = this.selectedWorkflowId;
+                }
+                // Start SSE stream if not already connected for this workflow
+                if (this._lastEventsWorkflowId !== this.selectedWorkflowId) {
+                    this.startEventStream(this.selectedWorkflowId);
                 }
             }
         }

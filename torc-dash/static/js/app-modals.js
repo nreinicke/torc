@@ -256,18 +256,11 @@ Object.assign(TorcDashboard.prototype, {
 
                 // Check if we should initialize
                 const shouldInit = document.getElementById('create-option-initialize')?.checked;
-                const shouldRun = document.getElementById('create-option-run')?.checked;
 
-                // Try to extract workflow ID from output
-                const idMatch = result.stdout?.match(/workflow[_\s]?id[:\s]+([a-zA-Z0-9-]+)/i);
-                if (idMatch) {
-                    const workflowId = idMatch[1];
-                    if (shouldInit) {
-                        await this.initializeWorkflow(workflowId);
-                    }
-                    if (shouldRun) {
-                        await this.runWorkflow(workflowId);
-                    }
+                // Try to extract workflow ID from JSON output
+                const workflowId = this.extractWorkflowId(result.stdout);
+                if (workflowId && shouldInit) {
+                    await this.initializeWorkflow(workflowId);
                 }
             } else {
                 const errorMsg = result.stderr || result.stdout || 'Unknown error';

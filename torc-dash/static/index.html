@@ -64,6 +64,10 @@
                         <span class="version-text">v-.-.-</span>
                     </div>
                 </div>
+                <div class="sidebar-dark-toggle" id="sidebar-dark-toggle" title="Toggle dark mode (D)">
+                    <span class="dark-toggle-icon" id="dark-toggle-icon">&#9790;</span>
+                    <span class="dark-toggle-label" id="dark-toggle-label">Dark Mode</span>
+                </div>
                 <div class="keyboard-hint" id="keyboard-hint" title="Show keyboard shortcuts">
                     Press <kbd>?</kbd> for shortcuts
                 </div>
@@ -244,7 +248,7 @@
                         <h3>Job Results Report</h3>
                         <div class="form-group">
                             <label for="debug-output-dir">Output Directory</label>
-                            <input type="text" id="debug-output-dir" class="text-input" value="output" placeholder="output">
+                            <input type="text" id="debug-output-dir" class="text-input" value="torc_output" placeholder="torc_output">
                             <small>Directory where job logs are stored</small>
                         </div>
                         <div class="form-group">
@@ -327,8 +331,8 @@
                             <label for="resource-db-dir">Database Directory</label>
                             <div style="display: flex; gap: 10px;">
                                 <input type="text" id="resource-db-dir" class="text-input"
-                                       value="output/resource_utilization"
-                                       placeholder="output/resource_utilization">
+                                       value="torc_output/resource_utilization"
+                                       placeholder="torc_output/resource_utilization">
                                 <button class="btn btn-secondary" id="btn-scan-dbs">Scan</button>
                             </div>
                             <small>Directory containing resource monitoring database files (.db)</small>
@@ -668,10 +672,6 @@
                     <label class="toggle-label">
                         <input type="checkbox" id="create-option-initialize" checked>
                         Initialize workflow after creation
-                    </label>
-                    <label class="toggle-label">
-                        <input type="checkbox" id="create-option-run">
-                        Run workflow immediately
                     </label>
                 </div>
 
