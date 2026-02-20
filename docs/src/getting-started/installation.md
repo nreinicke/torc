@@ -53,9 +53,9 @@ listed below.
 
 ```
 /scratch/dthom/torc/
-├── 0.15.1/
+├── 0.15.2/
 ├── ...
-└── latest -> 0.15.1  (symlink to current version)
+└── latest -> 0.15.2  (symlink to current version)
 ```
 
 > **Recommended**: Use the `latest` directory. Torc maintains backwards compatibility, so you'll
@@ -104,7 +104,7 @@ docker pull ghcr.io/natlabrockies/torc:latest
 ```
 
 > **Recommended**: Use the `latest` tag to automatically receive updates and bug fixes. Torc
-> maintains backwards compatibility across releases. Pinned version tags (e.g., `0.14.2`) are also
+> maintains backwards compatibility across releases. Pinned version tags (e.g., `0.15.2`) are also
 > available.
 
 ### Running the Server
