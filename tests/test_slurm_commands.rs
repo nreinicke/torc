@@ -1911,7 +1911,8 @@ fn test_slurm_generate_auto_merge_small_allocations() {
     // - 1 job depending on all job_* (join)
     //
     // With num_cpus=52, concurrent capacity is only 2 jobs per node.
-    // But with 10-minute jobs and 4-hour walltime, 24 time slots are available,
+    // Using max-partition-time strategy, the allocation walltime equals the partition max (4h).
+    // With 10-minute jobs and 4-hour walltime, 24 time slots are available,
     // so jobs_per_allocation = 2 * 24 = 48, which can handle all 12 jobs in 1 allocation.
     let workflow_json = r#"{
   "name": "test_auto_merge",
@@ -1960,7 +1961,9 @@ fn test_slurm_generate_auto_merge_small_allocations() {
     std::io::Write::write_all(&mut workflow_file, workflow_json.as_bytes())
         .expect("Failed to write temp workflow file");
 
-    // Run slurm generate with --group-by partition
+    // Run slurm generate with --group-by partition and max-partition-time strategy.
+    // max-partition-time is needed so the allocation walltime equals the partition max (4h),
+    // allowing time_slots = 4h / 10min = 24 sequential batches per allocation.
     let output = Command::new(common::get_exe_path("./target/debug/torc"))
         .args([
             "slurm",
@@ -1972,6 +1975,8 @@ fn test_slurm_generate_auto_merge_small_allocations() {
             "partition",
             "--profile",
             "kestrel",
+            "--walltime-strategy",
+            "max-partition-time",
         ])
         .output()
         .expect("Failed to execute slurm generate");

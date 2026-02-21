@@ -45,6 +45,9 @@ struct AllocationParams {
     nodes_per_job: u32,
     /// Total number of jobs in the group
     job_count: usize,
+    /// Actual walltime (seconds) that will be assigned to each allocation.
+    /// Used to calculate how many sequential job batches fit within an allocation.
+    allocation_walltime_secs: u64,
 }
 
 /// Calculate the number of allocations needed for a group of jobs.
@@ -79,9 +82,9 @@ fn calculate_allocations(
         ),
     );
 
-    // Factor in runtime: how many sequential batches can run within the walltime
+    // Factor in runtime: how many sequential batches can run within the allocation walltime
     let time_slots = if params.max_runtime_secs > 0 {
-        std::cmp::max(1, partition.max_walltime_secs / params.max_runtime_secs)
+        std::cmp::max(1, params.allocation_walltime_secs / params.max_runtime_secs)
     } else {
         1
     };
@@ -391,6 +394,15 @@ fn process_scheduler_group<RR: ResourceRequirements>(
             )
         })?;
 
+    // Calculate walltime based on strategy (must be computed before allocations
+    // since time_slots depends on the actual allocation walltime, not partition max)
+    let walltime_secs = calculate_walltime(
+        runtime_secs,
+        partition.max_walltime_secs,
+        walltime_strategy,
+        walltime_multiplier,
+    );
+
     // Calculate allocations using the shared helper function
     let alloc_params = AllocationParams {
         max_cpus: rr.num_cpus() as u32,
@@ -399,6 +411,7 @@ fn process_scheduler_group<RR: ResourceRequirements>(
         max_gpus: gpus.unwrap_or(0),
         nodes_per_job: rr.num_nodes() as u32,
         job_count: group.job_count,
+        allocation_walltime_secs: walltime_secs,
     };
 
     let num_allocations = calculate_allocations(&alloc_params, partition, single_allocation)
@@ -433,14 +446,6 @@ fn process_scheduler_group<RR: ResourceRequirements>(
     } else {
         format!("{}m", partition.memory_mb)
     };
-
-    // Calculate walltime based on strategy
-    let walltime_secs = calculate_walltime(
-        runtime_secs,
-        partition.max_walltime_secs,
-        walltime_strategy,
-        walltime_multiplier,
-    );
 
     let scheduler = PlannedScheduler {
         name: scheduler_name.clone(),
@@ -651,6 +656,13 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
             gpus,
         )?;
 
+        let alloc_walltime_secs = calculate_walltime(
+            pg.max_runtime_secs,
+            partition.max_walltime_secs,
+            walltime_strategy,
+            walltime_multiplier,
+        );
+
         let params = AllocationParams {
             max_cpus: pg.max_cpus as u32,
             max_memory_mb: pg.max_memory_mb,
@@ -658,6 +670,7 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
             max_gpus: pg.max_gpus as u32,
             nodes_per_job: pg.max_nodes as u32,
             job_count: pg.job_count,
+            allocation_walltime_secs: alloc_walltime_secs,
         };
 
         calculate_allocations(&params, partition, single_allocation)
@@ -738,6 +751,15 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
             }
         };
 
+        // Calculate walltime based on strategy (must be computed before allocations
+        // since time_slots depends on the actual allocation walltime, not partition max)
+        let walltime_secs = calculate_walltime(
+            pg.max_runtime_secs,
+            partition.max_walltime_secs,
+            walltime_strategy,
+            walltime_multiplier,
+        );
+
         // Calculate allocations using the shared helper function
         let alloc_params = AllocationParams {
             max_cpus: pg.max_cpus as u32,
@@ -746,6 +768,7 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
             max_gpus: gpus.unwrap_or(0),
             nodes_per_job: pg.max_nodes as u32,
             job_count: pg.job_count,
+            allocation_walltime_secs: walltime_secs,
         };
 
         let num_allocations =
@@ -784,14 +807,6 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
         } else {
             format!("{}m", partition.memory_mb)
         };
-
-        // Calculate walltime based on strategy
-        let walltime_secs = calculate_walltime(
-            pg.max_runtime_secs,
-            partition.max_walltime_secs,
-            walltime_strategy,
-            walltime_multiplier,
-        );
 
         let scheduler = PlannedScheduler {
             name: scheduler_name.clone(),
