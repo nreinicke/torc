@@ -484,26 +484,35 @@ EXAMPLES:
 
         /// Strategy for grouping jobs into schedulers
         ///
-        /// - resource-requirements: Each unique resource_requirements creates a separate
-        ///   scheduler. This preserves user intent and provides fine-grained control.
-        /// - partition: Jobs whose resource requirements map to the same partition are
-        ///   grouped together, reducing the number of schedulers.
+        /// - resource-requirements: Each unique resource_requirements creates a
+        ///   separate scheduler. This preserves user intent and provides
+        ///   fine-grained control.
+        ///
+        /// - partition: Jobs whose resource requirements map to the same partition
+        ///   are grouped together, reducing the number of schedulers.
         #[arg(long, value_enum, default_value_t = GroupByStrategy::ResourceRequirements)]
         group_by: GroupByStrategy,
 
         /// Strategy for determining Slurm job walltime
         ///
-        /// - max-job-runtime: Use the maximum job runtime multiplied by --walltime-multiplier.
-        ///   This typically results in shorter walltime requests, improving queue priority.
-        /// - max-partition-time: Use the partition's maximum allowed walltime. More conservative
-        ///   but may negatively impact queue scheduling.
+        /// - max-job-runtime: Use the maximum job runtime multiplied by
+        ///   --walltime-multiplier. Shorter walltime requests typically get better
+        ///   queue priority, but each allocation runs fewer sequential jobs. This
+        ///   means more allocations, which can start independently as nodes become
+        ///   available.
+        ///
+        /// - max-partition-time: Use the partition's maximum allowed walltime.
+        ///   Longer walltime allows more sequential jobs per allocation, reducing
+        ///   the total number of allocations. However, longer walltime requests
+        ///   may receive lower queue priority from the scheduler.
         #[arg(long, value_enum, default_value_t = WalltimeStrategy::MaxJobRuntime)]
         walltime_strategy: WalltimeStrategy,
 
         /// Multiplier for job runtime when using --walltime-strategy=max-job-runtime
         ///
-        /// The maximum job runtime is multiplied by this value to provide a safety margin.
-        /// For example, 1.5 means requesting 50% more time than the longest job estimate.
+        /// The maximum job runtime is multiplied by this value to provide a safety
+        /// margin. For example, 1.5 means requesting 50% more time than the longest
+        /// job estimate.
         #[arg(long, default_value = "1.5")]
         walltime_multiplier: f64,
 
@@ -551,17 +560,24 @@ EXAMPLES:
 
         /// Strategy for determining Slurm job walltime
         ///
-        /// - max-job-runtime: Use the maximum job runtime multiplied by --walltime-multiplier.
-        ///   This typically results in shorter walltime requests, improving queue priority.
-        /// - max-partition-time: Use the partition's maximum allowed walltime. More conservative
-        ///   but may negatively impact queue scheduling.
+        /// - max-job-runtime: Use the maximum job runtime multiplied by
+        ///   --walltime-multiplier. Shorter walltime requests typically get better
+        ///   queue priority, but each allocation runs fewer sequential jobs. This
+        ///   means more allocations, which can start independently as nodes become
+        ///   available.
+        ///
+        /// - max-partition-time: Use the partition's maximum allowed walltime.
+        ///   Longer walltime allows more sequential jobs per allocation, reducing
+        ///   the total number of allocations. However, longer walltime requests
+        ///   may receive lower queue priority from the scheduler.
         #[arg(long, value_enum, default_value_t = WalltimeStrategy::MaxJobRuntime)]
         walltime_strategy: WalltimeStrategy,
 
         /// Multiplier for job runtime when using --walltime-strategy=max-job-runtime
         ///
-        /// The maximum job runtime is multiplied by this value to provide a safety margin.
-        /// For example, 1.5 means requesting 50% more time than the longest job estimate.
+        /// The maximum job runtime is multiplied by this value to provide a safety
+        /// margin. For example, 1.5 means requesting 50% more time than the longest
+        /// job estimate.
         #[arg(long, default_value = "1.5")]
         walltime_multiplier: f64,
 

@@ -2129,3 +2129,706 @@ fn test_slurm_defaults_json_roundtrip() {
     assert_eq!(string_map.get("reservation"), Some(&"special".to_string()));
     assert_eq!(string_map.get("extra"), Some(&"--nice=100".to_string()));
 }
+
+// ============== Comprehensive Allocation Calculation Tests ==============
+//
+// These tests systematically verify that compute node allocation correctly
+// identifies the limiting resource (CPU, memory, GPU) and calculates the
+// right number of Slurm allocations across typical HPC usage patterns.
+//
+// Coverage matrix:
+//   - CPU-limited: varying CPU count (4..104) with low memory
+//   - Memory-limited: varying memory (30g..240g) with low CPUs
+//   - GPU-limited: varying GPU count (1..4) with low CPU/memory
+//   - Mixed bottleneck: CPU vs memory, GPU vs CPU vs memory
+//   - MaxPartitionTime strategy: time_slots > 1 (sequential batches)
+//   - Edge cases: single job, exact fit, multi-node, large batches
+//   - Regression: walltime strategy uses allocation walltime, not partition max
+//
+// Kestrel partition reference:
+//   - short: 104 CPUs, 246,064 MB, 4h max, no GPUs
+//   - standard: 104 CPUs, 246,064 MB, 48h max, no GPUs
+//   - long: 104 CPUs, 246,064 MB, 10d max, no GPUs
+//   - gpu-h100s: 128 CPUs, 360,000 MB, 4h max, 4 GPUs
+//   - gpu-h100: 128 CPUs, 360,000 MB, 48h max, 4 GPUs
+
+/// Helper to create a WorkflowSpec, generate schedulers, and return num_allocations.
+#[allow(clippy::too_many_arguments)]
+fn compute_allocations(
+    job_count: usize,
+    num_cpus: i64,
+    num_gpus: i64,
+    num_nodes: i64,
+    memory: &str,
+    runtime: &str,
+    strategy: WalltimeStrategy,
+    multiplier: f64,
+) -> i64 {
+    let jobs: Vec<JobSpec> = (0..job_count)
+        .map(|i| JobSpec {
+            name: format!("job_{i}"),
+            command: "echo test".to_string(),
+            resource_requirements: Some("rr".to_string()),
+            ..Default::default()
+        })
+        .collect();
+
+    let mut spec = WorkflowSpec {
+        name: "alloc_test".to_string(),
+        jobs,
+        resource_requirements: Some(vec![ResourceRequirementsSpec {
+            name: "rr".to_string(),
+            num_cpus,
+            num_gpus,
+            num_nodes,
+            memory: memory.to_string(),
+            runtime: runtime.to_string(),
+        }]),
+        ..Default::default()
+    };
+
+    let profile = kestrel_profile();
+    generate_schedulers_for_workflow(
+        &mut spec,
+        &profile,
+        "testaccount",
+        false,
+        GroupByStrategy::ResourceRequirements,
+        strategy,
+        multiplier,
+        true,
+        false,
+    )
+    .unwrap();
+
+    spec.actions.as_ref().unwrap()[0].num_allocations.unwrap()
+}
+
+// --------------- CPU-limited allocation tests ---------------
+//
+// Using 4g memory (4,096 MB) so CPU is always the bottleneck.
+// concurrent_mem = 246,064 / 4,096 = 60 (always larger than concurrent_cpu).
+// With MaxJobRuntime 1.5x: time_slots = 1 always.
+// Allocation count = ceil(job_count / (104 / num_cpus)).
+
+/// CPU-limited: short walltime (PT10M) → routed to short partition (4h max).
+#[rstest]
+#[case::tiny_cpu(4, 1)] // 104/4=26 concurrent, ceil(20/26)=1
+#[case::small_cpu(13, 3)] // 104/13=8, ceil(20/8)=3
+#[case::medium_cpu(26, 5)] // 104/26=4, ceil(20/4)=5
+#[case::high_cpu(52, 10)] // 104/52=2, ceil(20/2)=10
+#[case::whole_node(104, 20)] // 104/104=1, ceil(20/1)=20
+fn test_alloc_cpu_limited_short_walltime(#[case] num_cpus: i64, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT10M",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// CPU-limited: medium walltime (PT8H) → routed to standard partition (48h max).
+#[rstest]
+#[case::tiny_cpu(4, 1)]
+#[case::small_cpu(13, 3)]
+#[case::medium_cpu(26, 5)]
+#[case::high_cpu(52, 10)]
+#[case::whole_node(104, 20)]
+fn test_alloc_cpu_limited_medium_walltime(#[case] num_cpus: i64, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// CPU-limited: long walltime (PT36H) → routed to standard partition (48h max).
+/// Walltime capped: 36h × 1.5 = 54h > 48h partition max → walltime = 48h.
+/// time_slots = floor(48h/36h) = 1, so allocations match shorter cases.
+#[rstest]
+#[case::tiny_cpu(4, 1)]
+#[case::medium_cpu(26, 5)]
+#[case::high_cpu(52, 10)]
+#[case::whole_node(104, 20)]
+fn test_alloc_cpu_limited_long_walltime(#[case] num_cpus: i64, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT36H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- Memory-limited allocation tests ---------------
+//
+// Using 4 CPUs so memory is always the bottleneck.
+// concurrent_cpu = 104/4 = 26 (always larger than concurrent_mem for ≥30g).
+// Allocation count = ceil(20 / (246,064 / memory_mb)).
+
+/// Memory-limited: medium walltime (PT8H), standard partition.
+#[rstest]
+#[case::medium_mem("30g", 3)] // 246064/30720=8, ceil(20/8)=3
+#[case::high_mem("60g", 5)] // 246064/61440=4, ceil(20/4)=5
+#[case::very_high_mem("120g", 10)] // 246064/122880=2, ceil(20/2)=10
+#[case::near_whole_node("240g", 20)] // 246064/245760=1, ceil(20/1)=20
+fn test_alloc_memory_limited(#[case] memory: &str, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        4,
+        0,
+        1,
+        memory,
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Memory-limited with short walltime: same concurrent capacity, different partition.
+#[rstest]
+#[case::medium_mem("30g", 3)]
+#[case::high_mem("60g", 5)]
+#[case::very_high_mem("120g", 10)]
+fn test_alloc_memory_limited_short_walltime(#[case] memory: &str, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        4,
+        0,
+        1,
+        memory,
+        "PT10M",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Memory-limited with long walltime: walltime capped at partition max.
+#[rstest]
+#[case::medium_mem("30g", 3)]
+#[case::very_high_mem("120g", 10)]
+#[case::near_whole_node("240g", 20)]
+fn test_alloc_memory_limited_long_walltime(#[case] memory: &str, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        4,
+        0,
+        1,
+        memory,
+        "PT36H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- GPU-limited allocation tests ---------------
+//
+// GPU partition (gpu-h100s): 128 CPUs, 360,000 MB, 4 GPUs.
+// Using 16 CPUs, 10g so GPU is always the bottleneck:
+//   concurrent_cpu = 128/16 = 8, concurrent_mem = 360000/10240 = 35.
+// Allocation count = ceil(12 / (4 / num_gpus)).
+
+/// GPU-limited: short walltime (PT1H) → gpu-h100s partition.
+#[rstest]
+#[case::one_gpu(1, 3)] // 4/1=4 concurrent, ceil(12/4)=3
+#[case::two_gpus(2, 6)] // 4/2=2, ceil(12/2)=6
+#[case::four_gpus(4, 12)] // 4/4=1, ceil(12/1)=12
+fn test_alloc_gpu_limited_short_walltime(#[case] num_gpus: i64, #[case] expected: i64) {
+    let result = compute_allocations(
+        12,
+        16,
+        num_gpus,
+        1,
+        "10g",
+        "PT1H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// GPU-limited: medium walltime (PT8H) → gpu-h100 partition (48h max).
+#[rstest]
+#[case::one_gpu(1, 3)]
+#[case::two_gpus(2, 6)]
+#[case::four_gpus(4, 12)]
+fn test_alloc_gpu_limited_medium_walltime(#[case] num_gpus: i64, #[case] expected: i64) {
+    let result = compute_allocations(
+        12,
+        16,
+        num_gpus,
+        1,
+        "10g",
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- Mixed bottleneck tests (CPU vs Memory) ---------------
+//
+// Standard partition: 104 CPUs, 246,064 MB.
+// PT8H → standard partition. MaxJobRuntime 1.5x, time_slots = 1.
+
+/// Mixed CPU/memory: the limiting resource shifts with different combinations.
+#[rstest]
+//            CPUs  Memory  Expected  Bottleneck
+#[case::cpu_bottleneck(26, "10g", 5)] // cpu=4, mem=24 → 4 (CPU)
+#[case::mem_bottleneck(26, "120g", 10)] // cpu=4, mem=2 → 2 (Memory)
+#[case::cpu_half_node(52, "60g", 10)] // cpu=2, mem=4 → 2 (CPU)
+#[case::both_equal(52, "120g", 10)] // cpu=2, mem=2 → 2 (Both)
+#[case::mem_whole_node(4, "240g", 20)] // cpu=26, mem=1 → 1 (Memory)
+#[case::cpu_whole_node(104, "4g", 20)] // cpu=1, mem=60 → 1 (CPU)
+fn test_alloc_mixed_cpu_memory(#[case] num_cpus: i64, #[case] memory: &str, #[case] expected: i64) {
+    let result = compute_allocations(
+        20,
+        num_cpus,
+        0,
+        1,
+        memory,
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- GPU + CPU/Memory mixed bottleneck tests ---------------
+//
+// GPU partition (gpu-h100s): 128 CPUs, 360,000 MB, 4 GPUs.
+// PT1H → gpu-h100s. MaxJobRuntime 1.5x, time_slots = 1.
+
+/// GPU + CPU/memory: the bottleneck shifts across GPU, CPU, and memory.
+#[rstest]
+//            CPUs  Memory  GPUs  Expected  Bottleneck
+#[case::gpu_bottleneck(16, "10g", 1, 3)] // cpu=8, mem=35, gpu=4 → 4 (GPU), ceil(12/4)=3
+#[case::cpu_bottleneck(64, "10g", 1, 6)] // cpu=2, mem=35, gpu=4 → 2 (CPU), ceil(12/2)=6
+#[case::mem_bottleneck(16, "180g", 1, 12)] // cpu=8, mem=1, gpu=4 → 1 (Memory), ceil(12/1)=12
+#[case::gpu_with_high_cpu(32, "90g", 2, 6)] // cpu=4, mem=3, gpu=2 → 2 (GPU), ceil(12/2)=6
+#[case::cpu_with_high_gpu(128, "90g", 2, 12)] // cpu=1, mem=3, gpu=2 → 1 (CPU), ceil(12/1)=12
+#[case::mem_with_high_gpu(32, "180g", 2, 12)] // cpu=4, mem=1, gpu=2 → 1 (Memory), ceil(12/1)=12
+fn test_alloc_mixed_gpu_cpu_memory(
+    #[case] num_cpus: i64,
+    #[case] memory: &str,
+    #[case] num_gpus: i64,
+    #[case] expected: i64,
+) {
+    let result = compute_allocations(
+        12,
+        num_cpus,
+        num_gpus,
+        1,
+        memory,
+        "PT1H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- MaxPartitionTime strategy (time_slots > 1) ---------------
+//
+// With MaxPartitionTime, walltime = partition max, allowing multiple
+// sequential job batches per allocation.
+// This tests the core of the bug fix: time_slots must use the correct walltime.
+
+/// MaxPartitionTime: short jobs (PT10M) on short partition (4h max).
+/// time_slots = floor(14400/600) = 24. Very high throughput per allocation.
+#[rstest]
+//            CPUs  Jobs   Expected
+#[case::tiny_cpu(4, 1000, 2)] // concurrent=26, 26×24=624/alloc, ceil(1000/624)=2
+#[case::medium_cpu(26, 1000, 11)] // concurrent=4, 4×24=96/alloc, ceil(1000/96)=11
+#[case::high_cpu(52, 1000, 21)] // concurrent=2, 2×24=48/alloc, ceil(1000/48)=21
+#[case::whole_node(104, 1000, 42)] // concurrent=1, 1×24=24/alloc, ceil(1000/24)=42
+fn test_alloc_max_partition_time_short_jobs(
+    #[case] num_cpus: i64,
+    #[case] job_count: usize,
+    #[case] expected: i64,
+) {
+    let result = compute_allocations(
+        job_count,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT10M",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// MaxPartitionTime: medium jobs (PT1H) on short partition (4h max).
+/// time_slots = floor(14400/3600) = 4.
+#[rstest]
+#[case::medium_cpu(26, 100, 7)] // 4×4=16/alloc, ceil(100/16)=7
+#[case::high_cpu(52, 100, 13)] // 2×4=8/alloc, ceil(100/8)=13
+#[case::whole_node(104, 100, 25)] // 1×4=4/alloc, ceil(100/4)=25
+fn test_alloc_max_partition_time_medium_jobs(
+    #[case] num_cpus: i64,
+    #[case] job_count: usize,
+    #[case] expected: i64,
+) {
+    let result = compute_allocations(
+        job_count,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT1H",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// MaxPartitionTime: long jobs (PT20H) on standard partition (48h max).
+/// time_slots = floor(172800/72000) = 2.
+#[rstest]
+#[case::medium_cpu(26, 100, 13)] // 4×2=8/alloc, ceil(100/8)=13
+#[case::high_cpu(52, 100, 25)] // 2×2=4/alloc, ceil(100/4)=25
+#[case::whole_node(104, 100, 50)] // 1×2=2/alloc, ceil(100/2)=50
+fn test_alloc_max_partition_time_long_jobs(
+    #[case] num_cpus: i64,
+    #[case] job_count: usize,
+    #[case] expected: i64,
+) {
+    let result = compute_allocations(
+        job_count,
+        num_cpus,
+        0,
+        1,
+        "4g",
+        "PT20H",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+// --------------- Edge cases ---------------
+
+/// Single job always gets exactly 1 allocation regardless of resources.
+#[rstest]
+#[case::small_cpu(4, 0, "4g", "PT10M")]
+#[case::whole_node_cpu(104, 0, "4g", "PT20H")]
+#[case::whole_node_mem(4, 0, "240g", "PT8H")]
+#[case::single_gpu(16, 1, "10g", "PT1H")]
+#[case::four_gpus(16, 4, "10g", "PT1H")]
+fn test_alloc_single_job(
+    #[case] num_cpus: i64,
+    #[case] num_gpus: i64,
+    #[case] memory: &str,
+    #[case] runtime: &str,
+) {
+    let result = compute_allocations(
+        1,
+        num_cpus,
+        num_gpus,
+        1,
+        memory,
+        runtime,
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, 1);
+}
+
+/// Jobs that exactly fill concurrent capacity → exactly N allocations.
+#[rstest]
+#[case::exact_one_alloc(4, 1)] // 104/26=4 concurrent, 4 jobs = 1 alloc
+#[case::exact_two_allocs(8, 2)] // 4 concurrent, 8 jobs = 2 allocs
+#[case::exact_five_allocs(20, 5)] // 4 concurrent, 20 jobs = 5 allocs
+fn test_alloc_exact_fit(#[case] job_count: usize, #[case] expected: i64) {
+    // 26 CPUs → 4 jobs per node on standard partition
+    let result = compute_allocations(
+        job_count,
+        26,
+        0,
+        1,
+        "4g",
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Jobs off-by-one from concurrent capacity → one extra allocation.
+#[rstest]
+#[case::one_over(5, 2)] // 4 concurrent, 5 jobs = 2 allocs (not 1)
+#[case::one_over_two(9, 3)] // 4 concurrent, 9 jobs = 3 allocs (not 2)
+fn test_alloc_off_by_one(#[case] job_count: usize, #[case] expected: i64) {
+    let result = compute_allocations(
+        job_count,
+        26,
+        0,
+        1,
+        "4g",
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Multi-node jobs: allocations = ceil(jobs/concurrent) × nodes_per_job.
+#[rstest]
+#[case::two_nodes(2, 10)] // concurrent=2, ceil(10/2)×2 = 5×2 = 10
+#[case::four_nodes(4, 20)] // concurrent=2, ceil(10/2)×4 = 5×4 = 20
+fn test_alloc_multi_node_jobs(#[case] num_nodes: i64, #[case] expected: i64) {
+    // 52 CPUs → 2 per node on standard partition
+    let result = compute_allocations(
+        10,
+        52,
+        0,
+        num_nodes,
+        "4g",
+        "PT8H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Large batch of jobs (500 jobs).
+#[rstest]
+fn test_alloc_large_batch() {
+    // 52 CPUs, 2 per node, time_slots=1, ceil(500/2)=250
+    let result = compute_allocations(
+        500,
+        52,
+        0,
+        1,
+        "4g",
+        "PT10M",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, 250);
+}
+
+/// Large batch with time slots: 1000 very short jobs, MaxPartitionTime.
+#[rstest]
+fn test_alloc_large_batch_with_time_slots() {
+    // 1 CPU, 1g memory on short partition (4h max):
+    // concurrent_cpu = 104/1 = 104
+    // concurrent_mem = 246064/1024 = 240
+    // concurrent = min(104, 240) = 104
+    // time_slots = 14400/60 = 240
+    // jobs_per_alloc = 104 × 240 = 24960
+    // ceil(1000/24960) = 1
+    let result = compute_allocations(
+        1000,
+        1,
+        0,
+        1,
+        "1g",
+        "PT1M",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+    assert_eq!(result, 1);
+}
+
+/// Runtime at partition boundary: job runtime equals partition max walltime.
+#[rstest]
+fn test_alloc_runtime_at_partition_max() {
+    // PT48H = 48h = standard partition max (172,800s).
+    // MaxJobRuntime 1.5x: walltime = min(72h, 48h) = 48h.
+    // time_slots = floor(48h/48h) = 1.
+    // 26 CPUs → 4 concurrent, ceil(20/4) = 5.
+    let result = compute_allocations(
+        20,
+        26,
+        0,
+        1,
+        "4g",
+        "P2D",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, 5);
+}
+
+// --------------- Regression tests for walltime bug (82cbdc28) ---------------
+//
+// The bug: calculate_allocations used partition.max_walltime_secs for time_slots
+// instead of the actual allocation_walltime_secs. With MaxJobRuntime strategy,
+// this inflated time_slots, causing under-allocation.
+//
+// Example: 20h job on standard partition (48h max):
+//   Correct: walltime = 30h, time_slots = floor(30h/20h) = 1
+//   Bug:     time_slots = floor(48h/20h) = 2 → half the allocations needed
+
+/// Regression: long jobs must not use partition max for time_slots.
+///
+/// With MaxJobRuntime 1.5x and 20h runtime:
+///   Correct: walltime=30h, slots=1, allocs = ceil(100/4) = 25
+///   Bug:     slots = floor(48h/20h) = 2, allocs = ceil(100/8) = 13
+#[rstest]
+fn test_alloc_regression_long_runtime_correct_timeslots() {
+    let result = compute_allocations(
+        100,
+        26,
+        0,
+        1,
+        "4g",
+        "PT20H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    // If the bug recurs, this would be 13 instead of 25.
+    assert_eq!(result, 25);
+}
+
+/// Regression: whole-node long jobs must each get their own allocation.
+///
+/// 10 memory-heavy 20h jobs that fill an entire node:
+///   Correct: walltime=30h, slots=1, 1 job/alloc → 10 allocations
+///   Bug:     slots = floor(48h/20h) = 2, 2 jobs/alloc → 5 allocations
+#[rstest]
+fn test_alloc_regression_whole_node_long_runtime() {
+    let result = compute_allocations(
+        10,
+        12,
+        0,
+        1,
+        "160g",
+        "PT20H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    // If the bug recurs, this would be 5 instead of 10.
+    assert_eq!(result, 10);
+}
+
+/// Regression: 12h jobs shouldn't get 4 time slots from 48h partition max.
+///
+///   Correct: walltime=18h, slots=floor(18/12)=1, allocs=ceil(40/4)=10
+///   Bug:     slots=floor(48/12)=4, allocs=ceil(40/16)=3
+#[rstest]
+fn test_alloc_regression_12h_jobs() {
+    let result = compute_allocations(
+        40,
+        26,
+        0,
+        1,
+        "4g",
+        "PT12H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    assert_eq!(result, 10);
+}
+
+/// Regression: GPU long jobs must also use correct walltime for time_slots.
+///
+/// 12 GPU jobs, 12h runtime on gpu-h100 partition (48h max):
+///   Correct: walltime=18h, slots=1, concurrent=2 (GPU), allocs=ceil(12/2)=6
+///   Bug:     slots=floor(48/12)=4, allocs=ceil(12/8)=2
+#[rstest]
+fn test_alloc_regression_gpu_long_runtime() {
+    let result = compute_allocations(
+        12,
+        16,
+        2,
+        1,
+        "10g",
+        "PT12H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    // If the bug recurs, this would be 2 instead of 6.
+    assert_eq!(result, 6);
+}
+
+/// Verify MaxJobRuntime vs MaxPartitionTime produce different allocations for long jobs.
+///
+/// This confirms the two strategies diverge when they should:
+/// - MaxJobRuntime: walltime = 30h, slots = 1
+/// - MaxPartitionTime: walltime = 48h, slots = 2
+#[rstest]
+fn test_alloc_strategy_divergence_long_jobs() {
+    let max_job = compute_allocations(
+        100,
+        26,
+        0,
+        1,
+        "4g",
+        "PT20H",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    let max_partition = compute_allocations(
+        100,
+        26,
+        0,
+        1,
+        "4g",
+        "PT20H",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+
+    // MaxJobRuntime: slots=1, allocs=ceil(100/4)=25
+    assert_eq!(max_job, 25);
+    // MaxPartitionTime: slots=2, allocs=ceil(100/8)=13
+    assert_eq!(max_partition, 13);
+    // The two strategies must produce different results here
+    assert_ne!(max_job, max_partition);
+}
+
+/// Verify MaxJobRuntime and MaxPartitionTime converge for very short jobs
+/// where the multiplied runtime is still much less than partition max.
+///
+/// Both strategies give time_slots=1 with MaxJobRuntime 1.5x on short jobs
+/// (since 10min × 1.5 = 15min, and floor(15/10) = 1 = floor(4h/10min) would be 24).
+/// So they should NOT converge - MaxPartitionTime should give fewer allocations.
+#[rstest]
+fn test_alloc_strategy_divergence_short_jobs() {
+    let max_job = compute_allocations(
+        100,
+        26,
+        0,
+        1,
+        "4g",
+        "PT10M",
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+    );
+    let max_partition = compute_allocations(
+        100,
+        26,
+        0,
+        1,
+        "4g",
+        "PT10M",
+        WalltimeStrategy::MaxPartitionTime,
+        1.5,
+    );
+
+    // MaxJobRuntime: slots=1, allocs=ceil(100/4)=25
+    assert_eq!(max_job, 25);
+    // MaxPartitionTime: time_slots=24, allocs=ceil(100/96)=2
+    assert_eq!(max_partition, 2);
+}
