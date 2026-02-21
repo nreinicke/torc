@@ -33,6 +33,10 @@ pub struct DashConfig {
     /// Path to the database (for standalone mode)
     pub database: Option<String>,
 
+    /// UNIX domain socket path (alternative to TCP host:port)
+    #[cfg(unix)]
+    pub socket: Option<String>,
+
     /// Interval in seconds for job completion checks (standalone mode)
     pub completion_check_interval_secs: u32,
 }
@@ -49,6 +53,8 @@ impl Default for DashConfig {
             server_port: 0,
             server_host: "0.0.0.0".to_string(),
             database: None,
+            #[cfg(unix)]
+            socket: None,
             completion_check_interval_secs: 5,
         }
     }
@@ -73,6 +79,8 @@ mod tests {
         assert_eq!(config.server_port, 0);
         assert_eq!(config.server_host, "0.0.0.0");
         assert!(config.database.is_none());
+        #[cfg(unix)]
+        assert!(config.socket.is_none());
         assert_eq!(config.completion_check_interval_secs, 5);
     }
 }

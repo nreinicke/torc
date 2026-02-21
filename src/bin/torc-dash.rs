@@ -112,6 +112,12 @@ struct Cli {
     #[arg(long, default_value_t = 5)]
     completion_check_interval_secs: u32,
 
+    /// Listen on a UNIX domain socket instead of TCP (more secure on shared hosts).
+    /// The socket file is created with owner-only permissions (0600).
+    #[cfg(unix)]
+    #[arg(long, value_name = "PATH")]
+    socket: Option<std::path::PathBuf>,
+
     /// Path to a PEM-encoded CA certificate to trust for TLS connections
     #[arg(long, env = "TORC_TLS_CA_CERT")]
     tls_ca_cert: Option<String>,
@@ -185,6 +191,36 @@ async fn main() -> Result<()> {
         dash_config.completion_check_interval_secs
     };
 
+    #[cfg(unix)]
+    let socket_path = cli
+        .socket
+        .clone()
+        .or_else(|| dash_config.socket.as_ref().map(std::path::PathBuf::from));
+
+    #[cfg(unix)]
+    if let Some(ref socket_path) = socket_path {
+        info!(
+            "Starting torc-dash v{} ({}{}) on unix:{} torc_bin={} server_bin={}",
+            env!("CARGO_PKG_VERSION"),
+            env!("GIT_HASH"),
+            env!("GIT_DIRTY"),
+            socket_path.display(),
+            torc_bin,
+            torc_server_bin
+        );
+    } else {
+        info!(
+            "Starting torc-dash v{} ({}{}) on {}:{} torc_bin={} server_bin={}",
+            env!("CARGO_PKG_VERSION"),
+            env!("GIT_HASH"),
+            env!("GIT_DIRTY"),
+            host,
+            port,
+            torc_bin,
+            torc_server_bin
+        );
+    }
+    #[cfg(not(unix))]
     info!(
         "Starting torc-dash v{} ({}{}) on {}:{} torc_bin={} server_bin={}",
         env!("CARGO_PKG_VERSION"),
@@ -406,7 +442,59 @@ async fn main() -> Result<()> {
         )
         .with_state(state);
 
-    // Try to bind to the requested port, incrementing if in use
+    // Bind to UNIX domain socket or TCP, depending on configuration
+    #[cfg(unix)]
+    if let Some(ref socket_path) = socket_path {
+        // Remove stale socket file from a previous run
+        if socket_path.exists() {
+            std::fs::remove_file(socket_path)?;
+        }
+
+        let uds = tokio::net::UnixListener::bind(socket_path)?;
+
+        // Restrict to owner-only (0600)
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
+
+        info!("Dashboard available at unix:{}", socket_path.display());
+        info!(
+            "To connect via SSH tunnel:\n  ssh -L 8090:{} user@this-host\n  Then open http://localhost:8090",
+            socket_path.display()
+        );
+
+        // TODO: axum 0.7's serve() only accepts TcpListener, so we use a manual
+        // accept loop with hyper-util for Unix socket connections. In axum 0.8+,
+        // serve() accepts a generic Listener trait that UnixListener implements,
+        // which would replace this entire block with just:
+        //
+        //   axum::serve(uds, app).await?;
+        //
+        // We're stuck on axum 0.7 because the swagger crate (used by
+        // torc-server) depends on hyper 0.14, while axum 0.8 requires hyper 1.4+.
+        // Removing the swagger dependency would unblock the upgrade.
+        let mut make_service = app.into_make_service();
+        loop {
+            let (stream, _addr) = uds.accept().await?;
+            let tower_service = tower::Service::call(&mut make_service, &stream)
+                .await
+                .unwrap_or_else(|e| match e {});
+            let hyper_service = hyper_util::service::TowerToHyperService::new(tower_service);
+
+            tokio::spawn(async move {
+                let io = hyper_util::rt::TokioIo::new(stream);
+                if let Err(err) = hyper_util::server::conn::auto::Builder::new(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .serve_connection(io, hyper_service)
+                .await
+                {
+                    error!("Error serving Unix socket connection: {err}");
+                }
+            });
+        }
+    }
+
+    // TCP path (default)
     let (std_listener, actual_port) = find_available_port(&host, port)?;
     info!("Dashboard available at http://{}:{}", host, actual_port);
     if actual_port != port {

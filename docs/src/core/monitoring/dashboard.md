@@ -72,6 +72,7 @@ torc-dash
 Options:
   -p, --port <PORT>           Dashboard port [default: 8090]
       --host <HOST>           Dashboard host [default: 127.0.0.1]
+      --socket <PATH>         Listen on a UNIX domain socket instead of TCP (unix only)
   -a, --api-url <API_URL>     Torc server API URL [default: http://localhost:8080/torc-service/v1]
       --torc-bin <PATH>       Path to torc CLI binary [default: torc]
       --torc-server-bin       Path to torc-server binary [default: torc-server]
@@ -222,8 +223,11 @@ Settings are saved to browser local storage.
 ## Security Considerations
 
 1. **Network Access**: By default, binds to 127.0.0.1 (localhost only)
-2. **Remote Access**: Use `--host 0.0.0.0` with caution; consider a reverse proxy with HTTPS
-3. **Authentication**: Torc server supports htpasswd-based authentication (see
+2. **UNIX Socket (recommended for HPC)**: Use `--socket /tmp/torc-dash-$USER.sock` on shared login
+   nodes. The socket file is created with 0600 permissions, restricting access to your user account.
+   Connect via `ssh -L 8090:/tmp/torc-dash-$USER.sock user@login-node`.
+3. **Remote Access**: Use `--host 0.0.0.0` with caution; consider a reverse proxy with HTTPS
+4. **Authentication**: Torc server supports htpasswd-based authentication (see
    [Authentication](./authentication.md))
 
 ## Troubleshooting
