@@ -231,6 +231,7 @@ EXAMPLES:
         ///
         /// - resource-requirements: Each unique resource_requirements creates a separate
         ///   scheduler. This preserves user intent and provides fine-grained control.
+        ///
         /// - partition: Jobs whose resource requirements map to the same partition are
         ///   grouped together, reducing the number of schedulers.
         #[arg(long, value_enum, default_value_t = GroupByStrategy::ResourceRequirements)]
