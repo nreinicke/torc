@@ -1223,10 +1223,11 @@ fn test_generate_schedulers_auto_calculates_allocations() {
 
     // 10 jobs, 26 CPUs each, 1 hour runtime
     // Concurrent capacity: 104 CPUs / 26 CPUs = 4 jobs per node
-    // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 4 concurrent × 4 time slots = 16 jobs
-    // Allocations needed: ceil(10 / 16) = 1
-    assert_eq!(action.num_allocations, Some(1));
+    // Allocation walltime: 1h × 1.5 multiplier = 1.5h
+    // Time slots: floor(1.5h / 1h) = 1 sequential batch
+    // Jobs per allocation: 4 concurrent × 1 time slot = 4 jobs
+    // Allocations needed: ceil(10 / 4) = 3
+    assert_eq!(action.num_allocations, Some(3));
 }
 
 /// Test auto-calculation with parameterized jobs
@@ -1283,10 +1284,11 @@ fn test_generate_schedulers_auto_calculates_with_parameters() {
 
     // 100 jobs (from parameterized expansion), 52 CPUs each, 1 hour runtime
     // Concurrent capacity: 104 CPUs / 52 CPUs = 2 jobs per node
-    // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
-    // Allocations needed: ceil(100 / 8) = 13
-    assert_eq!(action.num_allocations, Some(13));
+    // Allocation walltime: 1h × 1.5 multiplier = 1.5h
+    // Time slots: floor(1.5h / 1h) = 1 sequential batch
+    // Jobs per allocation: 2 concurrent × 1 time slot = 2 jobs
+    // Allocations needed: ceil(100 / 2) = 50
+    assert_eq!(action.num_allocations, Some(50));
 }
 
 /// Test stage-aware scheduling: jobs with and without dependencies get separate schedulers.
@@ -1432,13 +1434,96 @@ fn test_generate_schedulers_memory_constrained_allocation() {
     let action = &actions[0];
     // 10 jobs, 120GB memory each, 1 hour runtime
     // Concurrent by memory: 246,064MB / 122,880MB = 2 jobs per node
-    // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
-    // Allocations needed: ceil(10 / 8) = 2
+    // Allocation walltime: 1h × 1.5 multiplier = 1.5h
+    // Time slots: floor(1.5h / 1h) = 1 sequential batch
+    // Jobs per allocation: 2 concurrent × 1 time slot = 2 jobs
+    // Allocations needed: ceil(10 / 2) = 5
     assert_eq!(
         action.num_allocations,
-        Some(2),
-        "Should allocate 2 nodes for 10 memory-heavy jobs (2 concurrent × 4 time slots = 8 jobs per allocation)"
+        Some(5),
+        "Should allocate 5 nodes for 10 memory-heavy jobs (2 concurrent × 1 time slot = 2 jobs per allocation)"
+    );
+}
+
+/// Test that long-running whole-node jobs each get their own allocation.
+///
+/// Regression test: previously, time_slots was calculated from partition max walltime
+/// instead of the actual allocation walltime. With MaxJobRuntime strategy and 1.5x multiplier,
+/// a 20h job gets a 30h allocation walltime. But the bug used the 48h partition max,
+/// giving time_slots = 48h/20h = 2, which halved the allocation count (5 instead of 10).
+#[rstest]
+fn test_generate_schedulers_whole_node_long_runtime() {
+    // 10 jobs each consuming an entire node: 12 CPUs, 160GB memory, 20 hours runtime.
+    // On Kestrel standard partition (104 CPUs, 246,064MB, 48h max walltime):
+    // - Only 1 job fits per node (160GB = 163,840MB, 246,064/163,840 = 1)
+    // - Allocation walltime: 20h × 1.5 = 30h (MaxJobRuntime strategy)
+    // - Time slots: floor(30h / 20h) = 1
+    // - Each allocation can run exactly 1 job, so we need 10 allocations.
+    let jobs: Vec<JobSpec> = (0..10)
+        .map(|i| JobSpec {
+            name: format!("draw_{}_extreme_week", i + 1),
+            command: format!("julia outagesim.jl {}", i + 1),
+            resource_requirements: Some("whole_node".to_string()),
+            ..Default::default()
+        })
+        .collect();
+
+    let mut spec = WorkflowSpec {
+        name: "nodal_test".to_string(),
+        description: Some("Long-running whole-node jobs".to_string()),
+        jobs,
+        resource_requirements: Some(vec![ResourceRequirementsSpec {
+            name: "whole_node".to_string(),
+            num_cpus: 12,
+            num_gpus: 0,
+            num_nodes: 1,
+            memory: "160g".to_string(),
+            runtime: "PT20H".to_string(),
+        }]),
+        ..Default::default()
+    };
+
+    let profile = kestrel_profile();
+    let result = generate_schedulers_for_workflow(
+        &mut spec,
+        &profile,
+        "testaccount",
+        false,
+        GroupByStrategy::ResourceRequirements,
+        WalltimeStrategy::MaxJobRuntime,
+        1.5,
+        true,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(result.scheduler_count, 1);
+    assert_eq!(result.action_count, 1);
+
+    let actions = spec.actions.as_ref().unwrap();
+    let action = &actions[0];
+
+    // 10 jobs, 12 CPUs, 160GB memory, 20h runtime
+    // Concurrent by memory: 246,064MB / 163,840MB = 1 job per node
+    // Concurrent by CPU: 104 / 12 = 8 jobs per node
+    // Concurrent = min(8, 1) = 1 job per node (memory-limited)
+    // Allocation walltime: 20h × 1.5 = 30h
+    // Time slots: floor(30h / 20h) = 1
+    // Jobs per allocation: 1 concurrent × 1 time slot = 1 job
+    // Allocations needed: ceil(10 / 1) = 10
+    assert_eq!(
+        action.num_allocations,
+        Some(10),
+        "Each whole-node job should get its own allocation (10 jobs = 10 allocations)"
+    );
+
+    // Verify walltime is based on job runtime, not partition max
+    let schedulers = spec.slurm_schedulers.as_ref().unwrap();
+    assert_eq!(schedulers.len(), 1);
+    // 20h × 1.5 = 30h = "1-06:00:00"
+    assert_eq!(
+        schedulers[0].walltime, "1-06:00:00",
+        "Walltime should be 20h × 1.5 = 30h, not the partition max of 48h"
     );
 }
 
@@ -1509,13 +1594,14 @@ fn test_generate_schedulers_cpu_vs_memory_constraint() {
     // Concurrent by CPU: 104/52 = 2 jobs per node
     // Concurrent by memory: 246064/61440 = 4 jobs per node
     // Concurrent = min(2, 4) = 2 jobs per node (CPU-limited)
-    // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
-    // Allocations needed: ceil(4 / 8) = 1
+    // Allocation walltime: 1h × 1.5 multiplier = 1.5h
+    // Time slots: floor(1.5h / 1h) = 1 sequential batch
+    // Jobs per allocation: 2 concurrent × 1 time slot = 2 jobs
+    // Allocations needed: ceil(4 / 2) = 2
     assert_eq!(
         action.num_allocations,
-        Some(1),
-        "Should allocate 1 node for 4 CPU-heavy jobs (2 concurrent × 4 time slots = 8 jobs per allocation)"
+        Some(2),
+        "Should allocate 2 nodes for 4 CPU-heavy jobs (2 concurrent × 1 time slot = 2 jobs per allocation)"
     );
 }
 
@@ -1719,13 +1805,14 @@ fn test_generate_schedulers_gpu_constrained_allocation() {
     // Concurrent by CPU: 128/32 = 4 jobs per node
     // Concurrent by memory: 360000/92160 = 3.9 = 3 jobs per node
     // Concurrent = min(4, 3, 2) = 2 jobs per node
-    // Time slots: 4h walltime / 1h runtime = 4 sequential batches
-    // Jobs per allocation: 2 concurrent × 4 time slots = 8 jobs
-    // Allocations needed: ceil(8 / 8) = 1
+    // Allocation walltime: 1h × 1.5 multiplier = 1.5h
+    // Time slots: floor(1.5h / 1h) = 1 sequential batch
+    // Jobs per allocation: 2 concurrent × 1 time slot = 2 jobs
+    // Allocations needed: ceil(8 / 2) = 4
     assert_eq!(
         action.num_allocations,
-        Some(1),
-        "Should allocate 1 node for 8 GPU jobs (2 concurrent × 4 time slots = 8 jobs per allocation)"
+        Some(4),
+        "Should allocate 4 nodes for 8 GPU jobs (2 concurrent × 1 time slot = 2 jobs per allocation)"
     );
 }
 
