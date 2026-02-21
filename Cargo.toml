@@ -108,6 +108,7 @@ schemars = "1.0"
 
 # Dashboard-specific
 uuid = { version = "1.21", features = ["v4"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }
 
 # TLS
 tokio-openssl = "0.6"
@@ -250,6 +251,7 @@ dash = [
     "dep:tower-http",
     "dep:mime_guess",
     "dep:uuid",
+    "dep:hyper-util",
     "dep:tracing-subscriber",
     "dep:rust-embed",
     "dep:async-stream",
@@ -354,6 +356,7 @@ tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 
 # Configuration management
 config = { workspace = true, optional = true }

@@ -159,7 +159,7 @@ flowchart TB
         runnerN -->|"HTTP API"| server
     end
 
-    browser -->|"SSH tunnel"| dash
+    browser -->|"SSH tunnel<br/>(UNIX socket)"| dash
     slurm --> compute
 ```
 
@@ -174,6 +174,38 @@ tmux
 
 **Step 2: Start torc-dash on the login node with its own torc server**
 
+Use `--socket` to bind the dashboard to a UNIX domain socket instead of a TCP port. The socket file
+is created with owner-only permissions (0600), so other users on the login node cannot access your
+dashboard.
+
+```bash
+torc-dash --standalone \
+  --socket /tmp/torc-dash-$USER.sock \
+  --database /scratch/$USER/torc.db \
+  --server-host kl1.hsn.cm.kestrel.hpc.nrel.gov \
+  --completion-check-interval-secs 60
+```
+
+**Step 3: Access via SSH tunnel**
+
+From your local machine, create an SSH tunnel that forwards a local TCP port to the UNIX socket on
+the login node:
+
+```bash
+ssh -L 8090:/tmp/torc-dash-$USER.sock user@login-node
+```
+
+Open http://localhost:8090 in your browser.
+
+> **Why a UNIX socket?** On shared HPC login nodes, any user can connect to a TCP port. A UNIX
+> socket file with 0600 permissions restricts access to your user account at the OS level. SSH
+> natively supports forwarding local TCP ports to remote UNIX sockets.
+
+<details>
+<summary>Alternative: TCP mode (without UNIX socket)</summary>
+
+If you prefer TCP, omit `--socket` and use `--port` instead:
+
 ```bash
 torc-dash --standalone \
   --database /scratch/$USER/torc.db \
@@ -182,9 +214,7 @@ torc-dash --standalone \
   --completion-check-interval-secs 60
 ```
 
-**Step 3: Access via SSH tunnel**
-
-From your local machine:
+Then tunnel to the TCP port:
 
 ```bash
 ssh -L 8090:localhost:8090 user@login-node
@@ -192,6 +222,10 @@ ssh -L 8090:localhost:8090 user@login-node
 
 > **Important**: Use `localhost` in the tunnel command, not the login node's hostname. This works
 > because torc-dash binds to 127.0.0.1 by default.
+
+Note that in TCP mode, other users on the login node can connect to port 8090.
+
+</details>
 
 Open http://localhost:8090 in your browser.
 
@@ -259,7 +293,7 @@ flowchart TB
         server --> db
     end
 
-    browser -->|"SSH tunnel"| dash
+    browser -->|"SSH tunnel<br/>(UNIX socket)"| dash
     dash -->|"HTTP API"| server
     cli -->|"HTTP API"| server
 ```
@@ -287,19 +321,33 @@ torc-server service install --user \
 
 **Step 2: Start torc-dash on a login node**
 
-SSH to the login node and start the dashboard:
+SSH to the login node and start the dashboard with a UNIX socket:
 
 ```bash
 # Connect to the shared server
 export TORC_API_URL="http://shared-server:8080/torc-service/v1"
 
-# Start dashboard (accessible only from login node by default)
-torc-dash --port 8090
+# Start dashboard on a UNIX socket (secure on shared hosts)
+torc-dash --socket /tmp/torc-dash-$USER.sock
 ```
 
 **Step 3: Access the dashboard via SSH tunnel**
 
-From your local machine, create an SSH tunnel:
+From your local machine, forward a local TCP port to the UNIX socket:
+
+```bash
+ssh -L 8090:/tmp/torc-dash-$USER.sock user@login-node
+```
+
+Then open http://localhost:8090 in your local browser.
+
+<details>
+<summary>Alternative: TCP mode (without UNIX socket)</summary>
+
+```bash
+export TORC_API_URL="http://shared-server:8080/torc-service/v1"
+torc-dash --port 8090
+```
 
 ```bash
 ssh -L 8090:localhost:8090 user@login-node
@@ -309,7 +357,9 @@ ssh -L 8090:localhost:8090 user@login-node
 > forwards your local port to `localhost:8090` _as seen from the login node_, which matches where
 > torc-dash binds (127.0.0.1:8090).
 
-Then open http://localhost:8090 in your local browser.
+Note that in TCP mode, other users on the login node can connect to port 8090.
+
+</details>
 
 ### Using the CLI
 
@@ -354,6 +404,7 @@ See [Authentication](../admin/authentication.md) for details.
 | Slurm integration  | No                        | Yes                              | Yes                    |
 | Database location  | Local                     | Login node                       | Shared storage         |
 | Persistence        | Session only              | Depends on setup                 | Persistent             |
+| UNIX socket        | Not needed                | Recommended                      | Recommended            |
 | Best for           | Single-computer workflows | Small HPC workflows (< 100 jobs) | Large-scale production |
 
 ## Troubleshooting
@@ -376,6 +427,18 @@ lsof -i :8090
 
 # Check for port conflicts
 netstat -tuln | grep 8090
+```
+
+### UNIX socket issues
+
+```bash
+# Verify socket file exists and has correct permissions
+ls -la /tmp/torc-dash-$USER.sock
+# Should show: srw------- (owner-only)
+
+# If stale socket from a previous run, torc-dash removes it automatically.
+# To remove manually:
+rm /tmp/torc-dash-$USER.sock
 ```
 
 ### Slurm jobs not starting

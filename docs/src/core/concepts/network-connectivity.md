@@ -254,6 +254,21 @@ torc-dash --standalone --server-host kl1.hsn.cm.kestrel.hpc.nrel.gov
 The dashboard always connects to the managed server locally, but external workers will use the
 configured `--server-host` to reach the server.
 
+**UNIX socket mode (recommended for HPC login nodes):** Use `--socket` to bind the dashboard to a
+UNIX domain socket instead of TCP. The socket file is created with owner-only permissions (0600),
+preventing other users on the login node from accessing your dashboard.
+
+```bash
+# HPC login node with UNIX socket
+torc-dash --standalone \
+  --socket /tmp/torc-dash-$USER.sock \
+  --server-host kl1.hsn.cm.kestrel.hpc.nrel.gov
+
+# Access from your local machine via SSH tunnel
+ssh -L 8090:/tmp/torc-dash-$USER.sock user@login-node
+# Then open http://localhost:8090
+```
+
 ---
 
 ## Troubleshooting
