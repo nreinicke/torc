@@ -122,6 +122,7 @@ license.workspace = true
 edition.workspace = true
 repository.workspace = true
 description.workspace = true
+rust-version = "1.88.0"
 
 [[bin]]
 name = "torc"
