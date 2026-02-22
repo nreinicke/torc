@@ -17,18 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
-from typing import Any, ClassVar, Dict, List, Optional
-from torc.openapi_client.models.job_model import JobModel
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ClaimNextJobsResponse(BaseModel):
+class ReloadAuth200Response(BaseModel):
     """
-    ClaimNextJobsResponse
+    ReloadAuth200Response
     """ # noqa: E501
-    jobs: Optional[List[JobModel]] = None
-    __properties: ClassVar[List[str]] = ["jobs"]
+    message: StrictStr
+    user_count: StrictInt
+    __properties: ClassVar[List[str]] = ["message", "user_count"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -48,7 +48,7 @@ class ClaimNextJobsResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ClaimNextJobsResponse from a JSON string"""
+        """Create an instance of ReloadAuth200Response from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -69,18 +69,11 @@ class ClaimNextJobsResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in jobs (list)
-        _items = []
-        if self.jobs:
-            for _item_jobs in self.jobs:
-                if _item_jobs:
-                    _items.append(_item_jobs.to_dict())
-            _dict['jobs'] = _items
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ClaimNextJobsResponse from a dict"""
+        """Create an instance of ReloadAuth200Response from a dict"""
         if obj is None:
             return None
 
@@ -88,7 +81,8 @@ class ClaimNextJobsResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "jobs": [JobModel.from_dict(_item) for _item in obj["jobs"]] if obj.get("jobs") is not None else None
+            "message": obj.get("message"),
+            "user_count": obj.get("user_count")
         })
         return _obj
 
