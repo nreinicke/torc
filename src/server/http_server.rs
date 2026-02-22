@@ -428,26 +428,75 @@ pub async fn create(
             let tls_acceptor = ssl.build();
 
             info!("Starting a server (with https) on port {}", actual_port);
+            let shutdown = async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to install Ctrl+C handler");
+                info!("Received shutdown signal, gracefully shutting down TLS server...");
+            };
+            tokio::pin!(shutdown);
+
+            let mut connection_tasks = tokio::task::JoinSet::new();
+
+            let mut consecutive_accept_errors: u32 = 0;
+
             loop {
-                if let Ok((tcp, _)) = tcp_listener.accept().await {
-                    let ssl = Ssl::new(tls_acceptor.context()).unwrap();
-                    let addr = tcp.peer_addr().expect("Unable to get remote address");
-                    let service = service.call(addr);
+                // Reap completed connection tasks to avoid unbounded memory growth
+                while connection_tasks.try_join_next().is_some() {}
 
-                    tokio::spawn(async move {
-                        let tls = tokio_openssl::SslStream::new(ssl, tcp).map_err(|_| ())?;
-                        let service = service.await.map_err(|_| ())?;
+                tokio::select! {
+                    result = tcp_listener.accept() => {
+                        match result {
+                            Ok((tcp, _)) => {
+                                consecutive_accept_errors = 0;
+                                let ssl = Ssl::new(tls_acceptor.context()).unwrap();
+                                let addr = tcp.peer_addr().expect("Unable to get remote address");
+                                let service = service.call(addr);
 
-                        Http::new()
-                            .serve_connection(tls, service)
-                            .await
-                            .map_err(|_| ())
-                    });
+                                connection_tasks.spawn(async move {
+                                    let tls = tokio_openssl::SslStream::new(ssl, tcp).map_err(|_| ())?;
+                                    let service = service.await.map_err(|_| ())?;
+
+                                    Http::new()
+                                        .serve_connection(tls, service)
+                                        .await
+                                        .map_err(|_| ())
+                                });
+                            }
+                            Err(e) => {
+                                consecutive_accept_errors += 1;
+                                error!("TLS accept error (consecutive: {}): {}", consecutive_accept_errors, e);
+                                // Backoff on repeated errors to avoid CPU spin
+                                let delay = std::cmp::min(consecutive_accept_errors * 10, 1000);
+                                tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown => {
+                        break;
+                    }
                 }
             }
 
-            // Note: The loop above never exits, but we need to return the port for API consistency
-            #[allow(unreachable_code)]
+            // Wait for existing connections to finish (with timeout)
+            if !connection_tasks.is_empty() {
+                info!(
+                    "Waiting up to 30 seconds for {} active TLS connections to finish...",
+                    connection_tasks.len()
+                );
+                let drain = async { while connection_tasks.join_next().await.is_some() {} };
+                if tokio::time::timeout(std::time::Duration::from_secs(30), drain)
+                    .await
+                    .is_err()
+                {
+                    info!(
+                        "Timeout waiting for TLS connections, aborting {} remaining",
+                        connection_tasks.len()
+                    );
+                    connection_tasks.abort_all();
+                }
+            }
+
             actual_port
         }
     } else {
@@ -462,6 +511,12 @@ pub async fn create(
         hyper::server::Server::from_tcp(std_listener)
             .expect("Failed to create server from TCP listener")
             .serve(service)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to install Ctrl+C handler");
+                info!("Received shutdown signal, gracefully shutting down...");
+            })
             .await
             .unwrap();
         actual_port
@@ -579,14 +634,17 @@ async fn process_workflow_unblocks<C>(server: &Server<C>, workflow_id: i64) -> R
 where
     C: Has<XSpanIdString> + Send + Sync,
 {
-    // Retry logic for database lock contention.
+    // Retry logic for database lock contention with exponential backoff.
     // Note: SQLite's busy_timeout doesn't work with sqlx's BEGIN DEFERRED transactions
     // because SQLITE_BUSY is returned immediately when upgrading to a write lock.
-    // We implement our own retry logic to wait up to ~45 seconds (matching busy_timeout).
-    const MAX_RETRIES: u32 = 45;
-    const RETRY_DELAY_MS: u64 = 1000;
+    // We implement our own retry logic with exponential backoff starting at 10ms,
+    // capped at 2 seconds per retry, for a total wait of ~26 seconds.
+    const MAX_RETRIES: u32 = 20;
+    const INITIAL_DELAY_MS: u64 = 10;
+    const MAX_DELAY_MS: u64 = 2000;
 
     let mut last_error: Option<ApiError> = None;
+    let mut delay_ms = INITIAL_DELAY_MS;
 
     for attempt in 0..MAX_RETRIES {
         match process_workflow_unblocks_inner(server, workflow_id).await {
@@ -596,12 +654,14 @@ where
                     debug!(
                         "Database locked for workflow {}, retrying in {}ms (attempt {}/{})",
                         workflow_id,
-                        RETRY_DELAY_MS,
+                        delay_ms,
                         attempt + 1,
                         MAX_RETRIES
                     );
                     last_error = Some(e);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    // Exponential backoff with cap
+                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                     continue;
                 }
                 // Non-retryable error or final attempt
@@ -1417,24 +1477,73 @@ impl<C> Server<C> {
         let new_status_int = new_status.to_int();
 
         if new_status.is_complete() {
-            // Set unblocking_processed = 0 so background task will process this
+            // Set unblocking_processed = 0 so background task will process this.
+            // Use a conditional UPDATE to prevent TOCTOU race conditions: only
+            // transition to a terminal status if the job is not already terminal.
+            // This prevents double-completion when two threads race on the same job.
+            let completed_int = models::JobStatus::Completed.to_int();
+            let failed_int = models::JobStatus::Failed.to_int();
+            let canceled_int = models::JobStatus::Canceled.to_int();
+            let terminated_int = models::JobStatus::Terminated.to_int();
+            let disabled_int = models::JobStatus::Disabled.to_int();
+            let pending_failed_int = models::JobStatus::PendingFailed.to_int();
             match sqlx::query!(
-                "UPDATE job SET status = ?, unblocking_processed = 0 WHERE id = ?",
+                "UPDATE job SET status = ?, unblocking_processed = 0 WHERE id = ? AND status NOT IN (?, ?, ?, ?, ?, ?)",
                 new_status_int,
-                job_id
+                job_id,
+                completed_int,
+                failed_int,
+                canceled_int,
+                terminated_int,
+                disabled_int,
+                pending_failed_int,
             )
             .execute(self.pool.as_ref())
             .await
             {
                 Ok(result) => {
                     if result.rows_affected() == 0 {
-                        error!(
-                            "No rows affected for job ID {} when updating status",
+                        // Verify the job still exists and is actually in a terminal
+                        // status, rather than silently succeeding on a deleted job.
+                        let current = sqlx::query_scalar!(
+                            "SELECT status FROM job WHERE id = ?",
                             job_id
-                        );
-                        return Err(ApiError(
-                            "Failed to update job status: no rows affected".to_string(),
-                        ));
+                        )
+                        .fetch_optional(self.pool.as_ref())
+                        .await
+                        .map_err(|e| {
+                            database_error_with_msg(e, "Failed to re-check job status")
+                        })?;
+
+                        match current {
+                            Some(status_int) => {
+                                let status = models::JobStatus::from_int(status_int as i32)
+                                    .unwrap_or(models::JobStatus::Failed);
+                                if status.is_complete() {
+                                    debug!(
+                                        "Job {} already in terminal status {:?}, treating as idempotent success",
+                                        job_id, status
+                                    );
+                                    return Ok(());
+                                }
+                                // Job exists but is in an unexpected non-terminal state
+                                error!(
+                                    "Job {} has unexpected status {:?} after conditional update matched 0 rows",
+                                    job_id, status
+                                );
+                                return Err(ApiError(format!(
+                                    "Job {} is in unexpected status {:?}",
+                                    job_id, status
+                                )));
+                            }
+                            None => {
+                                error!("Job {} was deleted during status transition", job_id);
+                                return Err(ApiError(format!(
+                                    "Job {} not found",
+                                    job_id
+                                )));
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -4450,16 +4559,20 @@ where
             LIMIT $3
             "#;
 
-        let rows = sqlx::query(query)
+        let rows = match sqlx::query(query)
             .bind(workflow_id)
             .bind(ready_status)
             .bind(job_limit)
             .fetch_all(&mut *conn)
             .await
-            .map_err(|e| {
+        {
+            Ok(rows) => rows,
+            Err(e) => {
                 error!("Database error in claim_next_jobs: {}", e);
-                ApiError("Database error".to_string())
-            })?;
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database error".to_string()));
+            }
+        };
 
         debug!(
             "claim_next_jobs: Found {} jobs for workflow {}",
@@ -4507,15 +4620,20 @@ where
 
         if !job_ids_to_update.is_empty() {
             // Query output files
-            let output_files =
-                sqlx::query("SELECT job_id, file_id FROM job_output_file WHERE workflow_id = $1")
-                    .bind(workflow_id)
-                    .fetch_all(&mut *conn)
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to query output files: {}", e);
-                        ApiError("Database query error".to_string())
-                    })?;
+            let output_files = match sqlx::query(
+                "SELECT job_id, file_id FROM job_output_file WHERE workflow_id = $1",
+            )
+            .bind(workflow_id)
+            .fetch_all(&mut *conn)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    error!("Failed to query output files: {}", e);
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
 
             for row in output_files {
                 let job_id: i64 = row.get("job_id");
@@ -4526,14 +4644,18 @@ where
             }
 
             // Query output user_data
-            let output_user_data = sqlx::query("SELECT job_id, user_data_id FROM job_output_user_data WHERE job_id IN (SELECT id FROM job WHERE workflow_id = $1)")
+            let output_user_data = match sqlx::query("SELECT job_id, user_data_id FROM job_output_user_data WHERE job_id IN (SELECT id FROM job WHERE workflow_id = $1)")
                 .bind(workflow_id)
                 .fetch_all(&mut *conn)
                 .await
-                .map_err(|e| {
+            {
+                Ok(rows) => rows,
+                Err(e) => {
                     error!("Failed to query output user_data: {}", e);
-                    ApiError("Database query error".to_string())
-                })?;
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
 
             for row in output_user_data {
                 let job_id: i64 = row.get("job_id");
@@ -4570,10 +4692,11 @@ where
                 "UPDATE job SET status = {} WHERE id IN ({})",
                 pending, job_ids_str
             );
-            sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
+            if let Err(e) = sqlx::query(&sql).execute(&mut *conn).await {
                 error!("Failed to update job status: {}", e);
-                ApiError("Database update error".to_string())
-            })?;
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database update error".to_string()));
+            }
 
             debug!(
                 "Updated {} jobs to pending status for workflow {}",
@@ -4582,14 +4705,17 @@ where
             );
         }
 
-        // Commit the transaction to release the database lock
-        sqlx::query("COMMIT")
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| {
-                error!("Failed to commit transaction: {}", e);
-                ApiError("Database commit error".to_string())
-            })?;
+        // Commit the transaction to release the database lock.
+        // If COMMIT fails (e.g. SQLITE_BUSY in WAL mode), the transaction may remain
+        // active. Best-effort ROLLBACK to avoid returning a pooled connection with an
+        // open transaction/write lock.
+        if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
+            error!("Failed to commit transaction: {}", e);
+            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+                error!("Failed to rollback after commit failure: {}", rollback_err);
+            }
+            return Err(ApiError("Database commit error".to_string()));
+        }
 
         let response = models::ClaimNextJobsResponse {
             jobs: Some(selected_jobs),
@@ -4995,24 +5121,64 @@ where
 
         job.status = Some(status);
 
-        // 3. Call self.update_job to set the new status
-        let updated_job = match self
-            .jobs_api
-            .update_job_status(id, job.status.expect("Job status must be set"), context)
-            .await?
-        {
-            UpdateJobResponse::SuccessfulResponse(job) => job,
-            UpdateJobResponse::ForbiddenErrorResponse(err) => {
-                return Ok(ManageStatusChangeResponse::DefaultErrorResponse(err));
+        // 3. Use a conditional UPDATE to atomically set the new status only if the
+        // current status hasn't changed since we read it. This prevents TOCTOU race
+        // conditions where concurrent status changes could conflict.
+        let new_status_int = status.to_int();
+        let current_status_int = current_status.to_int();
+        let update_result = sqlx::query!(
+            "UPDATE job SET status = ? WHERE id = ? AND status = ?",
+            new_status_int,
+            id,
+            current_status_int,
+        )
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| {
+            error!("Failed to update job status: {}", e);
+            ApiError("Database error".to_string())
+        })?;
+
+        if update_result.rows_affected() == 0 {
+            // Distinguish "not found" from "concurrently modified" by re-checking
+            let exists = sqlx::query_scalar!("SELECT id FROM job WHERE id = ?", id)
+                .fetch_optional(self.pool.as_ref())
+                .await
+                .map_err(|e| {
+                    error!("Failed to check job existence: {}", e);
+                    ApiError("Database error".to_string())
+                })?;
+
+            if exists.is_none() {
+                let error_response = models::ErrorResponse::new(serde_json::json!({
+                    "message": format!("Job not found with ID: {}", id)
+                }));
+                return Ok(ManageStatusChangeResponse::NotFoundErrorResponse(
+                    error_response,
+                ));
             }
-            UpdateJobResponse::NotFoundErrorResponse(err) => {
-                return Ok(ManageStatusChangeResponse::NotFoundErrorResponse(err));
-            }
-            UpdateJobResponse::UnprocessableContentErrorResponse(err) => {
-                return Ok(ManageStatusChangeResponse::UnprocessableContentErrorResponse(err));
-            }
-            UpdateJobResponse::DefaultErrorResponse(err) => {
-                return Ok(ManageStatusChangeResponse::DefaultErrorResponse(err));
+
+            // Job exists but status was changed by another thread
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": format!(
+                    "Job {} status was concurrently modified (expected '{}'), please retry",
+                    id, current_status
+                )
+            }));
+            return Ok(
+                ManageStatusChangeResponse::UnprocessableContentErrorResponse(error_response),
+            );
+        }
+
+        let workflow_id = job.workflow_id;
+
+        // Re-fetch the job to return fresh data after the update
+        let updated_job = match self.get_job(id, context).await? {
+            GetJobResponse::SuccessfulResponse(fresh_job) => fresh_job,
+            _ => {
+                // Unlikely: job was deleted between our UPDATE and re-fetch
+                job.status = Some(status);
+                job
             }
         };
 
@@ -5021,7 +5187,7 @@ where
             // Current status is complete and new status is Uninitialized
             // Change all downstream jobs accordingly - jobs blocked by this job that are "done"
             // should also be changed to JobStatus::Uninitialized
-            if let Err(e) = self.reinitialize_downstream_jobs(id, job.workflow_id).await {
+            if let Err(e) = self.reinitialize_downstream_jobs(id, workflow_id).await {
                 error!(
                     "Failed to reinitialize downstream jobs for job {}: {}",
                     id, e
@@ -5111,7 +5277,39 @@ where
             ));
         }
 
-        // Set active_compute_node_id to track which compute node is running this job
+        // Use a conditional UPDATE to atomically transition Pending -> Running.
+        // This prevents TOCTOU race conditions where two threads could both read
+        // Pending status and both try to start the same job.
+        // We do this BEFORE setting compute_node_id so we don't mutate job_internal
+        // if the status transition fails (e.g., due to concurrent start).
+        let pending_int = models::JobStatus::Pending.to_int();
+        let running_int = models::JobStatus::Running.to_int();
+        let start_result = sqlx::query!(
+            "UPDATE job SET status = ? WHERE id = ? AND status = ?",
+            running_int,
+            id,
+            pending_int,
+        )
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| {
+            error!("Failed to update job status for start_job: {}", e);
+            ApiError("Database error".to_string())
+        })?;
+
+        if start_result.rows_affected() == 0 {
+            error!(
+                "start_job: job_id={} status was concurrently changed from Pending, cannot start",
+                id
+            );
+            return Err(ApiError(format!(
+                "Job {} status was concurrently modified, cannot start",
+                id
+            )));
+        }
+
+        // Set active_compute_node_id to track which compute node is running this job.
+        // Done after the status transition so we only update if we won the race.
         match sqlx::query!(
             "UPDATE job_internal SET active_compute_node_id = ? WHERE job_id = ?",
             compute_node_id,
@@ -5134,8 +5332,6 @@ where
                 // Continue anyway - this is not critical for job execution
             }
         }
-
-        self.manage_job_status_change(&job, run_id).await?;
 
         // Broadcast job_started event to SSE clients (ephemeral, not persisted to DB)
         self.event_broadcaster.broadcast(BroadcastEvent {
@@ -5617,7 +5813,7 @@ where
         );
 
         // First try with scheduler filter
-        let mut rows = sqlx::query(&query_with_scheduler)
+        let mut rows = match sqlx::query(&query_with_scheduler)
             .bind(workflow_id)
             .bind(ready_status)
             .bind(memory_bytes)
@@ -5629,10 +5825,14 @@ where
             .bind(limit)
             .fetch_all(&mut *conn)
             .await
-            .map_err(|e| {
+        {
+            Ok(rows) => rows,
+            Err(e) => {
                 error!("Database error in get_ready_jobs: {}", e);
-                ApiError("Database error".to_string())
-            })?;
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database error".to_string()));
+            }
+        };
 
         // If no jobs found with scheduler filter and strict_scheduler_match is false,
         // retry without the scheduler filter
@@ -5672,7 +5872,7 @@ where
                 order_by_clause
             );
 
-            rows = sqlx::query(&query_without_scheduler)
+            rows = match sqlx::query(&query_without_scheduler)
                 .bind(workflow_id)
                 .bind(ready_status)
                 .bind(memory_bytes)
@@ -5683,13 +5883,17 @@ where
                 .bind(limit)
                 .fetch_all(&mut *conn)
                 .await
-                .map_err(|e| {
+            {
+                Ok(rows) => rows,
+                Err(e) => {
                     error!(
                         "Database error in get_ready_jobs (no scheduler filter): {}",
                         e
                     );
-                    ApiError("Database error".to_string())
-                })?;
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database error".to_string()));
+                }
+            };
 
             if !rows.is_empty() {
                 info!(
@@ -5823,15 +6027,20 @@ where
 
         if !job_ids_to_update.is_empty() {
             // Query output files
-            let output_files =
-                sqlx::query("SELECT job_id, file_id FROM job_output_file WHERE workflow_id = $1")
-                    .bind(workflow_id)
-                    .fetch_all(&mut *conn)
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to query output files: {}", e);
-                        ApiError("Database query error".to_string())
-                    })?;
+            let output_files = match sqlx::query(
+                "SELECT job_id, file_id FROM job_output_file WHERE workflow_id = $1",
+            )
+            .bind(workflow_id)
+            .fetch_all(&mut *conn)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    error!("Failed to query output files: {}", e);
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
 
             for row in output_files {
                 let job_id: i64 = row.get("job_id");
@@ -5842,14 +6051,18 @@ where
             }
 
             // Query output user_data
-            let output_user_data = sqlx::query("SELECT job_id, user_data_id FROM job_output_user_data WHERE job_id IN (SELECT id FROM job WHERE workflow_id = $1)")
+            let output_user_data = match sqlx::query("SELECT job_id, user_data_id FROM job_output_user_data WHERE job_id IN (SELECT id FROM job WHERE workflow_id = $1)")
                 .bind(workflow_id)
                 .fetch_all(&mut *conn)
                 .await
-                .map_err(|e| {
+            {
+                Ok(rows) => rows,
+                Err(e) => {
                     error!("Failed to query output user_data: {}", e);
-                    ApiError("Database query error".to_string())
-                })?;
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
 
             for row in output_user_data {
                 let job_id: i64 = row.get("job_id");
@@ -5886,10 +6099,11 @@ where
                 "UPDATE job SET status = {} WHERE id IN ({})",
                 pending, job_ids_str
             );
-            sqlx::query(&sql).execute(&mut *conn).await.map_err(|e| {
+            if let Err(e) = sqlx::query(&sql).execute(&mut *conn).await {
                 error!("Failed to update job status: {}", e);
-                ApiError("Database update error".to_string())
-            })?;
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database update error".to_string()));
+            }
 
             debug!(
                 "Updated {} jobs to pending status for workflow {}",
@@ -5898,14 +6112,17 @@ where
             );
         }
 
-        // Commit the transaction to release the database lock
-        sqlx::query("COMMIT")
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| {
-                error!("Failed to commit transaction: {}", e);
-                ApiError("Database commit error".to_string())
-            })?;
+        // Commit the transaction to release the database lock.
+        // If COMMIT fails (e.g. SQLITE_BUSY in WAL mode), the transaction may remain
+        // active. Best-effort ROLLBACK to avoid returning a pooled connection with an
+        // open transaction/write lock.
+        if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
+            error!("Failed to commit transaction: {}", e);
+            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+                error!("Failed to rollback after commit failure: {}", rollback_err);
+            }
+            return Err(ApiError("Database commit error".to_string()));
+        }
 
         // Note: The `reason` field is not populated because generating a useful
         // single-string reason is impractical when multiple jobs may be skipped

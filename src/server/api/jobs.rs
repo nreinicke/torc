@@ -2553,19 +2553,27 @@ where
             context.get().0.clone()
         );
 
-        // Use a transaction with BEGIN IMMEDIATE to prevent race conditions
-        // where multiple processes might try to retry the same job simultaneously.
-        let mut tx = match self.context.pool.begin().await {
-            Ok(tx) => tx,
+        // Use BEGIN IMMEDIATE to acquire a write lock immediately,
+        // preventing race conditions where multiple processes might try to
+        // retry the same job simultaneously.
+        // Note: We use pool.acquire() + raw BEGIN IMMEDIATE instead of pool.begin()
+        // because pool.begin() starts a DEFERRED transaction, and issuing
+        // BEGIN IMMEDIATE inside an existing transaction always fails in SQLite.
+        let mut conn = match self.context.pool.acquire().await {
+            Ok(conn) => conn,
             Err(e) => {
-                return Err(database_error_with_msg(e, "Failed to begin transaction"));
+                return Err(database_error_with_msg(
+                    e,
+                    "Failed to acquire database connection",
+                ));
             }
         };
 
-        // Acquire write lock immediately to prevent concurrent retries
-        if let Err(e) = sqlx::query("BEGIN IMMEDIATE").execute(&mut *tx).await {
-            // SQLite may return an error if already in a transaction, which is fine
-            debug!("BEGIN IMMEDIATE returned (expected in transaction): {}", e);
+        if let Err(e) = sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await {
+            return Err(database_error_with_msg(
+                e,
+                "Failed to begin immediate transaction for retry",
+            ));
         }
 
         // Get the job and verify it's in a retryable state
@@ -2583,17 +2591,19 @@ where
             "#,
         )
         .bind(id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *conn)
         .await
         {
             Ok(Some(record)) => record,
             Ok(None) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
                 let error_response = models::ErrorResponse::new(serde_json::json!({
                     "message": format!("Job not found with ID: {}", id)
                 }));
                 return Ok(RetryJobResponse::NotFoundErrorResponse(error_response));
             }
             Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
                 return Err(database_error_with_msg(e, "Failed to get job record for retry"));
             }
         };
@@ -2616,6 +2626,7 @@ where
 
         // Verify run_id matches
         if workflow_run_id != run_id {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!(
                     "Run ID mismatch: provided {} but workflow is at run {}",
@@ -2634,6 +2645,7 @@ where
         let current_status = match JobStatus::from_int(status_int) {
             Ok(s) => s,
             Err(e) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
                 error!("Failed to parse job status: {}", e);
                 return Err(ApiError(format!("Failed to parse job status: {}", e)));
             }
@@ -2643,6 +2655,7 @@ where
             && current_status != JobStatus::Failed
             && current_status != JobStatus::Terminated
         {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!(
                     "Job cannot be retried: status is {:?}, must be Running, Failed, or Terminated",
@@ -2656,6 +2669,7 @@ where
 
         // Validate max_retries (server-side enforcement)
         if attempt_id >= max_retries as i64 {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!(
                     "Job cannot be retried: attempt_id {} >= max_retries {}",
@@ -2682,9 +2696,10 @@ where
         .bind(ready_status)
         .bind(new_attempt)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
             return Err(database_error_with_msg(
                 e,
                 "Failed to update job status for retry",
@@ -2712,15 +2727,20 @@ where
         .bind(workflow_id)
         .bind(timestamp)
         .bind(event_data.to_string())
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         {
             // Log the error but don't fail the retry operation
             error!("Failed to create retry event for job {}: {}", id, e);
         }
 
-        // Commit the transaction
-        if let Err(e) = tx.commit().await {
+        // Commit the transaction. If COMMIT fails (e.g. SQLITE_BUSY in WAL mode),
+        // the transaction may remain active. Best-effort ROLLBACK to avoid returning
+        // a pooled connection with an open transaction/write lock.
+        if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
+            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+                error!("Failed to rollback after commit failure: {}", rollback_err);
+            }
             return Err(database_error_with_msg(e, "Failed to commit transaction"));
         }
 
