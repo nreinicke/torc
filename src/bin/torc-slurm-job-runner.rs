@@ -78,6 +78,10 @@ mod unix_main {
         /// Skip TLS certificate verification (for testing only)
         #[arg(long, env = "TORC_TLS_INSECURE")]
         tls_insecure: bool,
+
+        /// Password for authentication (can also use TORC_PASSWORD env var)
+        #[arg(long, env = "TORC_PASSWORD", hide_env_values = true)]
+        password: Option<String>,
     }
 
     pub fn main() {
@@ -153,6 +157,13 @@ mod unix_main {
         };
         let mut config = Configuration::with_tls(tls);
         config.base_path = args.url;
+
+        // Set up authentication if password is provided
+        if let Some(ref password) = args.password {
+            let username =
+                std::env::var("USER").unwrap_or_else(|_| std::env::var("USERNAME").unwrap());
+            config.basic_auth = Some((username, Some(password.clone())));
+        }
 
         // First, ping the server to ensure we can connect
         match utils::send_with_retries(
