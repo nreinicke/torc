@@ -149,7 +149,7 @@ factor (12) and HTTPS.
 **Enforced Validation:**
 
 The `torc-htpasswd` tool automatically validates passwords using
-[zxcvbn](https://github.com/shssoichern/zxcvbn-rs), a realistic password strength estimator inspired
+[zxcvbn](https://github.com/shssoichiro/zxcvbn-rs), a realistic password strength estimator inspired
 by password crackers. Unlike rule-based checkers (e.g., "must include a symbol"), zxcvbn recognizes
 common patterns such as dictionary words, keyboard sequences, repeated characters, l33t
 substitutions, and dates, then estimates the number of guesses an attacker would need.
