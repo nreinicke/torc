@@ -74,7 +74,8 @@ echo 'export PATH="/scratch/dthom/torc/latest:$PATH"' >> ~/.bashrc
 ```
 
 **Shared server**: A `torc-server` instance runs on a dedicated VM within the Kestrel environment at
-`torc.hpc.nrel.gov`. Contact Daniel Thom if you would like to create an access group to store
+`torc.hpc.nrel.gov`. See [How to Set Up Authentication](../core/how-to/set-up-authentication.md) to
+configure your credentials. Contact Daniel Thom if you would like to create an access group to store
 private workflows for your team.
 
 ```bash

@@ -32,6 +32,7 @@
   - [Cancel a Workflow](./core/how-to/cancel-workflow.md)
   - [View Job Logs](./core/how-to/view-job-logs.md)
   - [Debug a Failed Job](./core/how-to/debug-failed-job.md)
+  - [Set Up Authentication](./core/how-to/set-up-authentication.md)
   - [Check Resource Utilization](./core/how-to/check-resource-utilization.md)
   - [View Resource Plots](./core/how-to/view-resource-plots.md)
   - [Parameterize Jobs with Files](./core/how-to/parameterize-with-files.md)
