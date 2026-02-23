@@ -252,14 +252,11 @@ impl HpcInterface for SlurmInterface {
         }
 
         script.push('\n');
-        script.push_str(&format!("TORC_URL=\"{}\"\n", server_url));
-
-        script.push('\n');
 
         // Build the torc-slurm-job-runner command
         let mut command = format!(
-            "torc-slurm-job-runner $TORC_URL {} {} --poll-interval {}",
-            workflow_id, output_path, poll_interval
+            "torc-slurm-job-runner {} {} {} --poll-interval {}",
+            server_url, workflow_id, output_path, poll_interval
         );
 
         if let Some(max_jobs) = max_parallel_jobs {
