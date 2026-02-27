@@ -13,7 +13,7 @@ use crate::client::log_paths::{
 use crate::client::sse_client::SseEvent;
 use crate::models::{FileModel, JobModel, ResultModel, ScheduledComputeNodesModel, WorkflowModel};
 
-use crate::client::apis::configuration::TlsConfig;
+use crate::client::apis::configuration::{BasicAuth, TlsConfig};
 
 use super::api::TorcClient;
 use super::components::{
@@ -269,12 +269,15 @@ pub struct App {
 
     // TLS configuration
     pub tls: TlsConfig,
+
+    // Authentication
+    pub basic_auth: Option<BasicAuth>,
 }
 
 impl App {
     #[allow(dead_code)]
     pub fn new() -> Result<Self> {
-        Self::new_with_options(false, 8080, None, None, false)
+        Self::new_with_options(false, 8080, None, None, false, None)
     }
 
     pub fn new_with_options(
@@ -283,12 +286,13 @@ impl App {
         database: Option<String>,
         tls_ca_cert: Option<String>,
         tls_insecure: bool,
+        basic_auth: Option<BasicAuth>,
     ) -> Result<Self> {
         let tls = TlsConfig {
             ca_cert_path: tls_ca_cert.as_ref().map(std::path::PathBuf::from),
             insecure: tls_insecure,
         };
-        let client = TorcClient::new_with_tls(tls.clone())?;
+        let client = TorcClient::new_with_tls(tls.clone(), basic_auth.clone())?;
 
         // In standalone mode, override the server URL to use the specified port
         let server_url = if standalone {
@@ -346,6 +350,7 @@ impl App {
             sse_thread: None,
             sse_workflow_id: None,
             tls,
+            basic_auth,
         };
 
         // Update client to use the correct URL
@@ -755,9 +760,12 @@ impl App {
             return Ok(());
         }
 
-        // Create new client with updated URL
-        self.client =
-            TorcClient::from_url_with_tls(self.server_url_input.clone(), self.tls.clone())?;
+        // Create new client with updated URL, preserving authentication
+        self.client = TorcClient::from_url_with_tls(
+            self.server_url_input.clone(),
+            self.tls.clone(),
+            self.basic_auth.clone(),
+        )?;
         self.server_url = self.server_url_input.clone();
         self.focus = Focus::Workflows;
 
@@ -905,6 +913,7 @@ impl App {
         let mut config =
             crate::client::apis::configuration::Configuration::with_tls(self.tls.clone());
         config.base_path = self.server_url.clone();
+        config.basic_auth = self.basic_auth.clone();
 
         let result = version_check::check_version(&config);
 
@@ -2055,11 +2064,13 @@ impl App {
         // Get the base URL for SSE connection
         let base_url = self.server_url.clone();
         let tls = self.tls.clone();
+        let basic_auth = self.basic_auth.clone();
 
         // Start background thread for SSE connection
         let handle = std::thread::spawn(move || {
             let mut config = crate::client::apis::configuration::Configuration::with_tls(tls);
             config.base_path = base_url;
+            config.basic_auth = basic_auth;
 
             match crate::client::sse_client::SseConnection::connect(&config, workflow_id, None) {
                 Ok(mut connection) => {
