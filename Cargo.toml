@@ -25,7 +25,7 @@ config = { version = "0.14", features = ["toml"] }
 dirs = "6"
 toml = "0.8"
 serde_repr = "0.1"
-serde_with = { version = "3.8", default-features = false, features = ["base64", "std", "macros"] }
+serde_with = { version = "3.17", default-features = false, features = ["base64", "std", "macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4.28"
 env_logger = "0.11"
