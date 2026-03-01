@@ -32,7 +32,7 @@ env_logger = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
-tracing-timing = "0.6"
+tracing-timing = "0.7"
 hdrhistogram = "7.5"
 signal-hook = "0.4"
 libc = "0.2"
