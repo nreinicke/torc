@@ -135,6 +135,8 @@ struct SlurmStatsTableRow {
     max_vm: String,
     #[tabled(rename = "Ave CPU (s)")]
     ave_cpu_seconds: String,
+    #[tabled(rename = "CPU %")]
+    cpu_percent: String,
     #[tabled(rename = "Nodes")]
     node_list: String,
 }
@@ -872,7 +874,13 @@ pub fn parse_memory_mb(s: &str) -> Result<u64, String> {
     }
 }
 
-/// Parse walltime string like "4:00:00", "2-00:00:00" into seconds
+/// Parse walltime string in Slurm format into seconds.
+///
+/// Supported formats:
+/// - `MM` (minutes only, e.g., "30")
+/// - `MM:SS` (e.g., "30:00")
+/// - `HH:MM:SS` (e.g., "04:00:00")
+/// - `D-HH:MM:SS` (e.g., "1-00:00:00")
 pub fn parse_walltime_secs(s: &str) -> Result<u64, String> {
     let s = s.trim();
 
@@ -893,21 +901,21 @@ fn parse_hms(s: &str) -> Result<u64, String> {
     let parts: Vec<&str> = s.split(':').collect();
     match parts.len() {
         1 => {
-            // Just hours
-            let hours: u64 = parts[0]
+            // Just minutes (Slurm convention)
+            let mins: u64 = parts[0]
                 .parse()
-                .map_err(|_| format!("Invalid hours: {}", parts[0]))?;
-            Ok(hours * 3600)
+                .map_err(|_| format!("Invalid minutes: {}", parts[0]))?;
+            Ok(mins * 60)
         }
         2 => {
-            // HH:MM
-            let hours: u64 = parts[0]
+            // MM:SS (Slurm convention)
+            let mins: u64 = parts[0]
                 .parse()
-                .map_err(|_| format!("Invalid hours: {}", parts[0]))?;
-            let mins: u64 = parts[1]
+                .map_err(|_| format!("Invalid minutes: {}", parts[0]))?;
+            let secs: u64 = parts[1]
                 .parse()
-                .map_err(|_| format!("Invalid minutes: {}", parts[1]))?;
-            Ok(hours * 3600 + mins * 60)
+                .map_err(|_| format!("Invalid seconds: {}", parts[1]))?;
+            Ok(mins * 60 + secs)
         }
         3 => {
             // HH:MM:SS
@@ -3067,7 +3075,7 @@ fn handle_generate(
     // Generate schedulers
     let result = match generate_schedulers_for_workflow(
         &mut spec,
-        profile,
+        &profile,
         &resolved_account,
         single_allocation,
         group_by,
@@ -3567,7 +3575,7 @@ fn handle_regenerate(
     let plan = generate_scheduler_plan(
         &graph,
         &rr_name_to_model,
-        profile,
+        &profile,
         &account_to_use,
         single_allocation,
         group_by,
@@ -4067,19 +4075,80 @@ fn handle_slurm_stats(
         return;
     }
 
+    // Fetch results to compute CPU% from ave_cpu_seconds / exec_time
+    let exec_time_map = build_exec_time_map(config, workflow_id);
+
     let rows: Vec<SlurmStatsTableRow> = all_items
         .iter()
-        .map(|s| SlurmStatsTableRow {
-            job_id: s.job_id,
-            run_id: s.run_id,
-            attempt_id: s.attempt_id,
-            slurm_job_id: s.slurm_job_id.clone().unwrap_or_else(|| "-".to_string()),
-            max_rss: fmt_opt_bytes(s.max_rss_bytes),
-            max_vm: fmt_opt_bytes(s.max_vm_size_bytes),
-            ave_cpu_seconds: fmt_opt_f64(s.ave_cpu_seconds),
-            node_list: s.node_list.clone().unwrap_or_else(|| "-".to_string()),
+        .map(|s| {
+            let cpu_percent = compute_cpu_percent(s, &exec_time_map);
+            SlurmStatsTableRow {
+                job_id: s.job_id,
+                run_id: s.run_id,
+                attempt_id: s.attempt_id,
+                slurm_job_id: s.slurm_job_id.clone().unwrap_or_else(|| "-".to_string()),
+                max_rss: fmt_opt_bytes(s.max_rss_bytes),
+                max_vm: fmt_opt_bytes(s.max_vm_size_bytes),
+                ave_cpu_seconds: fmt_opt_f64(s.ave_cpu_seconds),
+                cpu_percent,
+                node_list: s.node_list.clone().unwrap_or_else(|| "-".to_string()),
+            }
         })
         .collect();
 
     display_table_with_count(&rows, "slurm stats");
+}
+
+/// Build a map of (job_id, run_id, attempt_id) -> exec_time_minutes from results.
+fn build_exec_time_map(config: &Configuration, workflow_id: i64) -> HashMap<(i64, i64, i64), f64> {
+    let params = ResultListParams::new();
+    let results = match paginate_results(config, workflow_id, params) {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+    let mut map = HashMap::new();
+    for r in results {
+        let attempt_id = r.attempt_id.unwrap_or(1);
+        map.insert((r.job_id, r.run_id, attempt_id), r.exec_time_minutes);
+    }
+    map
+}
+
+/// Compute CPU% from ave_cpu_seconds and exec_time_minutes.
+/// Returns formatted string like "350.2%" or "-" if data is unavailable.
+fn compute_cpu_percent(
+    stats: &models::SlurmStatsModel,
+    exec_time_map: &HashMap<(i64, i64, i64), f64>,
+) -> String {
+    let ave_cpu_s = match stats.ave_cpu_seconds {
+        Some(s) if s > 0.0 => s,
+        _ => return "-".to_string(),
+    };
+    let exec_minutes = match exec_time_map.get(&(stats.job_id, stats.run_id, stats.attempt_id)) {
+        Some(&m) if m > 0.0 => m,
+        _ => return "-".to_string(),
+    };
+    let pct = ave_cpu_s / (exec_minutes * 60.0) * 100.0;
+    format!("{:.1}%", pct)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_walltime_secs_rejects_unit_suffixes() {
+        assert!(parse_walltime_secs("2h").is_err());
+        assert!(parse_walltime_secs("30m").is_err());
+        assert!(parse_walltime_secs("120s").is_err());
+        assert!(parse_walltime_secs("1h 30m").is_err());
+        assert!(parse_walltime_secs("abc").is_err());
+    }
+
+    #[test]
+    fn test_parse_walltime_secs_slurm() {
+        assert_eq!(parse_walltime_secs("04:30:00").unwrap(), 4 * 3600 + 30 * 60);
+        assert_eq!(parse_walltime_secs("1-00:00:00").unwrap(), 24 * 3600);
+        assert_eq!(parse_walltime_secs("30:00").unwrap(), 30 * 60);
+    }
 }

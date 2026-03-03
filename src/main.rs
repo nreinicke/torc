@@ -245,6 +245,9 @@ fn main() {
             workflow_spec_or_id,
             ignore_missing_data,
             skip_checks,
+            max_parallel_jobs,
+            output_dir,
+            poll_interval,
         } => {
             let workflow_id = if is_spec_file(workflow_spec_or_id) {
                 // Load and validate spec file
@@ -355,7 +358,12 @@ fn main() {
                     let torc_config = TorcConfig::load().unwrap_or_default();
                     let workflow_manager =
                         WorkflowManager::new(config.clone(), torc_config, workflow);
-                    match workflow_manager.start(*ignore_missing_data) {
+                    match workflow_manager.start(
+                        *ignore_missing_data,
+                        *max_parallel_jobs,
+                        output_dir,
+                        *poll_interval,
+                    ) {
                         Ok(()) => {
                             print_workflow_message(
                                 &format,
@@ -384,6 +392,9 @@ fn main() {
             ignore_missing_data,
             skip_checks,
             overwrite,
+            max_parallel_jobs,
+            output_dir,
+            poll_interval,
         } => {
             use torc::client::commands::slurm::{
                 WalltimeStrategy, generate_schedulers_for_workflow,
@@ -425,21 +436,13 @@ fn main() {
                 &torc_config.client.hpc,
             );
 
-            let profile = if let Some(name) = hpc_profile {
-                registry.get(name)
-            } else {
-                registry.detect()
-            };
-
-            let profile = match profile {
-                Some(p) => p,
-                None => {
-                    if hpc_profile.is_some() {
-                        eprintln!("Unknown HPC profile: {}", hpc_profile.as_ref().unwrap());
-                    } else {
-                        eprintln!("No HPC profile specified and no system detected.");
-                        eprintln!("Use --hpc-profile <name> to specify a profile.");
-                    }
+            let profile = match torc::client::commands::hpc::resolve_hpc_profile(
+                &registry,
+                hpc_profile.as_deref(),
+            ) {
+                Ok(p) => p,
+                Err(msg) => {
+                    eprintln!("{}", msg);
                     std::process::exit(1);
                 }
             };
@@ -447,7 +450,7 @@ fn main() {
             // Generate schedulers
             match generate_schedulers_for_workflow(
                 &mut spec,
-                profile,
+                &profile,
                 &resolved_account,
                 *single_allocation,
                 *group_by,
@@ -517,7 +520,12 @@ fn main() {
                 Ok(workflow) => {
                     let workflow_manager =
                         WorkflowManager::new(config.clone(), torc_config, workflow);
-                    match workflow_manager.start(*ignore_missing_data) {
+                    match workflow_manager.start(
+                        *ignore_missing_data,
+                        *max_parallel_jobs,
+                        output_dir,
+                        *poll_interval,
+                    ) {
                         Ok(()) => {
                             print_workflow_message(
                                 &format,
