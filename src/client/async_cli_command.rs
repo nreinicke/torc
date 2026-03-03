@@ -306,10 +306,9 @@ impl AsyncCliCommand {
             .expect("A completed job must have a completion_time");
         let timestamp_str = timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
-        // Get resource metrics if monitoring is enabled
-        // NOTE: stop_monitoring() transfers metrics from the monitoring thread's local HashMap
-        // to the shared HashMap and returns them. Using get_metrics() won't work because
-        // metrics are only transferred when StopMonitoring command is processed.
+        // Get resource metrics if monitoring is enabled.
+        // stop_monitoring() sends a command to the monitoring thread and waits for it to
+        // return the collected metrics via a response channel.
         let (peak_mem, avg_mem, peak_cpu, avg_cpu) = if let Some(monitor) = resource_monitor {
             if let Some(pid) = self.pid {
                 if let Some(metrics) = monitor.stop_monitoring(pid) {
