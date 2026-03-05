@@ -2016,6 +2016,131 @@ impl ListFailureHandlersResponse {
     }
 }
 
+// ============================================================================
+// RO-Crate Entity Model
+// ============================================================================
+
+/// A single RO-Crate JSON-LD entity description.
+///
+/// Each record represents one entity in an RO-Crate metadata document.
+/// Entities may optionally link to a `file` record via `file_id`, or
+/// represent external entities (software, documentation) with `file_id = None`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
+#[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
+pub struct RoCrateEntityModel {
+    /// Database ID of this record.
+    #[serde(rename = "id")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
+
+    /// Database ID of the workflow this record is associated with.
+    #[serde(rename = "workflow_id")]
+    pub workflow_id: i64,
+
+    /// Optional link to a file record.
+    #[serde(rename = "file_id")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<i64>,
+
+    /// The JSON-LD @id for this entity (e.g., "data/output.parquet").
+    #[serde(rename = "entity_id")]
+    pub entity_id: String,
+
+    /// The Schema.org @type (e.g., "File", "Dataset", "SoftwareApplication").
+    #[serde(rename = "entity_type")]
+    pub entity_type: String,
+
+    /// Full JSON-LD metadata object as a JSON string.
+    #[serde(rename = "metadata")]
+    pub metadata: String,
+}
+
+impl RoCrateEntityModel {
+    #[allow(clippy::new_without_default)]
+    pub fn new(
+        workflow_id: i64,
+        entity_id: String,
+        entity_type: String,
+        metadata: String,
+    ) -> RoCrateEntityModel {
+        RoCrateEntityModel {
+            id: None,
+            workflow_id,
+            file_id: None,
+            entity_id,
+            entity_type,
+            metadata,
+        }
+    }
+}
+
+/// Converts the RoCrateEntityModel value to the Query Parameters representation (style=form, explode=false)
+impl std::string::ToString for RoCrateEntityModel {
+    fn to_string(&self) -> String {
+        let params: Vec<Option<String>> = vec![
+            self.id
+                .as_ref()
+                .map(|id| ["id".to_string(), id.to_string()].join(",")),
+            Some("workflow_id".to_string()),
+            Some(self.workflow_id.to_string()),
+            self.file_id
+                .as_ref()
+                .map(|file_id| ["file_id".to_string(), file_id.to_string()].join(",")),
+            Some("entity_id".to_string()),
+            Some(self.entity_id.to_string()),
+            Some("entity_type".to_string()),
+            Some(self.entity_type.to_string()),
+            Some("metadata".to_string()),
+            Some(self.metadata.to_string()),
+        ];
+
+        params.into_iter().flatten().collect::<Vec<_>>().join(",")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
+#[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
+pub struct ListRoCrateEntitiesResponse {
+    #[serde(rename = "items")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<RoCrateEntityModel>>,
+
+    #[serde(rename = "offset")]
+    pub offset: i64,
+
+    #[serde(rename = "max_limit")]
+    pub max_limit: i64,
+
+    #[serde(rename = "count")]
+    pub count: i64,
+
+    #[serde(rename = "total_count")]
+    pub total_count: i64,
+
+    #[serde(rename = "has_more")]
+    pub has_more: bool,
+}
+
+impl ListRoCrateEntitiesResponse {
+    #[allow(clippy::new_without_default)]
+    pub fn new(
+        offset: i64,
+        max_limit: i64,
+        count: i64,
+        total_count: i64,
+        has_more: bool,
+    ) -> ListRoCrateEntitiesResponse {
+        ListRoCrateEntitiesResponse {
+            items: None,
+            offset,
+            max_limit,
+            count,
+            total_count,
+            has_more,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, validator::Validate)]
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct GetDotGraphResponse {
@@ -9783,6 +9908,12 @@ pub struct WorkflowModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub use_srun: Option<bool>,
 
+    /// When true, automatically create RO-Crate entities for workflow files.
+    /// Input files get entities during initialization; output files get entities on job completion.
+    #[serde(rename = "enable_ro_crate")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_ro_crate: Option<bool>,
+
     /// Project name or identifier for grouping workflows
     #[serde(rename = "project")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -9818,6 +9949,7 @@ impl WorkflowModel {
             use_pending_failed: Some(false),
             limit_resources: Some(true),
             use_srun: Some(true),
+            enable_ro_crate: None,
             project: None,
             metadata: None,
             status_id: None,
@@ -9939,6 +10071,7 @@ impl std::str::FromStr for WorkflowModel {
             pub use_pending_failed: Vec<bool>,
             pub limit_resources: Vec<bool>,
             pub use_srun: Vec<bool>,
+            pub enable_ro_crate: Vec<bool>,
             pub project: Vec<String>,
             pub metadata: Vec<String>,
             pub status_id: Vec<i64>,
@@ -10020,6 +10153,9 @@ impl std::str::FromStr for WorkflowModel {
                     "use_srun" => intermediate_rep.use_srun.push(
                         <bool as std::str::FromStr>::from_str(val).map_err(|x| x.to_string())?,
                     ),
+                    "enable_ro_crate" => intermediate_rep.enable_ro_crate.push(
+                        <bool as std::str::FromStr>::from_str(val).map_err(|x| x.to_string())?,
+                    ),
                     "project" => intermediate_rep.project.push(
                         <String as std::str::FromStr>::from_str(val).map_err(|x| x.to_string())?,
                     ),
@@ -10079,6 +10215,7 @@ impl std::str::FromStr for WorkflowModel {
             use_pending_failed: intermediate_rep.use_pending_failed.into_iter().next(),
             limit_resources: intermediate_rep.limit_resources.into_iter().next(),
             use_srun: intermediate_rep.use_srun.into_iter().next(),
+            enable_ro_crate: intermediate_rep.enable_ro_crate.into_iter().next(),
             project: intermediate_rep.project.into_iter().next(),
             metadata: intermediate_rep.metadata.into_iter().next(),
             status_id: intermediate_rep.status_id.into_iter().next(),

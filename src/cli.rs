@@ -21,6 +21,7 @@ use crate::client::commands::remote::RemoteCommands;
 use crate::client::commands::reports::ReportCommands;
 use crate::client::commands::resource_requirements::ResourceRequirementsCommands;
 use crate::client::commands::results::ResultCommands;
+use crate::client::commands::ro_crate::RoCrateCommands;
 use crate::client::commands::scheduled_compute_nodes::ScheduledComputeNodeCommands;
 use crate::client::commands::slurm::{GroupByStrategy, SlurmCommands};
 use crate::client::commands::user_data::UserDataCommands;
@@ -748,6 +749,13 @@ EXAMPLES:
     FailureHandlers {
         #[command(subcommand)]
         command: FailureHandlerCommands,
+    },
+
+    /// RO-Crate metadata management commands
+    #[command(name = "ro-crate")]
+    RoCrate {
+        #[command(subcommand)]
+        command: RoCrateCommands,
     },
 
     // =========================================================================

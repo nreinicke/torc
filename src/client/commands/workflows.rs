@@ -3693,6 +3693,16 @@ fn handle_export(
             }
         };
 
+    // Get all RO-Crate entities
+    export.ro_crate_entities =
+        match default_api::list_ro_crate_entities(config, workflow_id, None, None) {
+            Ok(response) => response.items.unwrap_or_default(),
+            Err(e) => {
+                print_error("listing RO-Crate entities", &e);
+                std::process::exit(1);
+            }
+        };
+
     // Get all jobs (with relationships)
     let job_params = JobListParams {
         workflow_id,
@@ -4113,6 +4123,34 @@ fn handle_import(
 
             if let Err(e) = default_api::update_job(config, *new_job_id, update_job) {
                 print_error("updating job dependencies", &e);
+                let _ = default_api::delete_workflow(config, new_workflow_id, None);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Create RO-Crate entities (with remapped file IDs and job IDs)
+    // This must happen after jobs are created so we can remap job IDs in provenance data
+    for entity in &export.ro_crate_entities {
+        let mut new_entity = entity.clone();
+        new_entity.id = None;
+        new_entity.workflow_id = new_workflow_id;
+
+        // Remap file_id if present
+        if let Some(old_file_id) = new_entity.file_id {
+            new_entity.file_id = mappings.remap_file_id(old_file_id);
+        }
+
+        // Remap job IDs in entity_id and metadata (for provenance links like wasGeneratedBy)
+        let (new_entity_id, new_metadata) =
+            mappings.remap_ro_crate_job_ids(&new_entity.entity_id, &new_entity.metadata);
+        new_entity.entity_id = new_entity_id;
+        new_entity.metadata = new_metadata;
+
+        match default_api::create_ro_crate_entity(config, new_entity) {
+            Ok(_) => {}
+            Err(e) => {
+                print_error("creating RO-Crate entity", &e);
                 let _ = default_api::delete_workflow(config, new_workflow_id, None);
                 std::process::exit(1);
             }

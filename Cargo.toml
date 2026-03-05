@@ -79,6 +79,7 @@ jsonwebtoken = "10.3.0"
 sha2 = "0.10"
 
 # Client-specific
+rayon = "1.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "multipart", "native-tls", "stream"] }
 sysinfo = "0.29"
 hostname = "0.4.1"
@@ -180,8 +181,10 @@ server = [
     "dep:bcrypt",
     "dep:rust-embed",
     "dep:parking_lot",
+    "dep:mime_guess",
 ]
 client = [
+    "dep:rayon",
     "dep:reqwest",
     "dep:sysinfo",
     "dep:hostname",
@@ -207,6 +210,7 @@ client = [
     "dep:shlex",
     "dep:flate2",
     "dep:tar",
+    "dep:mime_guess",
     "config",
 ]
 tui = [
@@ -309,6 +313,7 @@ rust-embed = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
 
 # Client dependencies (optional)
+rayon = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sysinfo = { workspace = true, optional = true }
 hostname = { workspace = true, optional = true }
