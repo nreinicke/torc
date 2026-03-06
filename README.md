@@ -7,7 +7,7 @@ complex dependencies on local machines and HPC clusters. It uses a client-server
 centralized SQLite database for state management and coordination.
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
-[![Slack](https://img.shields.io)](https://join.slack.com/t/torccrew/shared_invite/zt-3s8yfuxbk-nWe5GjJ~4DrLPQRULYlB_w)
+[![Slack](https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack)](https://join.slack.com/t/torccrew/shared_invite/zt-3s8yfuxbk-nWe5GjJ~4DrLPQRULYlB_w)
 
 ## Project Status
 
