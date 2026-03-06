@@ -305,7 +305,7 @@ jobs:
           if not has_latest:
               data["versions"].insert(0, {
                   "version": "latest",
-                  "label": "latest (dev)",
+                  "label": "latest (main)",
                   "path": "/torc/latest/"
               })
 

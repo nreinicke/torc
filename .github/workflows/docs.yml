@@ -65,7 +65,7 @@ jobs:
           {
             "latest_release": null,
             "versions": [
-              {"version": "latest", "label": "latest (dev)", "path": "/torc/latest/"}
+              {"version": "latest", "label": "latest (main)", "path": "/torc/latest/"}
             ]
           }
           VJSON
