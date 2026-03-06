@@ -3327,7 +3327,7 @@ pub struct SchedulerInfo {
 }
 
 /// Handle the regenerate command - regenerates Slurm schedulers for pending jobs
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
 fn handle_regenerate(
     config: &Configuration,
     workflow_id: i64,
