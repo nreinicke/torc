@@ -638,6 +638,74 @@ impl JobSpec {
     }
 }
 
+/// Slurm-specific configuration that is opaque to the server.
+///
+/// New Slurm settings should be added here instead of as top-level workflow fields.
+/// The server stores this as a JSON blob without interpretation; only the client
+/// deserializes it. This avoids requiring server code changes and database migrations
+/// for each new Slurm setting.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SlurmConfig {
+    /// When true (default), srun passes --mem and --cpus-per-task to enforce cgroup limits
+    /// for each job step when running inside a Slurm allocation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resources: Option<bool>,
+    /// When true (default), jobs are wrapped with srun inside Slurm allocations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_srun: Option<bool>,
+    /// Signal specification for srun steps, passed as `srun --signal=<value>`.
+    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds before
+    /// the step time limit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srun_termination_signal: Option<String>,
+    /// When true, allow Slurm to bind tasks to specific CPU cores. By default (false),
+    /// srun passes `--cpu-bind=none` to disable binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_cpu_bind: Option<bool>,
+}
+
+impl SlurmConfig {
+    /// Merge with individual flat fields, where `self` (from slurm_config) takes precedence.
+    pub fn merge_with_flat_fields(
+        &self,
+        limit_resources: Option<bool>,
+        use_srun: Option<bool>,
+        srun_termination_signal: Option<String>,
+        enable_cpu_bind: Option<bool>,
+    ) -> SlurmConfig {
+        SlurmConfig {
+            limit_resources: self.limit_resources.or(limit_resources),
+            use_srun: self.use_srun.or(use_srun),
+            srun_termination_signal: self
+                .srun_termination_signal
+                .clone()
+                .or(srun_termination_signal),
+            enable_cpu_bind: self.enable_cpu_bind.or(enable_cpu_bind),
+        }
+    }
+
+    /// Build a SlurmConfig from a WorkflowModel's slurm_config JSON blob.
+    pub fn from_workflow_model(workflow: &models::WorkflowModel) -> SlurmConfig {
+        if let Some(ref json_str) = workflow.slurm_config {
+            serde_json::from_str(json_str).unwrap_or_default()
+        } else {
+            SlurmConfig::default()
+        }
+    }
+
+    pub fn limit_resources(&self) -> bool {
+        self.limit_resources.unwrap_or(true)
+    }
+
+    pub fn use_srun(&self) -> bool {
+        self.use_srun.unwrap_or(true)
+    }
+
+    pub fn enable_cpu_bind(&self) -> bool {
+        self.enable_cpu_bind.unwrap_or(false)
+    }
+}
+
 /// Specification for a complete workflow
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -655,6 +723,7 @@ pub struct WorkflowSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, String>>,
     /// Inform all compute nodes to shut down this number of seconds before the expiration time
+    /// Deprecated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compute_node_expiration_buffer_seconds: Option<i64>,
     /// Inform all compute nodes to wait for new jobs for this time period before exiting
@@ -717,6 +786,19 @@ pub struct WorkflowSpec {
     /// Arbitrary metadata as JSON string
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
+    /// Signal specification for srun steps, passed as `srun --signal=<value>`.
+    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds before
+    /// the step time limit). This allows jobs to checkpoint before being killed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srun_termination_signal: Option<String>,
+    /// When true, allow Slurm to bind tasks to specific CPU cores. By default (false),
+    /// srun passes `--cpu-bind=none` to disable binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_cpu_bind: Option<bool>,
+    /// Grouped Slurm configuration (preferred over individual flat fields above).
+    /// New Slurm settings should be added to SlurmConfig instead of as top-level fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slurm_config: Option<SlurmConfig>,
 }
 
 impl WorkflowSpec {
@@ -753,6 +835,9 @@ impl WorkflowSpec {
             enable_ro_crate: None,
             project: None,
             metadata: None,
+            srun_termination_signal: None,
+            enable_cpu_bind: None,
+            slurm_config: None,
         }
     }
 
@@ -901,17 +986,17 @@ impl WorkflowSpec {
 
     /// Validate that multi-node schedulers are properly utilized.
     ///
-    /// This validation ensures that when a scheduler allocates multiple nodes (nodes > 1)
-    /// and `start_one_worker_per_node` is NOT set, there are jobs that actually require
-    /// that many nodes. This prevents scenarios where:
+    /// This validation ensures that when a scheduler allocates multiple nodes (nodes > 1),
+    /// jobs using it have consistent node requirements. Both patterns are valid:
     ///
-    /// 1. A scheduler allocates 2+ nodes from Slurm
-    /// 2. Jobs only need 1 node each
-    /// 3. A single-node scheduler claims all jobs first
-    /// 4. The multi-node allocation is wasted or jobs fail unexpectedly
+    /// 1. **Single-node jobs in a multi-node allocation** — a single worker tracks
+    ///    per-node resources and places each job step on a specific node via
+    ///    `srun --nodelist=<node> --exact` (job `num_nodes=1` or unset).
+    /// 2. **True multi-node jobs** — jobs span the full allocation (job `num_nodes` matches
+    ///    scheduler `nodes`).
     ///
-    /// If `start_one_worker_per_node` is true, each node runs its own worker and can
-    /// independently claim single-node jobs, so no validation is needed.
+    /// The validation rejects the case where jobs request a different multi-node count
+    /// than the scheduler provides (e.g., scheduler allocates 4 nodes but jobs request 2).
     pub fn validate_scheduler_node_requirements(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Build lookup maps for resource requirements and schedulers
         let resource_req_map: HashMap<&str, &ResourceRequirementsSpec> = self
@@ -972,53 +1057,46 @@ impl WorkflowSpec {
                 continue;
             }
 
-            // If start_one_worker_per_node is true, each node gets its own worker
-            // and can claim single-node jobs independently - no validation needed
-            if action.start_one_worker_per_node == Some(true) {
-                continue;
-            }
-
-            // Multi-node scheduler WITHOUT start_one_worker_per_node:
-            // Find jobs that reference this scheduler and check their num_nodes
+            // Find jobs that reference this scheduler
             let jobs_using_scheduler: Vec<&JobSpec> = self
                 .jobs
                 .iter()
                 .filter(|job| job.scheduler.as_ref() == Some(scheduler_name))
                 .collect();
 
-            // If no jobs explicitly reference this scheduler, this might be intentional
-            // (jobs could be dynamically assigned), so do not treat as an error.
+            // If no jobs explicitly reference this scheduler, skip
             if jobs_using_scheduler.is_empty() {
                 continue;
             }
 
-            // Check if any job using this scheduler has matching num_nodes
-            let has_matching_job = jobs_using_scheduler.iter().any(|job| {
-                let job_num_nodes = job
-                    .resource_requirements
-                    .as_ref()
-                    .and_then(|name| resource_req_map.get(name.as_str()))
-                    .map(|req| req.num_nodes)
-                    .unwrap_or(1);
-                job_num_nodes == scheduler.nodes
-            });
+            // Check for mismatched multi-node requirements: reject jobs that request
+            // a different multi-node count than the scheduler provides.
+            // Single-node jobs (num_nodes=1 or unset) are always valid in any allocation.
+            let mismatched_jobs: Vec<&str> = jobs_using_scheduler
+                .iter()
+                .filter(|job| {
+                    let job_num_nodes = job
+                        .resource_requirements
+                        .as_ref()
+                        .and_then(|name| resource_req_map.get(name.as_str()))
+                        .map(|req| req.num_nodes)
+                        .unwrap_or(1);
+                    // Mismatch: job wants >1 node but not the same count as scheduler
+                    job_num_nodes > 1 && job_num_nodes != scheduler.nodes
+                })
+                .map(|j| j.name.as_str())
+                .collect();
 
-            if !has_matching_job {
-                let job_names: Vec<&str> = jobs_using_scheduler
-                    .iter()
-                    .map(|j| j.name.as_str())
-                    .collect();
+            if !mismatched_jobs.is_empty() {
                 errors.push(format!(
-                    "Scheduler '{}' allocates {} nodes but none of the jobs using it \
-                     ({}) have num_nodes={} in their resource requirements. \
-                     Either set num_nodes={} on job resource requirements, \
-                     or set start_one_worker_per_node=true on the schedule_nodes action \
-                     to run independent workers on each node.",
+                    "Scheduler '{}' allocates {} nodes but jobs ({}) request a different \
+                     multi-node count in their resource requirements. Set num_nodes={} \
+                     on job resource requirements to match the scheduler, or use \
+                     num_nodes=1 for single-node jobs.",
                     scheduler_name,
                     scheduler.nodes,
-                    job_names.join(", "),
+                    mismatched_jobs.join(", "),
                     scheduler.nodes,
-                    scheduler.nodes
                 ));
             }
         }
@@ -1709,8 +1787,11 @@ impl WorkflowSpec {
         workflow_model.description = spec.description.clone();
 
         // Set compute node configuration fields if present
-        if let Some(value) = spec.compute_node_expiration_buffer_seconds {
-            workflow_model.compute_node_expiration_buffer_seconds = Some(value);
+        if spec.compute_node_expiration_buffer_seconds.is_some() {
+            log::warn!(
+                "compute_node_expiration_buffer_seconds is deprecated and will be ignored. \
+                 Slurm manages job termination signals via srun --time."
+            );
         }
         if let Some(value) = spec.compute_node_wait_for_new_jobs_seconds {
             workflow_model.compute_node_wait_for_new_jobs_seconds = Some(value);
@@ -1750,14 +1831,26 @@ impl WorkflowSpec {
             workflow_model.use_pending_failed = Some(value);
         }
 
-        // Set limit_resources if present
-        if let Some(value) = spec.limit_resources {
-            workflow_model.limit_resources = Some(value);
-        }
+        // Build merged SlurmConfig from flat fields and nested slurm_config.
+        // The nested slurm_config takes precedence over flat fields.
+        let merged_slurm = spec
+            .slurm_config
+            .clone()
+            .unwrap_or_default()
+            .merge_with_flat_fields(
+                spec.limit_resources,
+                spec.use_srun,
+                spec.srun_termination_signal.clone(),
+                spec.enable_cpu_bind,
+            );
 
-        // Set use_srun if present
-        if let Some(value) = spec.use_srun {
-            workflow_model.use_srun = Some(value);
+        // Store the merged config as a JSON blob (server treats it opaquely).
+        // Only set it when at least one field is configured, so that workflows
+        // without Slurm settings keep slurm_config = NULL in the database.
+        if merged_slurm != SlurmConfig::default() {
+            let slurm_config_json = serde_json::to_string(&merged_slurm)
+                .map_err(|e| format!("Failed to serialize slurm_config: {}", e))?;
+            workflow_model.slurm_config = Some(slurm_config_json);
         }
 
         // Set enable_ro_crate if present
@@ -2116,6 +2209,14 @@ impl WorkflowSpec {
                             &0
                         };
 
+                        if action_spec.start_one_worker_per_node == Some(true) {
+                            log::warn!(
+                                "start_one_worker_per_node is deprecated and ignored. \
+                                 Multi-node allocations now use a single worker with \
+                                 per-node resource tracking via srun --nodelist."
+                            );
+                        }
+
                         let mut config = serde_json::json!({
                             "scheduler_type": scheduler_type,
                             "scheduler_id": scheduler_id,
@@ -2352,11 +2453,9 @@ impl WorkflowSpec {
                     job_model.cancel_on_blocking_job_failure =
                         job_spec.cancel_on_blocking_job_failure;
                 }
-                // Only override supports_termination if explicitly set in spec
-                // (JobModel::new() defaults to Some(false))
-                if job_spec.supports_termination.is_some() {
-                    job_model.supports_termination = job_spec.supports_termination;
-                }
+                // supports_termination is deprecated — Slurm manages termination
+                // signals via srun --time and KillWait. Accept the field silently
+                // to avoid breaking existing specs.
 
                 // Map file names and regexes to IDs
                 let input_file_ids = Self::resolve_names_and_regexes(
@@ -3517,6 +3616,19 @@ impl WorkflowSpec {
                         obj.insert("use_srun".to_string(), serde_json::Value::Bool(v));
                     }
                 }
+                "srun_termination_signal" => {
+                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_string()) {
+                        obj.insert(
+                            "srun_termination_signal".to_string(),
+                            serde_json::Value::String(v.to_string()),
+                        );
+                    }
+                }
+                "enable_cpu_bind" => {
+                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_bool()) {
+                        obj.insert("enable_cpu_bind".to_string(), serde_json::Value::Bool(v));
+                    }
+                }
                 _ => {
                     // Ignore unknown nodes
                 }
@@ -4664,6 +4776,9 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
             enable_ro_crate: None,
             project: None,
             metadata: None,
+            srun_termination_signal: None,
+            enable_cpu_bind: None,
+            slurm_config: None,
         };
 
         spec.expand_parameters()

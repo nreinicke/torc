@@ -34,7 +34,7 @@ class WorkflowModel(BaseModel):
     timestamp: Optional[StrictStr] = Field(default=None, description="Timestamp of workflow creation")
     project: Optional[StrictStr] = Field(default=None, description="Project name or identifier for grouping workflows")
     metadata: Optional[StrictStr] = Field(default=None, description="Arbitrary metadata as JSON string")
-    compute_node_expiration_buffer_seconds: Optional[StrictInt] = Field(default=180, description="Inform all compute nodes to shut down this number of seconds before the expiration time. This allows torc to send SIGTERM to all job processes and set all statuses to terminated. Increase the time in cases where the job processes handle SIGTERM and need more time to gracefully shut down. Set the value to 0 to maximize the time given to jobs. If not set, take the database's default value of 90 seconds.")
+    compute_node_expiration_buffer_seconds: Optional[StrictInt] = Field(default=None, description="Deprecated: Slurm now manages job termination signals via srun --time and KillWait. This field is accepted but ignored. Previously informed compute nodes to shut down this many seconds before expiration.")
     compute_node_wait_for_new_jobs_seconds: Optional[StrictInt] = Field(default=90, description="Inform all compute nodes to wait for new jobs for this time period before exiting. Does not apply if the workflow is complete. Default must be >= completion_check_interval_secs + job_completion_poll_interval to avoid exiting before dependent jobs are unblocked.")
     compute_node_ignore_workflow_completion: Optional[StrictBool] = Field(default=False, description="Inform all compute nodes to ignore workflow completions and hold onto allocations indefinitely. Useful for debugging failed jobs and possibly dynamic workflows where jobs get added after starting.")
     compute_node_wait_for_healthy_database_minutes: Optional[StrictInt] = Field(default=20, description="Inform all compute nodes to wait this number of minutes if the database becomes unresponsive.")
@@ -43,8 +43,10 @@ class WorkflowModel(BaseModel):
     resource_monitor_config: Optional[StrictStr] = Field(default=None, description="Resource monitoring configuration as JSON string")
     slurm_defaults: Optional[StrictStr] = Field(default=None, description="Default Slurm parameters to apply to all schedulers as JSON string")
     use_pending_failed: Optional[StrictBool] = Field(default=False, description="Use PendingFailed status for failed jobs (enables AI-assisted recovery)")
+    enable_ro_crate: Optional[StrictBool] = Field(default=False, description="When true, automatically create RO-Crate entities for workflow files. Input files get entities during initialization; output files get entities on job completion.")
     status_id: Optional[StrictInt] = None
-    __properties: ClassVar[List[str]] = ["id", "name", "user", "description", "timestamp", "project", "metadata", "compute_node_expiration_buffer_seconds", "compute_node_wait_for_new_jobs_seconds", "compute_node_ignore_workflow_completion", "compute_node_wait_for_healthy_database_minutes", "compute_node_min_time_for_new_jobs_seconds", "jobs_sort_method", "resource_monitor_config", "slurm_defaults", "use_pending_failed", "status_id"]
+    slurm_config: Optional[StrictStr] = Field(default=None, description="JSON-encoded blob of Slurm configuration options for the workflow. May include fields such as limit_resources, use_srun, srun_termination_signal, and enable_cpu_bind. Stored as a JSON string to allow flexible, forward-compatible configuration.")
+    __properties: ClassVar[List[str]] = ["id", "name", "user", "description", "timestamp", "project", "metadata", "compute_node_expiration_buffer_seconds", "compute_node_wait_for_new_jobs_seconds", "compute_node_ignore_workflow_completion", "compute_node_wait_for_healthy_database_minutes", "compute_node_min_time_for_new_jobs_seconds", "jobs_sort_method", "resource_monitor_config", "slurm_defaults", "use_pending_failed", "enable_ro_crate", "status_id", "slurm_config"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +87,11 @@ class WorkflowModel(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if slurm_config (nullable) is None
+        # and model_fields_set contains the field
+        if self.slurm_config is None and "slurm_config" in self.model_fields_set:
+            _dict['slurm_config'] = None
+
         return _dict
 
     @classmethod
@@ -104,7 +111,7 @@ class WorkflowModel(BaseModel):
             "timestamp": obj.get("timestamp"),
             "project": obj.get("project"),
             "metadata": obj.get("metadata"),
-            "compute_node_expiration_buffer_seconds": obj.get("compute_node_expiration_buffer_seconds") if obj.get("compute_node_expiration_buffer_seconds") is not None else 180,
+            "compute_node_expiration_buffer_seconds": obj.get("compute_node_expiration_buffer_seconds"),
             "compute_node_wait_for_new_jobs_seconds": obj.get("compute_node_wait_for_new_jobs_seconds") if obj.get("compute_node_wait_for_new_jobs_seconds") is not None else 90,
             "compute_node_ignore_workflow_completion": obj.get("compute_node_ignore_workflow_completion") if obj.get("compute_node_ignore_workflow_completion") is not None else False,
             "compute_node_wait_for_healthy_database_minutes": obj.get("compute_node_wait_for_healthy_database_minutes") if obj.get("compute_node_wait_for_healthy_database_minutes") is not None else 20,
@@ -113,7 +120,9 @@ class WorkflowModel(BaseModel):
             "resource_monitor_config": obj.get("resource_monitor_config"),
             "slurm_defaults": obj.get("slurm_defaults"),
             "use_pending_failed": obj.get("use_pending_failed") if obj.get("use_pending_failed") is not None else False,
-            "status_id": obj.get("status_id")
+            "enable_ro_crate": obj.get("enable_ro_crate") if obj.get("enable_ro_crate") is not None else False,
+            "status_id": obj.get("status_id"),
+            "slurm_config": obj.get("slurm_config")
         })
         return _obj
 

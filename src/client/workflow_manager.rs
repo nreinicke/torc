@@ -250,6 +250,18 @@ impl WorkflowManager {
                         action_id
                     );
 
+                    if action_config
+                        .get("start_one_worker_per_node")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        warn!(
+                            "start_one_worker_per_node is deprecated and ignored. \
+                             Multi-node allocations now use a single worker with \
+                             per-node resource tracking via srun --nodelist."
+                        );
+                    }
+
                     let scheduler_id = action_config
                         .get("scheduler_id")
                         .and_then(|v| v.as_i64())
@@ -258,10 +270,6 @@ impl WorkflowManager {
                         .get("num_allocations")
                         .and_then(|v| v.as_i64())
                         .unwrap_or(1) as i32;
-                    let start_one_worker_per_node = action_config
-                        .get("start_one_worker_per_node")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
                     let max_parallel_jobs = max_parallel_jobs_override.or_else(|| {
                         action_config
                             .get("max_parallel_jobs")
@@ -280,7 +288,6 @@ impl WorkflowManager {
                         output_dir,
                         poll_interval,
                         max_parallel_jobs,
-                        start_one_worker_per_node,
                         self.torc_config.client.slurm.keep_submission_scripts,
                     ) {
                         Ok(()) => {
@@ -586,6 +593,12 @@ impl WorkflowManager {
 
                 // Create RO-Crate entities for input files if enabled
                 self.create_ro_crate_entities_for_input_files();
+
+                // Always create SoftwareApplication entities for torc binaries
+                crate::client::ro_crate_utils::create_software_entities(
+                    &self.config,
+                    self.workflow_id,
+                );
 
                 Ok(())
             }

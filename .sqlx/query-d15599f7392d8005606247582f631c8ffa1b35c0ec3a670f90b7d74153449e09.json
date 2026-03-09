@@ -54,24 +54,24 @@
         "type_info": "Integer"
       },
       {
-        "name": "jobs_sort_method",
+        "name": "compute_node_min_time_for_new_jobs_seconds",
         "ordinal": 10,
+        "type_info": "Integer"
+      },
+      {
+        "name": "jobs_sort_method",
+        "ordinal": 11,
         "type_info": "Text"
       },
       {
         "name": "status_id",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Integer"
       },
       {
         "name": "resource_monitor_config",
-        "ordinal": 12,
-        "type_info": "Text"
-      },
-      {
-        "name": "compute_node_min_time_for_new_jobs_seconds",
         "ordinal": 13,
-        "type_info": "Integer"
+        "type_info": "Text"
       },
       {
         "name": "slurm_defaults",
@@ -84,29 +84,24 @@
         "type_info": "Integer"
       },
       {
-        "name": "project",
+        "name": "enable_ro_crate",
         "ordinal": 16,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "metadata",
+        "name": "project",
         "ordinal": 17,
         "type_info": "Text"
       },
       {
-        "name": "limit_resources",
+        "name": "metadata",
         "ordinal": 18,
-        "type_info": "Integer"
+        "type_info": "Text"
       },
       {
-        "name": "use_srun",
+        "name": "slurm_config",
         "ordinal": 19,
-        "type_info": "Integer"
-      },
-      {
-        "name": "enable_ro_crate",
-        "ordinal": 20,
-        "type_info": "Integer"
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -119,13 +114,12 @@
       false,
       false,
       false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
       true,
+      false,
+      false,
+      false,
+      false,
+      false,
       false,
       true,
       true,

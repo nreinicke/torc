@@ -16,7 +16,7 @@ fn test_create_workflow_with_project_and_metadata(start_server: &ServerProcess) 
         user: "test_user".to_string(),
         description: Some("Test workflow with metadata and project".to_string()),
         timestamp: None,
-        compute_node_expiration_buffer_seconds: Some(180),
+        compute_node_expiration_buffer_seconds: None,
         compute_node_wait_for_new_jobs_seconds: Some(0),
         compute_node_ignore_workflow_completion: Some(false),
         compute_node_wait_for_healthy_database_minutes: Some(20),
@@ -25,12 +25,11 @@ fn test_create_workflow_with_project_and_metadata(start_server: &ServerProcess) 
         resource_monitor_config: None,
         slurm_defaults: None,
         use_pending_failed: Some(false),
-        limit_resources: Some(true),
-        use_srun: Some(true),
         enable_ro_crate: None,
         project: Some("test-project".to_string()),
         metadata: Some(r#"{"key":"value","num":42}"#.to_string()),
         status_id: None,
+        slurm_config: None,
     };
 
     // Create the workflow
@@ -57,7 +56,7 @@ fn test_create_workflow_without_fields_then_update(start_server: &ServerProcess)
         user: "test_user".to_string(),
         description: None,
         timestamp: None,
-        compute_node_expiration_buffer_seconds: Some(180),
+        compute_node_expiration_buffer_seconds: None,
         compute_node_wait_for_new_jobs_seconds: Some(0),
         compute_node_ignore_workflow_completion: Some(false),
         compute_node_wait_for_healthy_database_minutes: Some(20),
@@ -66,12 +65,11 @@ fn test_create_workflow_without_fields_then_update(start_server: &ServerProcess)
         resource_monitor_config: None,
         slurm_defaults: None,
         use_pending_failed: Some(false),
-        limit_resources: Some(true),
-        use_srun: Some(true),
         enable_ro_crate: None,
         project: None,
         metadata: None,
         status_id: None,
+        slurm_config: None,
     };
 
     let created =
@@ -106,7 +104,7 @@ fn test_create_workflow_with_fields_then_change(start_server: &ServerProcess) {
         user: "test_user".to_string(),
         description: None,
         timestamp: None,
-        compute_node_expiration_buffer_seconds: Some(180),
+        compute_node_expiration_buffer_seconds: None,
         compute_node_wait_for_new_jobs_seconds: Some(0),
         compute_node_ignore_workflow_completion: Some(false),
         compute_node_wait_for_healthy_database_minutes: Some(20),
@@ -115,12 +113,11 @@ fn test_create_workflow_with_fields_then_change(start_server: &ServerProcess) {
         resource_monitor_config: None,
         slurm_defaults: None,
         use_pending_failed: Some(false),
-        limit_resources: Some(true),
-        use_srun: Some(true),
         enable_ro_crate: None,
         project: Some("initial-project".to_string()),
         metadata: Some(r#"{"version":"1.0"}"#.to_string()),
         status_id: None,
+        slurm_config: None,
     };
 
     let created =
@@ -158,7 +155,7 @@ fn test_partial_update_preserves_fields(start_server: &ServerProcess) {
         user: "test_user".to_string(),
         description: None,
         timestamp: None,
-        compute_node_expiration_buffer_seconds: Some(180),
+        compute_node_expiration_buffer_seconds: None,
         compute_node_wait_for_new_jobs_seconds: Some(0),
         compute_node_ignore_workflow_completion: Some(false),
         compute_node_wait_for_healthy_database_minutes: Some(20),
@@ -167,12 +164,11 @@ fn test_partial_update_preserves_fields(start_server: &ServerProcess) {
         resource_monitor_config: None,
         slurm_defaults: None,
         use_pending_failed: Some(false),
-        limit_resources: Some(true),
-        use_srun: Some(true),
         enable_ro_crate: None,
         project: Some("my-project".to_string()),
         metadata: Some(r#"{"key":"value"}"#.to_string()),
         status_id: None,
+        slurm_config: None,
     };
 
     let created =

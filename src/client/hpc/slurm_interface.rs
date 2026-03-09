@@ -212,7 +212,6 @@ impl HpcInterface for SlurmInterface {
         max_parallel_jobs: Option<i32>,
         filename: &Path,
         config: &HashMap<String, String>,
-        start_one_worker_per_node: bool,
         tls_ca_cert: Option<&str>,
         tls_insecure: bool,
     ) -> Result<()> {
@@ -273,18 +272,12 @@ impl HpcInterface for SlurmInterface {
             command.push_str(" --tls-insecure");
         }
 
-        // Add the command with optional srun prefix
-        if start_one_worker_per_node {
-            // Unset conflicting Slurm memory variables before srun.
-            // These can be inherited from a parent allocation and conflict with --mem.
-            // We only unset SLURM_MEM_PER_CPU and SLURM_MEM_PER_GPU since those conflict
-            // with the --mem directive (which sets SLURM_MEM_PER_NODE).
-            // SLURM_MEM_PER_NODE is needed by torc-slurm-job-runner to report resources.
-            // TODO: this is still not ideal.
-            // This will have to change if we ever rely on these environment variables.
-            script.push_str("unset SLURM_MEM_PER_CPU SLURM_MEM_PER_GPU\n");
-            script.push_str("srun --ntasks-per-node=1 ");
-        }
+        // Unset conflicting Slurm memory variables.
+        // These can be inherited from a parent allocation and conflict with --mem.
+        // We only unset SLURM_MEM_PER_CPU and SLURM_MEM_PER_GPU since those conflict
+        // with the --mem directive (which sets SLURM_MEM_PER_NODE).
+        // SLURM_MEM_PER_NODE is needed by torc-slurm-job-runner to report resources.
+        script.push_str("unset SLURM_MEM_PER_CPU SLURM_MEM_PER_GPU\n");
         script.push_str(&command);
         script.push('\n');
 

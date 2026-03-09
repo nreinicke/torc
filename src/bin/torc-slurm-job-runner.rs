@@ -8,11 +8,10 @@ fn main() {
 
 #[cfg(unix)]
 mod unix_main {
-    use chrono::Duration;
     use chrono::Local;
     use clap::{Parser, builder::styling};
     use env_logger::Builder;
-    use log::{LevelFilter, debug, error, info};
+    use log::{LevelFilter, debug, error, info, warn};
     use signal_hook::consts::SIGTERM;
     use signal_hook::iterator::Signals;
     use std::fs::File;
@@ -24,7 +23,7 @@ mod unix_main {
     use torc::client::commands::slurm::{create_compute_node, create_node_resources};
     use torc::client::hpc::hpc_interface::HpcInterface;
     use torc::client::hpc::slurm_interface::SlurmInterface;
-    use torc::client::job_runner::JobRunner;
+    use torc::client::job_runner::{JobRunner, PerNodeTracker};
     use torc::client::log_paths::{
         get_slurm_dmesg_log_file, get_slurm_env_log_file, get_slurm_job_runner_log_file,
     };
@@ -38,6 +37,7 @@ mod unix_main {
 
     #[derive(Parser, Debug)]
     #[command(name = "torc-slurm-job-runner")]
+    #[command(version)]
     #[command(about = "Slurm job runner for Torc workflows", long_about = None)]
     #[command(styles = STYLES)]
     struct Args {
@@ -82,6 +82,61 @@ mod unix_main {
         /// Password for authentication (can also use TORC_PASSWORD env var)
         #[arg(long, env = "TORC_PASSWORD", hide_env_values = true)]
         password: Option<String>,
+    }
+
+    fn workflow_has_multi_node_jobs(
+        config: &Configuration,
+        workflow_id: i64,
+        wait_for_healthy_database_minutes: u64,
+    ) -> bool {
+        let mut offset = 0i64;
+        loop {
+            let response = match utils::send_with_retries(
+                config,
+                || {
+                    default_api::list_resource_requirements(
+                        config,
+                        workflow_id,
+                        None,
+                        Some(offset),
+                        Some(100),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                },
+                wait_for_healthy_database_minutes,
+            ) {
+                Ok(response) => response,
+                Err(e) => {
+                    warn!(
+                        "Could not inspect workflow resource requirements for multi-node jobs: {}. \
+                         Disabling per-node placement to avoid over-allocation.",
+                        e
+                    );
+                    return true;
+                }
+            };
+
+            let items = response.items.unwrap_or_default();
+
+            if items
+                .iter()
+                .any(|rr| rr.num_nodes > 1 || rr.step_nodes.unwrap_or(1) > 1)
+            {
+                return true;
+            }
+
+            if !response.has_more || items.is_empty() {
+                return false;
+            }
+            offset += items.len() as i64;
+        }
     }
 
     pub fn main() {
@@ -192,11 +247,13 @@ mod unix_main {
             }
         };
 
-        let expiration_buffer_seconds = workflow
-            .compute_node_expiration_buffer_seconds
-            .unwrap_or(180)
-            .max(120);
-        info!("Expiration buffer seconds: {}", expiration_buffer_seconds);
+        if workflow.compute_node_expiration_buffer_seconds.is_some() {
+            warn!(
+                "compute_node_expiration_buffer_seconds is deprecated and will be ignored. \
+                 Slurm now manages job termination signals via srun --time. \
+                 Configure Slurm's KillWait parameter instead."
+            );
+        }
 
         let job_end_time = match slurm_interface.get_job_end_time() {
             Ok(end_time) => end_time,
@@ -205,9 +262,7 @@ mod unix_main {
                 std::process::exit(1);
             }
         };
-
-        let effective_end_time = job_end_time - Duration::seconds(expiration_buffer_seconds);
-        info!("Effective end time (with buffer): {}", effective_end_time);
+        info!("Slurm job end time: {}", job_end_time);
 
         // All compute nodes get the scheduled compute node
         let scheduled_compute_node =
@@ -224,8 +279,68 @@ mod unix_main {
             .as_ref()
             .map(|node| node.scheduler_config_id);
 
-        let resources =
+        let per_node_resources =
             create_node_resources(&slurm_interface, scheduler_config_id, args.is_subtask);
+
+        // Multiply per-node values by num_nodes to get total allocation capacity.
+        // The job runner uses total capacity for its resource pool tracking
+        // (decrement on job start, increment on completion). When claiming jobs
+        // from the server, it converts back to per-node for correct comparison.
+        let num_nodes = per_node_resources.num_nodes;
+        let mut resources = torc::models::ComputeNodesResources::new(
+            per_node_resources.num_cpus * num_nodes,
+            per_node_resources.memory_gb * num_nodes as f64,
+            per_node_resources.num_gpus * num_nodes,
+            num_nodes,
+        );
+        resources.scheduler_config_id = per_node_resources.scheduler_config_id;
+        resources.time_limit = per_node_resources.time_limit;
+
+        // Initialize per-node resource tracker for multi-node allocations.
+        // This tracks which node each job lands on so resources_per_node()
+        // reports accurate per-node availability instead of dividing
+        // remaining total by num_nodes (which gives incorrect values when
+        // jobs are unevenly distributed across nodes).
+        let has_multi_node_jobs = num_nodes > 1
+            && workflow_has_multi_node_jobs(
+                &config,
+                args.workflow_id,
+                args.wait_for_healthy_database_minutes,
+            );
+
+        let node_tracker = if num_nodes > 1 && !has_multi_node_jobs {
+            match slurm_interface.list_active_nodes(&job_id) {
+                Ok(node_names) => {
+                    info!(
+                        "Multi-node allocation: {} nodes {:?}, initializing per-node resource tracker",
+                        num_nodes, node_names
+                    );
+                    Some(PerNodeTracker::new(
+                        node_names,
+                        per_node_resources.num_cpus,
+                        per_node_resources.memory_gb,
+                        per_node_resources.num_gpus,
+                    ))
+                }
+                Err(e) => {
+                    warn!(
+                        "Could not enumerate nodes for multi-node allocation: {}. \
+                         Falling back to aggregate resource tracking.",
+                        e
+                    );
+                    None
+                }
+            }
+        } else if has_multi_node_jobs {
+            info!(
+                "Workflow has multi-node jobs; using aggregate resource tracking. \
+                 Multi-node jobs reserve whole nodes exclusively."
+            );
+            None
+        } else {
+            None
+        };
+
         let job_id_int: i64 = job_id.parse().unwrap_or(0);
         let scheduler = serde_json::json!({
             "scheduler_id": scheduler_id,
@@ -260,13 +375,14 @@ mod unix_main {
             args.poll_interval as f64,
             args.max_parallel_jobs.map(|x| x as i64),
             None, // time_limit
-            Some(effective_end_time),
+            Some(job_end_time),
             resources,
             scheduler_config_id,
             None, // log_prefix
             None, // cpu_affinity_cpus_per_job
             args.is_subtask,
             unique_label,
+            node_tracker,
         );
 
         // Register SIGTERM signal handler

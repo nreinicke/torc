@@ -71,42 +71,46 @@ flowchart LR
     SRUN[srun]:::flag
     JOBID["--jobid=SLURM_JOB_ID"]:::flag
     NT["--ntasks=1"]:::flag
-    OV["--overlap"]:::flag
+    EX["--exact"]:::flag
     CB["--cpu-bind=none"]:::flag
     JN["--job-name=step_name"]:::flag
     ND["--nodes=step_nodes"]:::flag
     CPU["--cpus-per-task=N"]:::flag
     MEM["--mem=NM"]:::flag
+    TIME["--time=remaining_min"]:::flag
+    SIG["--signal=TERM@N"]:::flag
 
     SRUN --> JOBID
     SRUN --> NT
-    SRUN --> OV
+    SRUN --> EX
     SRUN --> CB
     SRUN --> JN
     SRUN --> ND
 
+    EX -.- N0["Use exact resources,<br/>don't claim entire node"]:::note
     ND -.- N1["Default: 1 node<br/>Override via step_nodes"]:::note
-    OV -.- N2["Allows concurrent steps<br/>on same node"]:::note
-    CB -.- N3["Prevents CPU affinity<br/>binding errors"]:::note
+    CB -.- N2["Default on; disable with<br/>enable_cpu_bind: true"]:::note
+    TIME -.- N4["Remaining allocation time<br/>rounded down to minutes"]:::note
+    SIG -.- N5["Early warning signal<br/>e.g. TERM@120"]:::note
 
-    subgraph "Only with limit_resources=true"
-        CPU
-        MEM
-    end
     SRUN --> CPU
     SRUN --> MEM
+    SRUN --> TIME
+    SRUN --> SIG
 ```
 
-| Argument          | Purpose                                                              |
-| ----------------- | -------------------------------------------------------------------- |
-| `--jobid`         | Binds step to the parent Slurm allocation                            |
-| `--ntasks=1`      | One task per workflow job                                            |
-| `--overlap`       | Permits concurrent steps to share node resources (Slurm 21.08+)      |
-| `--cpu-bind=none` | Prevents CPU affinity errors when step mask doesn't match allocation |
-| `--job-name`      | Sets the step name for sacct/sstat lookup                            |
-| `--nodes`         | Number of nodes for this step (from `step_nodes`, default 1)         |
-| `--cpus-per-task` | CPU cgroup limit (only when `limit_resources=true`)                  |
-| `--mem`           | Memory cgroup limit in MB (only when `limit_resources=true`)         |
+| Argument          | Purpose                                                                       |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `--jobid`         | Binds step to the parent Slurm allocation                                     |
+| `--ntasks=1`      | One task per workflow job                                                     |
+| `--exact`         | Use exactly the requested resources; don't claim the entire node exclusively  |
+| `--cpu-bind=none` | Disables CPU affinity binding (default; omitted when `enable_cpu_bind: true`) |
+| `--job-name`      | Sets the step name for sacct/sstat lookup                                     |
+| `--nodes`         | Number of nodes for this step (from `step_nodes`, default 1)                  |
+| `--cpus-per-task` | CPU cgroup limit (only when `limit_resources=true`)                           |
+| `--mem`           | Memory cgroup limit in MB (only when `limit_resources=true`)                  |
+| `--time`          | Per-step walltime from remaining allocation time (see below)                  |
+| `--signal`        | Early warning signal before step timeout (see below)                          |
 
 ### The `step_nodes` Field
 
@@ -116,8 +120,8 @@ defaults to 1 and is distinct from `num_nodes` (the allocation size for `sbatch 
 - **Single-node jobs** (default): `step_nodes=1` -- each job runs on one node
 - **Multi-node jobs** (MPI, Julia Distributed.jl): `step_nodes=N` -- step spans N nodes
 
-Setting `step_nodes` equal to `num_nodes` would make concurrent steps compete for all nodes in the
-allocation, causing "Requested nodes are busy" errors.
+When `step_nodes > 1`, Torc treats the job as consuming whole nodes exclusively for the lifetime of
+the step. This avoids ambiguous partial-node accounting for MPI and other true multi-node jobs.
 
 ### The `limit_resources` Flag
 
@@ -126,6 +130,27 @@ When `limit_resources` is enabled in the scheduler configuration, srun applies `
 killed by the OOM killer (exit code 137), and CPU usage is throttled.
 
 Without `limit_resources`, Slurm still creates per-step accounting but does not enforce hard limits.
+
+### Per-Step Walltime (`--time`)
+
+Torc sets `srun --time=<remaining_minutes>` on every step, where `remaining_minutes` is the time
+left in the Slurm allocation (rounded **down** to whole minutes, minimum 1). This ensures that when
+a step exceeds its time, Slurm produces a clean `State=TIMEOUT` with return code 152, rather than
+`State=CANCELLED` which is what happens when the allocation itself expires and kills the step.
+
+The rounding-down is intentional: it guarantees the step's timeout fires **before** the allocation
+expires, so Torc can detect the timeout via sacct and report it accurately.
+
+### Early Termination Signal (`--signal`)
+
+When the workflow has `srun_termination_signal` set (e.g., `"TERM@120"`), Torc passes
+`srun --signal=TERM@120` to every step. This tells Slurm to send SIGTERM to the job process 120
+seconds **before** the step's `--time` limit. The job can catch this signal, save a checkpoint, and
+exit cleanly before the hard kill.
+
+This is a workflow-level setting stored in the database and applied uniformly to all srun
+invocations. See the [Graceful Job Termination tutorial](../fault-tolerance/checkpointing.md) for a
+complete example with a Python signal handler.
 
 ### Memory vs Runtime Enforcement
 
@@ -136,14 +161,12 @@ Memory and runtime are handled differently because they carry different risks:
   This strict enforcement is necessary because a runaway memory consumer can destabilize the entire
   node by starving other concurrent jobs of memory.
 
-- **Runtime (`--time`)** is **not passed** to srun. A per-job time limit is unnecessary because
-  Slurm already sends SIGTERM to the job runner before the allocation's walltime expires (typically
-  60-120 seconds before). The job runner catches this signal and gracefully terminates all running
-  jobs. Since srun steps cannot outlive their parent allocation, there is no scenario where a
-  per-step `--time` would trigger before the allocation-level shutdown. Additionally, unlike excess
-  memory usage, a long-running job does not endanger other jobs — it simply runs longer than
-  expected. Killing a job at 95% completion because it slightly exceeded its estimated runtime would
-  waste all the compute invested.
+- **Runtime (`--time`)** is set to the **remaining allocation time**, not the job's declared
+  `runtime` from resource requirements. This ensures Slurm produces a clean `State=TIMEOUT` (return
+  code 152) instead of `State=CANCELLED` when time runs out. The per-step `--time` is not derived
+  from the job's resource requirements because, unlike excess memory usage, a long-running job does
+  not endanger other jobs — it simply runs longer than expected. Killing a job at 95% completion
+  because it slightly exceeded its estimated runtime would waste all the compute invested.
 
 ## sstat Monitoring
 

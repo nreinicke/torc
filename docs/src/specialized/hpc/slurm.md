@@ -149,9 +149,11 @@ actions:
 - More Slurm queue overhead
 - Multiple jobs to schedule
 
-### Strategy 2: Multi-Node Allocation, One Worker Per Node
+### Strategy 2: Multi-Node Allocation
 
-Launch multiple workers within a single allocation:
+A single Torc worker manages all nodes in the allocation. The worker reports the total resources
+across all nodes (CPUs × nodes, memory × nodes, etc.) and launches each job via `srun --exact`,
+which lets Slurm place it on whichever node has capacity:
 
 ```yaml
 slurm_schedulers:
@@ -166,47 +168,23 @@ actions:
     scheduler: work_scheduler
     scheduler_type: slurm
     num_allocations: 1
-    start_one_worker_per_node: true
 ```
 
 **When to use:**
 
-- Many jobs with similar requirements
+- Many single-node jobs with similar requirements
 - Want faster queue scheduling (larger jobs often prioritized)
+- MPI or multi-node jobs that span multiple nodes
 
 **Benefits:**
 
 - Single queue wait
-- Often prioritized by Slurm scheduler
+- Full per-step `sacct` accounting and cgroup enforcement
+- Slurm handles node placement automatically via `srun --exact`
 
 **Drawbacks:**
 
-- Shared time limit for all workers
-- Less flexibility
-
-### Strategy 3: Single Worker Per Allocation
-
-One Torc worker handles all nodes:
-
-```yaml
-slurm_schedulers:
-  - name: work_scheduler
-    account: my_account
-    nodes: 10
-    walltime: "04:00:00"
-
-actions:
-  - trigger_type: on_workflow_start
-    action_type: schedule_nodes
-    scheduler: work_scheduler
-    scheduler_type: slurm
-    num_allocations: 1
-```
-
-**When to use:**
-
-- Your application manages node coordination
-- Need full control over compute resources
+- Shared time limit for all jobs in the allocation
 
 ## Staged Allocations
 
@@ -244,7 +222,6 @@ actions:
     scheduler: compute_sched
     scheduler_type: slurm
     num_allocations: 1
-    start_one_worker_per_node: true
 
   # Postprocessing allocated when those jobs are ready
   - trigger_type: on_jobs_ready
@@ -338,6 +315,8 @@ correlated.
 
 ### Multi-Node Jobs
 
+> For a comprehensive guide to multi-node patterns, see [Multi-Node Jobs](./multi-node-jobs.md).
+
 Two resource requirement fields control node usage:
 
 | Field        | Controls                             | Passed to        | Default |
@@ -359,9 +338,8 @@ resource_requirements:
     # num_nodes defaults to 1, step_nodes defaults to 1
 ```
 
-**Multi-node allocation with one worker per node** (`start_one_worker_per_node: true`) — each worker
-runs single-node job steps, so `step_nodes` must stay at `1` (the default) even though `num_nodes`
-may be large:
+**Multi-node allocation with single-node jobs** — a single worker manages all nodes. Each job runs
+on one node via `srun --nodes=1`, and single-node jobs may share a node when resources permit:
 
 ```yaml
 resource_requirements:
@@ -373,8 +351,8 @@ resource_requirements:
     # step_nodes: 1 is the default — each srun step uses exactly one node
 ```
 
-**True multi-node job steps** (MPI, Julia `Distributed.jl`, etc.) — the job itself spans all nodes
-in its allocation, so set `step_nodes` equal to `num_nodes`:
+**True multi-node job steps** (MPI, Julia `Distributed.jl`, etc.) — the job itself spans multiple
+nodes in the allocation, so set `step_nodes` to the number of nodes each job needs:
 
 ```yaml
 resource_requirements:
@@ -386,14 +364,20 @@ resource_requirements:
     step_nodes: 4     # srun --nodes=4: each job step spans all 4 nodes
 ```
 
-In this pattern, Torc passes `srun --nodes=4` when launching the job. The job command receives
-`SLURM_JOB_NODELIST`, `SLURM_NTASKS`, and the rest of the standard Slurm step environment, so MPI
-launchers (`mpirun`, `mpiexec`) and Julia `Distributed.jl` will automatically use all allocated
-nodes.
+In this pattern, Torc reserves all 4 nodes for the step exclusively, then passes `srun --nodes=4`
+when launching the job. The job command receives `SLURM_JOB_NODELIST`, `SLURM_NTASKS`, and the rest
+of the standard Slurm step environment, so MPI launchers (`mpirun`, `mpiexec`) and Julia
+`Distributed.jl` will automatically use all allocated nodes.
 
-> **Important**: Do not mix `start_one_worker_per_node: true` with `step_nodes > 1`. Use
-> `start_one_worker_per_node` for single-node jobs sharing a large allocation, or set
-> `step_nodes = num_nodes` for genuine multi-node tasks — but not both at once.
+### Multi-Node Allocation Rule
+
+Inside a multi-node Slurm allocation, Torc uses two scheduling modes:
+
+- Single-node jobs (`num_nodes=1`, `step_nodes=1`) may share nodes based on CPU, memory, and GPU
+  availability.
+- Multi-node jobs (`num_nodes>1` or `step_nodes>1`) reserve whole nodes exclusively.
+
+This keeps job claiming and local resource accounting aligned with Slurm allocations.
 
 ### Resource Limit Enforcement
 

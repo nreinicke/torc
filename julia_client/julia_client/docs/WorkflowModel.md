@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 **timestamp** | **String** | Timestamp of workflow creation | [optional] [default to nothing]
 **project** | **String** | Project name or identifier for grouping workflows | [optional] [default to nothing]
 **metadata** | **String** | Arbitrary metadata as JSON string | [optional] [default to nothing]
-**compute_node_expiration_buffer_seconds** | **Int64** | Inform all compute nodes to shut down this number of seconds before the expiration time. This allows torc to send SIGTERM to all job processes and set all statuses to terminated. Increase the time in cases where the job processes handle SIGTERM and need more time to gracefully shut down. Set the value to 0 to maximize the time given to jobs. If not set, take the database&#39;s default value of 90 seconds. | [optional] [default to 180]
+**compute_node_expiration_buffer_seconds** | **Int64** | Deprecated: Slurm now manages job termination signals via srun --time and KillWait. This field is accepted but ignored. Previously informed compute nodes to shut down this many seconds before expiration. | [optional] [default to nothing]
 **compute_node_wait_for_new_jobs_seconds** | **Int64** | Inform all compute nodes to wait for new jobs for this time period before exiting. Does not apply if the workflow is complete. Default must be &gt;&#x3D; completion_check_interval_secs + job_completion_poll_interval to avoid exiting before dependent jobs are unblocked. | [optional] [default to 90]
 **compute_node_ignore_workflow_completion** | **Bool** | Inform all compute nodes to ignore workflow completions and hold onto allocations indefinitely. Useful for debugging failed jobs and possibly dynamic workflows where jobs get added after starting. | [optional] [default to false]
 **compute_node_wait_for_healthy_database_minutes** | **Int64** | Inform all compute nodes to wait this number of minutes if the database becomes unresponsive. | [optional] [default to 20]
@@ -20,7 +20,9 @@ Name | Type | Description | Notes
 **resource_monitor_config** | **String** | Resource monitoring configuration as JSON string | [optional] [default to nothing]
 **slurm_defaults** | **String** | Default Slurm parameters to apply to all schedulers as JSON string | [optional] [default to nothing]
 **use_pending_failed** | **Bool** | Use PendingFailed status for failed jobs (enables AI-assisted recovery) | [optional] [default to false]
+**enable_ro_crate** | **Bool** | When true, automatically create RO-Crate entities for workflow files. Input files get entities during initialization; output files get entities on job completion. | [optional] [default to false]
 **status_id** | **Int64** |  | [optional] [default to nothing]
+**slurm_config** | **String** | JSON-encoded blob of Slurm configuration options for the workflow. May include fields such as limit_resources, use_srun, srun_termination_signal, and enable_cpu_bind. Stored as a JSON string to allow flexible, forward-compatible configuration. | [optional] [default to nothing]
 
 
 [[Back to Model list]](../README.md#models) [[Back to API list]](../README.md#api-endpoints) [[Back to README]](../README.md)

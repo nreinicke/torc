@@ -410,9 +410,6 @@ EXAMPLES:
         /// Scheduler config ID
         #[arg(long)]
         scheduler_config_id: Option<i64>,
-        /// Start one worker per node
-        #[arg(long, default_value = "false")]
-        start_one_worker_per_node: bool,
     },
     /// Parse Slurm log files for known error messages
     #[command(
@@ -1188,7 +1185,6 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
             output,
             poll_interval,
             scheduler_config_id,
-            start_one_worker_per_node,
         } => {
             let user_name = get_env_user_name();
             let wf_id = workflow_id.unwrap_or_else(|| {
@@ -1259,7 +1255,6 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
                 output,
                 *poll_interval,
                 *max_parallel_jobs,
-                *start_one_worker_per_node,
                 *keep_submission_scripts,
             ) {
                 Ok(()) => {
@@ -1420,7 +1415,6 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
 /// * `output` - Output directory for job output files
 /// * `poll_interval` - Poll interval in seconds
 /// * `max_parallel_jobs` - Maximum number of parallel jobs
-/// * `start_one_worker_per_node` - Start one worker per node
 /// * `keep_submission_scripts` - Keep submission scripts after job submission
 ///
 /// # Returns
@@ -1438,7 +1432,6 @@ pub fn schedule_slurm_nodes(
     output: &str,
     poll_interval: i32,
     max_parallel_jobs: Option<i32>,
-    start_one_worker_per_node: bool,
     keep_submission_scripts: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let scheduler = match utils::send_with_retries(
@@ -1541,7 +1534,6 @@ pub fn schedule_slurm_nodes(
             max_parallel_jobs,
             Path::new(&script_path),
             &config_map,
-            start_one_worker_per_node,
             tls_ca_cert,
             tls_insecure,
         ) {
@@ -1637,6 +1629,10 @@ pub fn create_node_resources(
 
     let num_gpus = interface.get_num_gpus() as i64;
     let num_nodes = interface.get_num_nodes() as i64;
+
+    // Return per-node resource values. The job runner is responsible for
+    // multiplying by num_nodes to compute total allocation capacity.
+    // The server uses per-node values to ensure each job fits on a single node.
     let mut resources =
         models::ComputeNodesResources::new(num_cpus, memory_gb, num_gpus, num_nodes);
     resources.scheduler_config_id = scheduler_config_id;
@@ -2509,21 +2505,37 @@ struct SacctAllocationStats {
 }
 
 /// Extract exit code from a sacct JSON entry.
+/// Returns `"return_code:signal"` format (e.g. `"0:9"` for OOM kill via SIGKILL).
 /// Handles both `{"return_code": 0}` and `{"return_code": {"set": true, "number": 0}}`.
 fn extract_exit_code(entry: &serde_json::Value) -> String {
-    entry
-        .get("exit_code")
-        .and_then(|e| {
-            e.get("return_code").and_then(|r| {
-                // Try {set, infinite, number} wrapper first (Kestrel/HPE Cray format)
-                r.get("number")
+    let exit_code = match entry.get("exit_code") {
+        Some(e) => e,
+        None => return "-".to_string(),
+    };
+
+    let return_code = exit_code
+        .get("return_code")
+        .and_then(|r| {
+            r.get("number")
+                .and_then(|n| n.as_i64())
+                .or_else(|| r.as_i64())
+        })
+        .unwrap_or(0);
+
+    let signal = exit_code
+        .get("signal")
+        .and_then(|s| {
+            s.get("id").and_then(|id| {
+                // Try {set, infinite, number} wrapper first (HPE Cray/Kestrel format)
+                id.get("number")
                     .and_then(|n| n.as_i64())
-                    .map(|n| n.to_string())
                     // Then try direct integer
-                    .or_else(|| r.as_i64().map(|n| n.to_string()))
+                    .or_else(|| id.as_i64())
             })
         })
-        .unwrap_or("-".to_string())
+        .unwrap_or(0);
+
+    format!("{}:{}", return_code, signal)
 }
 
 /// Extract max RSS (peak memory) from a sacct JSON entry's tres.requested.max array.
@@ -3711,8 +3723,8 @@ fn handle_regenerate(
     // Apply plan to database: create schedulers and track IDs
     let mut schedulers_created: Vec<SchedulerInfo> = Vec::new();
     let mut total_allocations: i64 = 0;
-    // Maps scheduler name -> (scheduler_id, start_one_worker_per_node)
-    let mut scheduler_name_to_info: HashMap<String, (i64, bool)> = HashMap::new();
+    // Maps scheduler name -> scheduler_id
+    let mut scheduler_name_to_id: HashMap<String, i64> = HashMap::new();
 
     for planned in &plan.schedulers {
         // Create the scheduler in the database
@@ -3745,12 +3757,8 @@ fn handle_regenerate(
         };
 
         let scheduler_id = created_scheduler.id.unwrap_or(-1);
-        let start_one_worker_per_node = planned.nodes > 1;
 
-        scheduler_name_to_info.insert(
-            planned.name.clone(),
-            (scheduler_id, start_one_worker_per_node),
-        );
+        scheduler_name_to_id.insert(planned.name.clone(), scheduler_id);
 
         schedulers_created.push(SchedulerInfo {
             id: scheduler_id,
@@ -3795,11 +3803,10 @@ fn handle_regenerate(
             continue; // Skip non-recovery actions
         }
 
-        let (scheduler_id, start_one_worker_per_node) =
-            match scheduler_name_to_info.get(&action.scheduler_name) {
-                Some(info) => *info,
-                None => continue,
-            };
+        let scheduler_id = match scheduler_name_to_id.get(&action.scheduler_name) {
+            Some(id) => *id,
+            None => continue,
+        };
 
         // Get job IDs for this action's jobs
         // Prefer exact job_names over job_name_patterns (regexes) when available
@@ -3835,7 +3842,6 @@ fn handle_regenerate(
             "scheduler_type": "slurm",
             "scheduler_id": scheduler_id,
             "num_allocations": action.num_allocations,
-            "start_one_worker_per_node": start_one_worker_per_node,
         });
 
         let action_body = serde_json::json!({
@@ -3897,8 +3903,6 @@ fn handle_regenerate(
                 continue;
             }
 
-            let start_one_worker_per_node = scheduler_info.nodes > 1;
-
             match schedule_slurm_nodes(
                 config,
                 workflow_id,
@@ -3907,8 +3911,7 @@ fn handle_regenerate(
                 "",
                 output_dir.to_str().unwrap_or("torc_output"),
                 poll_interval,
-                None, // max_parallel_jobs
-                start_one_worker_per_node,
+                None,  // max_parallel_jobs
                 false, // keep_submission_scripts
             ) {
                 Ok(()) => {

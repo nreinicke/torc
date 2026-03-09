@@ -88,6 +88,12 @@ impl AsyncCliCommand {
         }
     }
 
+    /// Returns the Slurm step name, if running inside an allocation.
+    /// Set after `start()` is called.
+    pub fn step_name(&self) -> Option<&str> {
+        self.step_name.as_deref()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         &mut self,
@@ -100,6 +106,10 @@ impl AsyncCliCommand {
         resource_requirements: Option<&ResourceRequirementsModel>,
         limit_resources: bool,
         use_srun: bool,
+        enable_cpu_bind: bool,
+        end_time: Option<DateTime<Utc>>,
+        srun_termination_signal: Option<&str>,
+        target_node: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_running {
             return Err("Job is already running".into());
@@ -151,23 +161,21 @@ impl AsyncCliCommand {
             let mut srun = Command::new(&srun_binary);
             srun.arg(format!("--jobid={}", slurm_job_id));
             srun.arg("--ntasks=1");
-            // Without --overlap, each srun step takes exclusive ownership of its node slot
-            // within the allocation, so concurrent steps on the same node (or same allocation)
-            // queue up and retry with "Requested nodes are busy".  --overlap explicitly permits
-            // steps to share resources with other running steps in the same job allocation.
-            // Requires Slurm 21.08+.
-            srun.arg("--overlap");
-            // Disable explicit CPU affinity binding. Without this, srun's default binding
-            // algorithm may try to pin tasks to CPU IDs outside the step's allocated mask,
-            // causing "CPU binding outside of job step allocation" errors. CPU limits are
-            // still enforced via cgroups even with binding disabled.
-            srun.arg("--cpu-bind=none");
+            if !enable_cpu_bind {
+                srun.arg("--cpu-bind=none");
+            }
+            // --exact tells srun to use exactly the requested CPUs/memory without
+            // claiming the entire node exclusively. This allows concurrent steps
+            // to share nodes in multi-node allocations.
+            srun.arg("--exact");
             srun.arg(format!("--job-name={}", step_name));
+            // Pin the step to a specific node when the job runner has claimed
+            // resources on that node. This enables accurate per-node resource
+            // tracking in multi-node allocations.
+            if let Some(node) = target_node {
+                srun.arg(format!("--nodelist={}", node));
+            }
             if let Some(rr) = resource_requirements {
-                // step_nodes controls how many nodes this srun step spans.
-                // rr.num_nodes is the allocation size (sbatch --nodes); using it here would make
-                // concurrent single-node steps compete for all nodes ("Requested nodes are busy").
-                // Default to 1 (single-node step); set step_nodes > 1 for MPI / Julia Distributed.jl.
                 let step_nodes = rr.step_nodes.unwrap_or(1).max(1);
                 srun.arg(format!("--nodes={}", step_nodes));
                 if limit_resources && rr.name != "default" {
@@ -192,6 +200,24 @@ impl AsyncCliCommand {
                         }
                     }
                 }
+            }
+            // Set per-step walltime from the remaining allocation time so Slurm
+            // kills the step with State=TIMEOUT (and return code 152) instead of
+            // letting it run until the allocation walltime expires (which produces
+            // State=CANCELLED). Integer division rounds down so the step timeout
+            // fires before the allocation expires. Floor of 1 minute because
+            // --time=0 means unlimited in Slurm. In practice, the job runner's
+            // compute_node_min_time_for_new_jobs_seconds (default 300s) prevents
+            // starting jobs with little time remaining.
+            if let Some(end) = end_time {
+                let remaining_secs = (end - Utc::now()).num_seconds();
+                let remaining_minutes = (remaining_secs / 60).max(1);
+                srun.arg(format!("--time={}", remaining_minutes));
+            }
+            // Pass --signal to give jobs advance warning before timeout.
+            // Format: "<signal>@<seconds>" e.g. "TERM@120"
+            if let Some(signal_spec) = srun_termination_signal {
+                srun.arg(format!("--signal={}", signal_spec));
             }
             // Run via bash so job.command can use shell features
             srun.args(["bash", "-c", &command_str]);
@@ -510,6 +536,37 @@ impl AsyncCliCommand {
                 && let (Some(workflow_id), Some(run_id), Some(attempt_id)) =
                     (self.workflow_id, self.run_id, self.attempt_id)
             {
+                // Override the return code based on sacct State.
+                // When Slurm's cgroup OOM-kills a step, srun exits with code 1
+                // and sacct ExitCode is 0:125 — neither produces the conventional
+                // 137 (128+SIGKILL) that recovery heuristics check. The sacct State
+                // field reliably reports OUT_OF_MEMORY / TIMEOUT.
+                //
+                // TIMEOUT is only overridden when the process did not exit cleanly
+                // (return_code != 0). When the process handled SIGTERM (from
+                // --signal) and exited 0, we keep the successful result even though
+                // sacct may report State=TIMEOUT for the step.
+                //
+                // TIMEOUT maps to Terminated (system-initiated kill due to walltime)
+                // rather than Failed (job error), matching the old behaviour where
+                // the runner would send SIGTERM before the allocation expired.
+                if let Some(ref state) = stats.state {
+                    let override_rc = match state.as_str() {
+                        "OUT_OF_MEMORY" => Some((137i64, JobStatus::Failed)),
+                        "TIMEOUT" if return_code != 0 => Some((152i64, JobStatus::Terminated)),
+                        _ => None,
+                    };
+                    if let Some((sacct_rc, sacct_status)) = override_rc {
+                        info!(
+                            "Overriding srun return_code {} with {} (sacct State={}) for \
+                             workflow_id={} job_id={} step={}",
+                            return_code, sacct_rc, state, workflow_id, self.job_id, step_name
+                        );
+                        self.return_code = Some(sacct_rc);
+                        self.status = sacct_status;
+                    }
+                }
+
                 let mut slurm_stats =
                     SlurmStatsModel::new(workflow_id, self.job_id, run_id, attempt_id);
                 slurm_stats.slurm_job_id = Some(slurm_job_id);
@@ -527,14 +584,15 @@ impl AsyncCliCommand {
             }
         }
 
-        let status_str = format!("{:?}", status).to_lowercase();
+        let final_rc = self.return_code.unwrap_or(return_code);
+        let final_status = format!("{:?}", self.status).to_lowercase();
         info!(
             "Job process completed workflow_id={} job_id={} run_id={} return_code={} status={} exec_time_s={:.3}",
             self.workflow_id.unwrap_or(0),
             self.job_id,
             self.run_id.unwrap_or(0),
-            return_code,
-            status_str,
+            final_rc,
+            final_status,
             self.exec_time_s
         );
         Ok(())
@@ -616,6 +674,11 @@ struct SacctStats {
     max_disk_write_bytes: Option<i64>,
     ave_cpu_seconds: Option<f64>,
     node_list: Option<String>,
+    /// Slurm step state (e.g. "COMPLETED", "OUT_OF_MEMORY", "TIMEOUT", "FAILED").
+    /// When Slurm's cgroup OOM-kills a step, the ExitCode is often `0:0` and `srun`
+    /// exits with code 1, losing the OOM signal. The State field is the reliable way
+    /// to detect OOM kills and timeouts.
+    state: Option<String>,
 }
 
 /// Convert a `std::process::ExitStatus` to a return code.
@@ -674,7 +737,7 @@ fn collect_sacct_stats(slurm_job_id: &str, step_name: &str) -> Option<SacctStats
                 // JobName is first so we can filter by step name in code — more reliable than
                 // sacct's --name flag, which on some Slurm versions matches the allocation name
                 // rather than the step name.
-                "JobName,MaxRSS,MaxVMSize,MaxDiskRead,MaxDiskWrite,AveCPU,NodeList",
+                "JobName,MaxRSS,MaxVMSize,MaxDiskRead,MaxDiskWrite,AveCPU,NodeList,State",
                 "-P", // pipe-separated output
                 "-n", // no header
             ])
@@ -770,7 +833,7 @@ fn collect_sacct_stats(slurm_job_id: &str, step_name: &str) -> Option<SacctStats
 
 /// Parse a single pipe-separated `sacct` output line into a [`SacctStats`].
 ///
-/// Expected format (7 fields): `JobName|MaxRSS|MaxVMSize|MaxDiskRead|MaxDiskWrite|AveCPU|NodeList`
+/// Expected format (8 fields): `JobName|MaxRSS|MaxVMSize|MaxDiskRead|MaxDiskWrite|AveCPU|NodeList|State`
 fn parse_sacct_line(line: &str, step_name: &str) -> Option<SacctStats> {
     let fields: Vec<&str> = line.split('|').collect();
     if fields.len() < 7 {
@@ -782,8 +845,15 @@ fn parse_sacct_line(line: &str, step_name: &str) -> Option<SacctStats> {
     }
 
     debug!(
-        "sacct stats for step {}: MaxRSS={} MaxVMSize={} MaxDiskRead={} MaxDiskWrite={} AveCPU={} NodeList={}",
-        step_name, fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]
+        "sacct stats for step {}: MaxRSS={} MaxVMSize={} MaxDiskRead={} MaxDiskWrite={} AveCPU={} NodeList={} State={}",
+        step_name,
+        fields[1],
+        fields[2],
+        fields[3],
+        fields[4],
+        fields[5],
+        fields[6],
+        fields.get(7).unwrap_or(&"")
     );
 
     let node_list = {
@@ -795,6 +865,15 @@ fn parse_sacct_line(line: &str, step_name: &str) -> Option<SacctStats> {
         }
     };
 
+    let state = fields.get(7).and_then(|s| {
+        let s = s.trim();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    });
+
     Some(SacctStats {
         max_rss_bytes: parse_slurm_memory(fields[1]),
         max_vm_size_bytes: parse_slurm_memory(fields[2]),
@@ -802,6 +881,7 @@ fn parse_sacct_line(line: &str, step_name: &str) -> Option<SacctStats> {
         max_disk_write_bytes: parse_slurm_memory(fields[4]),
         ave_cpu_seconds: parse_slurm_cpu_time(fields[5]),
         node_list,
+        state,
     })
 }
 
@@ -814,5 +894,72 @@ impl Drop for AsyncCliCommand {
             );
             let _ = self.terminate();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_sacct_line_with_state() {
+        let line = "step1|1024K|2048K|512K|256K|00:01:30|node01|COMPLETED";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, Some("COMPLETED".to_string()));
+        assert_eq!(stats.max_rss_bytes, Some(1024 * 1024));
+        assert_eq!(stats.node_list, Some("node01".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sacct_line_out_of_memory_state() {
+        let line = "step1|0|0|0|0|00:00:00|node01|OUT_OF_MEMORY";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, Some("OUT_OF_MEMORY".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sacct_line_timeout_state() {
+        let line = "step1|512K|1024K|0|0|00:05:00|node01|TIMEOUT";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, Some("TIMEOUT".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sacct_line_failed_state() {
+        let line = "step1|512K|1024K|0|0|00:05:00|node01|FAILED";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, Some("FAILED".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sacct_line_missing_state_field() {
+        // Only 7 fields (no State column) — should still parse successfully
+        let line = "step1|1024K|2048K|512K|256K|00:01:30|node01";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, None);
+        assert_eq!(stats.max_rss_bytes, Some(1024 * 1024));
+    }
+
+    #[test]
+    fn test_parse_sacct_line_empty_state() {
+        let line = "step1|1024K|2048K|512K|256K|00:01:30|node01|";
+        let stats = parse_sacct_line(line, "step1").unwrap();
+        assert_eq!(stats.state, None);
+    }
+
+    #[test]
+    fn test_parse_sacct_line_step_name_is_for_logging_only() {
+        // parse_sacct_line doesn't filter by step name — the caller (collect_sacct_stats) does.
+        // The step_name parameter is only used for debug log messages.
+        let line = "other_step|1024K|2048K|512K|256K|00:01:30|node01|COMPLETED";
+        let stats = parse_sacct_line(line, "step1");
+        assert!(stats.is_some());
+    }
+
+    #[test]
+    fn test_parse_sacct_line_too_few_fields() {
+        let line = "step1|1024K|2048K";
+        let stats = parse_sacct_line(line, "step1");
+        assert!(stats.is_none());
     }
 }
