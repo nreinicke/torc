@@ -254,11 +254,13 @@ requested for the MPI training job (Pattern 2).
 
 ## `num_nodes`
 
-The `num_nodes` field controls both the Slurm allocation size (`sbatch --nodes`) and the number of
-nodes each job step spans (`srun --nodes`). It defaults to `1`.
+The `num_nodes` field controls how many nodes each job step spans (`srun --nodes`). It defaults to
+`1`. The Slurm allocation size (`sbatch --nodes`) is set separately via the Slurm scheduler
+configuration.
 
-- **Pattern 1**: `num_nodes=1` (default) -- each job runs on a single node
-- **Pattern 2**: `num_nodes=N` -- each job spans all N nodes (MPI, distributed training)
+- **Pattern 1**: `num_nodes=1` (default) -- each job runs on a single node; allocation size is set
+  on the scheduler
+- **Pattern 2**: `num_nodes=N` -- each job spans N nodes (MPI, distributed training)
 
 ## Common Mistakes
 

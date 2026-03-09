@@ -6956,7 +6956,7 @@ components:
           type: integer
           default: 0
         num_nodes:
-          description: Number of nodes required by a job (allocation size for sbatch)
+          description: Number of nodes required per job (used by srun --nodes for Slurm jobs)
           type: integer
           default: 1
         memory:

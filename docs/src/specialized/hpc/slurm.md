@@ -317,8 +317,9 @@ correlated.
 
 > For a comprehensive guide to multi-node patterns, see [Multi-Node Jobs](./multi-node-jobs.md).
 
-The `num_nodes` resource requirement field controls both the Slurm allocation size
-(`sbatch --nodes`) and the number of nodes each job step spans (`srun --nodes`). It defaults to `1`.
+The `num_nodes` resource requirement field controls how many nodes each job step spans
+(`srun --nodes`). It defaults to `1`. The Slurm allocation size (`sbatch --nodes`) is set separately
+via the Slurm scheduler configuration.
 
 **Single-node jobs (default)** — no extra configuration needed:
 
@@ -340,13 +341,13 @@ resource_requirements:
     num_cpus: 32
     memory: 128g
     runtime: PT8H
-    num_nodes: 4      # allocates 4 nodes and srun spans all 4
+    num_nodes: 4      # srun spans all 4 nodes; allocation size set via scheduler
 ```
 
-In this pattern, Torc reserves all 4 nodes for the step exclusively, then passes `srun --nodes=4`
-when launching the job. The job command receives `SLURM_JOB_NODELIST`, `SLURM_NTASKS`, and the rest
-of the standard Slurm step environment, so MPI launchers (`mpirun`, `mpiexec`) and Julia
-`Distributed.jl` will automatically use all allocated nodes.
+In this pattern, the step spans 4 nodes exclusively, and Torc passes `srun --nodes=4` when launching
+the job. The job command receives `SLURM_JOB_NODELIST`, `SLURM_NTASKS`, and the rest of the standard
+Slurm step environment, so MPI launchers (`mpirun`, `mpiexec`) and Julia `Distributed.jl` will
+automatically use all allocated nodes.
 
 ### Multi-Node Allocation Rule
 

@@ -151,6 +151,19 @@ where
             }
         };
 
+        if body.num_nodes <= 0 {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": format!("num_nodes must be > 0, got {}", body.num_nodes),
+                "field": "num_nodes",
+                "value": body.num_nodes
+            }));
+            return Ok(
+                CreateResourceRequirementsResponse::UnprocessableContentErrorResponse(
+                    error_response,
+                ),
+            );
+        }
+
         let result = match sqlx::query!(
             r#"
             INSERT INTO resource_requirements
@@ -584,6 +597,19 @@ where
                 return Err(ApiError("Failed to get resource requirements".to_string()));
             }
         };
+
+        if body.num_nodes <= 0 {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": format!("num_nodes must be > 0, got {}", body.num_nodes),
+                "field": "num_nodes",
+                "value": body.num_nodes
+            }));
+            return Ok(
+                UpdateResourceRequirementsResponse::UnprocessableContentErrorResponse(
+                    error_response,
+                ),
+            );
+        }
 
         // Update the record
         match sqlx::query!(

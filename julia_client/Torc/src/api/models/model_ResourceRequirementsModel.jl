@@ -20,7 +20,7 @@
     - name::String : Name of the resource requirements
     - num_cpus::Int64 : Number of CPUs required by a job
     - num_gpus::Int64 : Number of GPUs required by a job
-    - num_nodes::Int64 : Number of nodes required by a job (allocation size for sbatch)
+    - num_nodes::Int64 : Number of nodes required per job (used by srun --nodes for Slurm jobs)
     - memory::String : Amount of memory required by a job, e.g., 20g
     - runtime::String : Maximum runtime for a job
 """

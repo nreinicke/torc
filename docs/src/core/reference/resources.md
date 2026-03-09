@@ -4,14 +4,14 @@ Technical reference for job resource specifications and allocation strategies.
 
 ## Resource Requirements Fields
 
-| Field       | Type    | Required | Default | Description                                                       |
-| ----------- | ------- | -------- | ------- | ----------------------------------------------------------------- |
-| `name`      | string  | Yes      | —       | Identifier to reference from jobs                                 |
-| `num_cpus`  | integer | No       | `1`     | Number of CPU cores                                               |
-| `num_gpus`  | integer | No       | `0`     | Number of GPUs                                                    |
-| `num_nodes` | integer | No       | `1`     | Number of nodes for the job (`sbatch --nodes` and `srun --nodes`) |
-| `memory`    | string  | No       | `1m`    | Memory allocation (see format below)                              |
-| `runtime`   | string  | No       | `PT1H`  | Maximum runtime (ISO 8601 duration)                               |
+| Field       | Type    | Required | Default | Description                                                                                 |
+| ----------- | ------- | -------- | ------- | ------------------------------------------------------------------------------------------- |
+| `name`      | string  | Yes      | —       | Identifier to reference from jobs                                                           |
+| `num_cpus`  | integer | No       | `1`     | Number of CPU cores                                                                         |
+| `num_gpus`  | integer | No       | `0`     | Number of GPUs                                                                              |
+| `num_nodes` | integer | No       | `1`     | Number of nodes per job (`srun --nodes`); allocation size is set via Slurm scheduler config |
+| `memory`    | string  | No       | `1m`    | Memory allocation (see format below)                                                        |
+| `runtime`   | string  | No       | `PT1H`  | Maximum runtime (ISO 8601 duration)                                                         |
 
 ### Example
 
@@ -33,18 +33,19 @@ resource_requirements:
 
   - name: mpi_job       # multi-node MPI or Julia Distributed.jl
     num_cpus: 32
-    num_nodes: 4        # allocates and spans 4 nodes
+    num_nodes: 4        # each job step spans 4 nodes
     memory: 128g
     runtime: PT8H
 ```
 
 ### `num_nodes`
 
-The `num_nodes` field controls both the Slurm allocation size (`sbatch --nodes`) and the number of
-nodes each job step spans (`srun --nodes`).
+The `num_nodes` field controls how many nodes each job step spans (`srun --nodes`). The Slurm
+allocation size (`sbatch --nodes`) is set separately via the Slurm scheduler configuration.
 
 For most jobs the value is `1` (default). Set it to a larger value for multi-node jobs such as MPI
-or Julia `Distributed.jl`.
+or Julia `Distributed.jl`. For single-node jobs in a multi-node allocation, keep `num_nodes=1` and
+configure the allocation size on the Slurm scheduler.
 
 See [Multi-Node Jobs](../../specialized/hpc/multi-node-jobs.md) for detailed examples and guidance.
 

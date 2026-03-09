@@ -114,8 +114,9 @@ flowchart LR
 
 ### Multi-Node Steps
 
-The `num_nodes` field on resource requirements controls both the Slurm allocation size and how many
-nodes an srun step spans. It defaults to 1.
+The `num_nodes` field on resource requirements controls how many nodes an srun step spans
+(`srun --nodes`). It defaults to 1. The allocation size (`sbatch --nodes`) is set via the Slurm
+scheduler configuration.
 
 - **Single-node jobs** (default): `num_nodes=1` -- each job runs on one node
 - **Multi-node jobs** (MPI, Julia Distributed.jl): `num_nodes=N` -- step spans N nodes
