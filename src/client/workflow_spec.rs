@@ -1650,7 +1650,7 @@ impl WorkflowSpec {
             spec.resource_monitor = Some(crate::client::resource_monitor::ResourceMonitorConfig {
                 enabled: true,
                 granularity: crate::client::resource_monitor::MonitorGranularity::Summary,
-                sample_interval_seconds: 5,
+                sample_interval_seconds: 10,
                 generate_plots: false,
             });
         }

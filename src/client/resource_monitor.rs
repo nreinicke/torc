@@ -27,7 +27,7 @@ impl Default for ResourceMonitorConfig {
         ResourceMonitorConfig {
             enabled: false,
             granularity: MonitorGranularity::Summary,
-            sample_interval_seconds: 5,
+            sample_interval_seconds: 10,
             generate_plots: false,
         }
     }

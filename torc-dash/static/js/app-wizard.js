@@ -18,7 +18,7 @@ Object.assign(TorcDashboard.prototype, {
         this.wizardResourceMonitor = {
             enabled: true,
             granularity: 'summary',
-            sample_interval_seconds: 5
+            sample_interval_seconds: 10
         };
         this.wizardParallelizationStrategy = 'resource_aware';
 
@@ -68,7 +68,7 @@ Object.assign(TorcDashboard.prototype, {
         this.wizardSchedulerIdCounter = 0;
         this.wizardActions = [];
         this.wizardActionIdCounter = 0;
-        this.wizardResourceMonitor = { enabled: true, granularity: 'summary', sample_interval_seconds: 5 };
+        this.wizardResourceMonitor = { enabled: true, granularity: 'summary', sample_interval_seconds: 10 };
         this.wizardParallelizationStrategy = 'resource_aware';
 
         const nameInput = document.getElementById('wizard-name');
