@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    UPDATE ro_crate_entity SET metadata = $1 WHERE id = $2\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b5f91673c5086a03ba33fc41bee5b2e7fab2c6c4e9682d6ff1ccb623caf0735a"
+}

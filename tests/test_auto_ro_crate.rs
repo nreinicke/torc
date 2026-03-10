@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{ServerProcess, run_jobs_cli_command, start_server};
+use common::{ServerProcess, run_cli_command, run_jobs_cli_command, start_server};
 use rstest::rstest;
 use std::fs;
 use std::path::Path;
@@ -529,4 +529,174 @@ fn test_auto_ro_crate_diamond_workflow(start_server: &ServerProcess) {
             "CreateAction should have result array"
         );
     }
+}
+
+#[rstest]
+fn test_auto_ro_crate_second_run_replaces_entities(start_server: &ServerProcess) {
+    let config = &start_server.config;
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let work_dir = temp_dir.path();
+
+    let (workflow_id, input_file_id, output_file_id, job_id) =
+        create_ro_crate_enabled_workflow(config, work_dir);
+
+    // --- First run ---
+
+    // Create the input file on disk
+    let input_data_v1 = r#"{"data": "version 1"}"#;
+    fs::write(work_dir.join("input.json"), input_data_v1).expect("Failed to write input.json");
+
+    // Initialize and run
+    default_api::initialize_jobs(config, workflow_id, Some(false), Some(false), None)
+        .expect("Failed to initialize jobs");
+
+    let workflow_id_str = workflow_id.to_string();
+    let output_dir = work_dir.to_str().unwrap();
+    let run_args = [
+        workflow_id_str.as_str(),
+        "--output-dir",
+        output_dir,
+        "--poll-interval",
+        "0.1",
+        "--max-parallel-jobs",
+        "1",
+    ];
+    run_jobs_cli_command(&run_args, start_server).expect("Failed to run jobs (first run)");
+
+    // Verify job completed and output file exists
+    let job = default_api::get_job(config, job_id).expect("Failed to get job");
+    assert_eq!(job.status, Some(models::JobStatus::Completed));
+    assert!(
+        work_dir.join("output.json").exists(),
+        "Output file should exist after first run"
+    );
+
+    // Capture first run RO-Crate entities
+    let entities_run1 =
+        default_api::list_ro_crate_entities(config, workflow_id, None, None).unwrap();
+    let items_run1 = entities_run1.items.unwrap();
+
+    let file_entities_run1: Vec<_> = items_run1
+        .iter()
+        .filter(|e| e.entity_type == "File")
+        .collect();
+    let software_entities_run1: Vec<_> = items_run1
+        .iter()
+        .filter(|e| e.entity_type == "SoftwareApplication")
+        .collect();
+
+    assert!(
+        !file_entities_run1.is_empty(),
+        "Should have File entities after first run"
+    );
+
+    // Verify run_id=0 in file entity metadata
+    let input_entity_run1 = items_run1
+        .iter()
+        .find(|e| e.file_id == Some(input_file_id))
+        .expect("Should have input file entity");
+    let meta_run1: serde_json::Value = serde_json::from_str(&input_entity_run1.metadata).unwrap();
+    assert_eq!(meta_run1["run_id"], 0, "First run should have run_id=0");
+
+    // Get the SHA256 of the input file from the first run
+    let input_sha_run1 = meta_run1["sha256"].as_str().map(|s| s.to_string());
+
+    // --- Second run: change input file and reinitialize ---
+
+    // Wait a moment to ensure file mtime changes
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Modify the input file
+    let input_data_v2 = r#"{"data": "version 2 - changed"}"#;
+    fs::write(work_dir.join("input.json"), input_data_v2).expect("Failed to write input.json v2");
+
+    // Reinitialize the workflow via CLI (bumps run_id, detects changed file, resets job)
+    run_cli_command(
+        &["workflows", "reinitialize", &workflow_id_str],
+        start_server,
+        None,
+    )
+    .expect("Failed to reinitialize workflow");
+
+    // Verify the job was reset to ready (reinitialize detected changed input file)
+    let job_after_reinit = default_api::get_job(config, job_id).expect("Failed to get job");
+    assert_eq!(
+        job_after_reinit.status,
+        Some(models::JobStatus::Ready),
+        "Job should be ready after reinitialize (input file changed)"
+    );
+
+    // Run the workflow again
+    run_jobs_cli_command(&run_args, start_server).expect("Failed to run jobs (second run)");
+
+    // Verify job completed again
+    let job = default_api::get_job(config, job_id).expect("Failed to get job");
+    assert_eq!(job.status, Some(models::JobStatus::Completed));
+
+    // --- Verify file entities were replaced, not duplicated ---
+
+    let entities_run2 =
+        default_api::list_ro_crate_entities(config, workflow_id, None, None).unwrap();
+    let items_run2 = entities_run2.items.unwrap();
+
+    let file_entities_run2: Vec<_> = items_run2
+        .iter()
+        .filter(|e| e.entity_type == "File")
+        .collect();
+    let software_entities_run2: Vec<_> = items_run2
+        .iter()
+        .filter(|e| e.entity_type == "SoftwareApplication")
+        .collect();
+
+    // Same number of File entities (replaced, not duplicated)
+    assert_eq!(
+        file_entities_run1.len(),
+        file_entities_run2.len(),
+        "File entity count should be the same after second run (replaced, not duplicated)"
+    );
+
+    // Software entities should have new records for run_id=1
+    assert!(
+        software_entities_run2.len() > software_entities_run1.len(),
+        "Should have additional SoftwareApplication entities for the second run. \
+         Run 1: {}, Run 2: {}",
+        software_entities_run1.len(),
+        software_entities_run2.len()
+    );
+
+    // Verify the input file entity now has run_id=1
+    let input_entity_run2 = items_run2
+        .iter()
+        .find(|e| e.file_id == Some(input_file_id))
+        .expect("Should still have input file entity");
+    let meta_run2: serde_json::Value = serde_json::from_str(&input_entity_run2.metadata).unwrap();
+    assert_eq!(
+        meta_run2["run_id"], 1,
+        "Second run should have run_id=1 in input file entity"
+    );
+
+    // Verify the SHA256 changed (input file was modified)
+    let input_sha_run2 = meta_run2["sha256"].as_str().map(|s| s.to_string());
+    if input_sha_run1.is_some() && input_sha_run2.is_some() {
+        assert_ne!(
+            input_sha_run1, input_sha_run2,
+            "SHA256 should differ after input file was modified"
+        );
+    }
+
+    // Verify the output file entity also has run_id=1
+    let output_entity_run2 = items_run2
+        .iter()
+        .find(|e| e.file_id == Some(output_file_id))
+        .expect("Should still have output file entity");
+    let output_meta_run2: serde_json::Value =
+        serde_json::from_str(&output_entity_run2.metadata).unwrap();
+    assert_eq!(
+        output_meta_run2["run_id"], 1,
+        "Second run should have run_id=1 in output file entity"
+    );
+    assert!(
+        output_meta_run2["wasGeneratedBy"].is_object(),
+        "Output file entity should still have wasGeneratedBy provenance"
+    );
 }

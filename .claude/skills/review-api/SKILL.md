@@ -22,33 +22,38 @@ Review new or modified API features for completeness and consistency.
    - 422 for validation errors
    - 500 for server errors
 
+3. **SQLite indexes**: Ensure changes to SQLite tables are paired with appropriate indexes. If the
+   branch changes any SQLite tables, check what indexes exist for those tables. Report to the
+   developer whether you would recommend any changes. Be careful recommending indexes that would
+   consume lots of memory with minimal user value.
+
 ### OpenAPI Spec (api/openapi.yaml)
 
-3. **Endpoint Documentation**: All new/modified endpoints are documented
+4. **Endpoint Documentation**: All new/modified endpoints are documented
    - Path, method, parameters, request body
    - Response schemas for 200, 403, 404, 422, 500
    - Validate with: `npx @redocly/cli lint api/openapi.yaml`
 
-4. **Schema Syntax** (OpenAPI 3.1):
+5. **Schema Syntax** (OpenAPI 3.1):
    - Use `type: [integer, "null"]` not `nullable: true`
    - Use direct `$ref:` without `schema:` wrapper
    - Examples use actual objects: `error: {}` not `error: "{}"`
 
 ### Client CLI (src/client/commands/)
 
-5. **Workflow ID Prompting**: Commands use `Option<i64>` for workflow_id
+1. **Workflow ID Prompting**: Commands use `Option<i64>` for workflow_id
    - Call `select_workflow_interactively()` when None
    - Follow pattern in `jobs.rs` or `ro_crate.rs`
 
-6. **Pagination**: List commands that fetch from server use pagination
+2. **Pagination**: List commands that fetch from server use pagination
    - Check for `paginate_*` functions or pagination iterators
    - Single API calls with no limit will truncate at 10,000 items
 
-7. **JSON Output**: Commands support `-f json` output format
+3. **JSON Output**: Commands support `-f json` output format
    - Use `print_if_json()` or `print_wrapped_if_json()`
    - Ensure structured data is serializable
 
-8. **Logging**: Check that log messages that include database record IDs use a format like
+4. **Logging**: Check that log messages that include database record IDs use a format like
    `info!("Created workflow workflow_id={}", workflow_id);` so that parsing scripts pick them up.
 
 ## How to Review

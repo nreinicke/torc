@@ -100,10 +100,21 @@ impl RoCrateApiImpl {
     ///
     /// Input files are identified as files with `st_mtime` set. During workflow creation,
     /// the client auto-detects files that exist on disk and records their modification time.
-    /// Skips files that already have RO-Crate entities.
+    /// Updates metadata for files that already have RO-Crate entities;
+    /// creates new entities otherwise.
     ///
     /// This is called during `initialize_jobs` when `enable_ro_crate` is true.
     pub async fn create_entities_for_input_files(&self, workflow_id: i64) -> Result<i64, ApiError> {
+        // Get the current run_id from workflow_status
+        let run_id: i64 = sqlx::query_scalar!(
+            "SELECT run_id FROM workflow_status WHERE id = $1",
+            workflow_id,
+        )
+        .fetch_optional(self.context.pool.as_ref())
+        .await
+        .map_err(|e| database_error_with_msg(e, "Failed to get workflow run_id"))?
+        .unwrap_or(0);
+
         // Get all files with st_mtime set (input files)
         let input_files = match sqlx::query!(
             r#"
@@ -125,15 +136,18 @@ impl RoCrateApiImpl {
             }
         };
 
-        // Get existing RO-Crate entity file_ids to avoid duplicates
-        let existing_file_ids: std::collections::HashSet<i64> = match sqlx::query!(
-            r#"SELECT file_id FROM ro_crate_entity WHERE workflow_id = $1 AND file_id IS NOT NULL"#,
+        // Get existing RO-Crate entities by file_id for upsert
+        let existing_entities: std::collections::HashMap<i64, i64> = match sqlx::query!(
+            r#"SELECT id, file_id FROM ro_crate_entity WHERE workflow_id = $1 AND file_id IS NOT NULL"#,
             workflow_id
         )
         .fetch_all(self.context.pool.as_ref())
         .await
         {
-            Ok(rows) => rows.into_iter().filter_map(|r| r.file_id).collect(),
+            Ok(rows) => rows
+                .into_iter()
+                .filter_map(|r| r.file_id.map(|fid| (fid, r.id)))
+                .collect(),
             Err(e) => {
                 return Err(super::database_error_with_msg(
                     e,
@@ -142,17 +156,8 @@ impl RoCrateApiImpl {
             }
         };
 
-        let mut created_count = 0i64;
+        let mut upserted_count = 0i64;
         for file in input_files {
-            // Skip if entity already exists for this file
-            if existing_file_ids.contains(&file.id) {
-                debug!(
-                    "RO-Crate entity already exists for file_id={}, skipping",
-                    file.id
-                );
-                continue;
-            }
-
             // Infer MIME type from file extension
             let mime_type = mime_guess::from_path(&file.path)
                 .first()
@@ -170,7 +175,8 @@ impl RoCrateApiImpl {
                 "@id": file.path,
                 "@type": "File",
                 "name": basename,
-                "encodingFormat": mime_type
+                "encodingFormat": mime_type,
+                "torc:run_id": run_id
             });
 
             // Add dateModified if st_mtime is available
@@ -181,33 +187,47 @@ impl RoCrateApiImpl {
                 metadata["dateModified"] = serde_json::json!(datetime.to_rfc3339());
             }
 
-            // Create the entity
             let metadata_str = metadata.to_string();
-            match sqlx::query!(
-                r#"
-                INSERT INTO ro_crate_entity (workflow_id, file_id, entity_id, entity_type, metadata)
-                VALUES ($1, $2, $3, $4, $5)
-                "#,
-                workflow_id,
-                file.id,
-                file.path,
-                "File",
-                metadata_str,
-            )
-            .execute(self.context.pool.as_ref())
-            .await
-            {
+
+            // Update existing entity or create new one
+            let result = if let Some(&entity_db_id) = existing_entities.get(&file.id) {
+                sqlx::query!(
+                    r#"
+                    UPDATE ro_crate_entity SET metadata = $1 WHERE id = $2
+                    "#,
+                    metadata_str,
+                    entity_db_id,
+                )
+                .execute(self.context.pool.as_ref())
+                .await
+            } else {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO ro_crate_entity (workflow_id, file_id, entity_id, entity_type, metadata)
+                    VALUES ($1, $2, $3, $4, $5)
+                    "#,
+                    workflow_id,
+                    file.id,
+                    file.path,
+                    "File",
+                    metadata_str,
+                )
+                .execute(self.context.pool.as_ref())
+                .await
+            };
+
+            match result {
                 Ok(_) => {
                     debug!(
-                        "Created RO-Crate entity for input file '{}' (file_id={})",
+                        "Upserted RO-Crate entity for input file '{}' (file_id={})",
                         file.path, file.id
                     );
-                    created_count += 1;
+                    upserted_count += 1;
                 }
                 Err(e) => {
                     // Log warning but don't fail - RO-Crate is non-blocking
                     log::warn!(
-                        "Failed to create RO-Crate entity for file '{}': {}",
+                        "Failed to upsert RO-Crate entity for file '{}': {}",
                         file.path,
                         e
                     );
@@ -216,20 +236,30 @@ impl RoCrateApiImpl {
         }
 
         debug!(
-            "Created {} RO-Crate entities for input files in workflow_id={}",
-            created_count, workflow_id
+            "Upserted {} RO-Crate entities for input files in workflow_id={}",
+            upserted_count, workflow_id
         );
-        Ok(created_count)
+        Ok(upserted_count)
     }
 
     /// Create a SoftwareApplication RO-Crate entity for the torc-server binary.
     ///
     /// Records the server's version, binary path, and SHA256 hash. Skips if an
-    /// entity with `#software-torc-server` already exists for this workflow.
+    /// entity with `#software-torc-server-run-{run_id}` already exists for this workflow.
     ///
     /// Called during `initialize_jobs` regardless of `enable_ro_crate`.
     pub async fn create_server_software_entity(&self, workflow_id: i64) -> Result<(), ApiError> {
-        let entity_id = "#software-torc-server";
+        // Get the current run_id from workflow_status
+        let run_id: i64 = sqlx::query_scalar!(
+            "SELECT run_id FROM workflow_status WHERE id = $1",
+            workflow_id,
+        )
+        .fetch_optional(self.context.pool.as_ref())
+        .await
+        .map_err(|e| database_error_with_msg(e, "Failed to get workflow run_id"))?
+        .unwrap_or(0);
+
+        let entity_id = format!("#software-torc-server-run-{}", run_id);
 
         // Check if entity already exists
         let exists = sqlx::query_scalar!(
@@ -263,6 +293,7 @@ impl RoCrateApiImpl {
             "name": "torc-server",
             "version": version,
             "url": exe_path,
+            "torc:run_id": run_id,
         });
 
         if let Some(hash) = sha256 {
