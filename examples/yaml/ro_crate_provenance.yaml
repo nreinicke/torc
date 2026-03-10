@@ -7,6 +7,9 @@
 # - Output files get File entities with `wasGeneratedBy` when jobs complete
 # - Jobs get CreateAction entities linking to their outputs
 #
+# It also demonstrates software provenance tracking by registering the
+# scripts used in the workflow as SoftwareApplication entities.
+#
 # Before running, create the input file:
 #   mkdir -p data output
 #   echo -e "name,value,category\nAlice,10,A\nBob,20,B\nAlice,10,A\nCharlie,,C" > data/raw_data.csv
@@ -28,6 +31,9 @@
 #     generate_report
 #           |
 #     report.html
+#
+# The register_scripts job runs first and has no data dependencies, so it
+# executes in parallel with the data pipeline.
 
 name: ro_crate_demo
 description: Data processing workflow with RO-Crate provenance tracking
@@ -36,94 +42,30 @@ description: Data processing workflow with RO-Crate provenance tracking
 enable_ro_crate: true
 
 jobs:
+  # Register the workflow scripts as SoftwareApplication entities in the
+  # RO-Crate so that the provenance record includes the software used.
+  - name: register_scripts
+    command: bash examples/scripts/ro_crate_register_scripts.sh
+    resource_requirements: small
+
   # Clean and validate the raw input data
   - name: preprocess
-    command: |
-      python -c "
-      import csv
-      with open('${files.input.raw_data}', 'r') as infile:
-          reader = csv.DictReader(infile)
-          rows = list(reader)
-          fieldnames = reader.fieldnames
-      # Remove rows with empty values and deduplicate
-      seen = set()
-      clean_rows = []
-      for row in rows:
-          if all(row.values()):  # Skip rows with empty values
-              key = tuple(row.values())
-              if key not in seen:
-                  seen.add(key)
-                  clean_rows.append(row)
-      with open('${files.output.clean_data}', 'w', newline='') as outfile:
-          writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-          writer.writeheader()
-          writer.writerows(clean_rows)
-      print(f'Cleaned {len(clean_rows)} rows')
-      "
+    command: python examples/scripts/ro_crate_preprocess.py '${files.input.raw_data}' '${files.output.clean_data}'
     resource_requirements: small
 
   # Generate summary statistics
   - name: analyze
-    command: |
-      python -c "
-      import csv
-      import json
-      import os
-      os.makedirs(os.path.dirname('${files.output.summary}'), exist_ok=True)
-      with open('${files.input.clean_data}', 'r') as f:
-          reader = csv.DictReader(f)
-          rows = list(reader)
-          columns = reader.fieldnames
-      summary = {
-          'row_count': len(rows),
-          'columns': columns,
-          'sample_row': rows[0] if rows else None
-      }
-      with open('${files.output.summary}', 'w') as f:
-          json.dump(summary, f, indent=2)
-      print('Generated summary statistics')
-      "
+    command: python examples/scripts/ro_crate_analyze.py '${files.input.clean_data}' '${files.output.summary}'
     resource_requirements: small
 
   # Transform data to JSON format
   - name: transform
-    command: |
-      python -c "
-      import csv
-      import json
-      import os
-      os.makedirs(os.path.dirname('${files.output.processed}'), exist_ok=True)
-      with open('${files.input.clean_data}', 'r') as f:
-          reader = csv.DictReader(f)
-          rows = list(reader)
-      with open('${files.output.processed}', 'w') as f:
-          json.dump(rows, f, indent=2)
-      print(f'Converted {len(rows)} rows to JSON')
-      "
+    command: python examples/scripts/ro_crate_transform.py '${files.input.clean_data}' '${files.output.processed}'
     resource_requirements: small
 
   # Generate final HTML report
   - name: generate_report
-    command: |
-      python -c "
-      import json
-      import os
-      os.makedirs(os.path.dirname('${files.output.report}'), exist_ok=True)
-      with open('${files.input.summary}', 'r') as f:
-          summary = json.load(f)
-      html = f'''<!DOCTYPE html>
-      <html>
-      <head><title>Data Report</title></head>
-      <body>
-        <h1>Data Processing Report</h1>
-        <p>Rows processed: {summary[\"row_count\"]}</p>
-        <p>Columns: {\", \".join(summary[\"columns\"])}</p>
-      </body>
-      </html>'''
-      with open('${files.output.report}', 'w') as f:
-          f.write(html)
-      print('Generated HTML report')
-      "
+    command: python examples/scripts/ro_crate_report.py '${files.input.summary}' '${files.output.report}'
     resource_requirements: small
 
 # File definitions
