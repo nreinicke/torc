@@ -595,9 +595,11 @@ impl WorkflowManager {
                 self.create_ro_crate_entities_for_input_files();
 
                 // Always create SoftwareApplication entities for torc binaries
+                let run_id = self.get_run_id().unwrap_or(0);
                 crate::client::ro_crate_utils::create_software_entities(
                     &self.config,
                     self.workflow_id,
+                    run_id,
                 );
 
                 Ok(())
@@ -658,9 +660,11 @@ impl WorkflowManager {
                 "Creating RO-Crate entities for {} input files",
                 input_files.len()
             );
+            let run_id = self.get_run_id().unwrap_or(0);
             crate::client::ro_crate_utils::create_entities_for_input_files(
                 &self.config,
                 self.workflow_id,
+                run_id,
                 &input_files,
             );
         }

@@ -304,6 +304,25 @@ performance reasons.
 - Tests simulating job completions MUST use `complete_job` (not `manage_status_change`) to ensure
   proper unblocking
 
+### Database Migrations (CRITICAL)
+
+**NEVER use the SQLite rename-recreate pattern (CREATE new table, INSERT...SELECT, DROP old table,
+ALTER RENAME) in migrations for tables referenced by foreign keys with ON DELETE CASCADE.**
+
+`sqlx::migrate!()` wraps each migration in a transaction. `PRAGMA foreign_keys=OFF` is silently
+ignored inside a transaction (SQLite limitation). With foreign keys ON, `DROP TABLE` performs an
+implicit `DELETE FROM` before dropping, which triggers `ON DELETE CASCADE` across all child tables
+-- destroying data. The `workflow` table is referenced by 15+ child tables; dropping it would
+cascade-delete the entire database contents.
+
+**Safe alternatives for schema changes on parent tables:**
+
+- Use `ALTER TABLE ADD COLUMN` when only adding columns (no rename-recreate needed)
+- For column removal/modification, add new columns and deprecate old ones rather than recreating
+- If rename-recreate is truly unavoidable, the `PRAGMA foreign_keys=OFF` must be executed
+  **outside** the migration transaction (requires custom migration logic, not standard sqlx
+  migrations)
+
 ### OpenAPI Code Generation
 
 - Server and client originally used OpenAPI-generated code for base types and routing but we are now

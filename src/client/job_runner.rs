@@ -1001,6 +1001,7 @@ impl JobRunner {
         crate::client::ro_crate_utils::create_create_action_entity(
             &self.config,
             self.workflow_id,
+            self.run_id,
             &job,
             attempt_id,
             &output_file_paths,
@@ -1014,6 +1015,7 @@ impl JobRunner {
             crate::client::ro_crate_utils::create_ro_crate_entity_for_output_file(
                 &self.config,
                 self.workflow_id,
+                self.run_id,
                 file,
                 content_size,
                 job_id,
