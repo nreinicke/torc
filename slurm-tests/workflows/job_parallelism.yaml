@@ -15,6 +15,11 @@ name: job_parallelism
 description: Job-based parallelism — no resource requirements, controlled by --max-parallel-jobs
 project: slurm-tests
 
+resource_monitor:
+  enabled: true
+  granularity: time_series
+  sample_interval_seconds: 2
+
 # No resource_requirements section — jobs use the "default" RR
 
 jobs:
