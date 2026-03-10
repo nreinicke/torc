@@ -143,7 +143,7 @@ Object.assign(TorcDashboard.prototype, {
                         ${this.renderSortableHeader('Status', 'status')}
                         ${this.renderSortableHeader('Exec Time (min)', 'exec_time_minutes')}
                         ${this.renderSortableHeader('Peak Mem', 'peak_memory_bytes')}
-                        ${this.renderSortableHeader('Peak CPU %', 'peak_cpu_percent')}
+                        ${this.renderSortableHeader('Avg CPU %', 'avg_cpu_percent')}
                     </tr>
                 </thead>
                 <tbody>
@@ -157,7 +157,7 @@ Object.assign(TorcDashboard.prototype, {
                             <td><span class="status-badge status-${statusNames[result.status]?.toLowerCase() || 'unknown'}">${statusNames[result.status] || result.status}</span></td>
                             <td>${result.exec_time_minutes != null ? result.exec_time_minutes.toFixed(2) : '-'}</td>
                             <td>${this.formatBytes(result.peak_memory_bytes)}</td>
-                            <td>${result.peak_cpu_percent != null ? result.peak_cpu_percent.toFixed(1) : '-'}</td>
+                            <td>${result.avg_cpu_percent != null ? result.avg_cpu_percent.toFixed(1) : '-'}</td>
                         </tr>
                     `).join('')}
                 </tbody>

@@ -209,14 +209,14 @@ impl ResourceMonitor {
         Ok(())
     }
 
-    /// Register a Slurm step for sstat-based monitoring.
+    /// Register a Slurm step for sstat-based monitoring (`TimeSeries` mode only).
     ///
-    /// Registers a Slurm step for sstat-based monitoring in both `TimeSeries` and `Summary` modes.
+    /// In `TimeSeries` mode the per-sample data is written to the time-series database,
+    /// enabling detailed resource utilization plots over time.
     ///
-    /// In `TimeSeries` mode the per-sample data is written to the time-series database.
-    /// In `Summary` mode only the peak metrics are kept in memory — this provides a fallback
-    /// when sacct has no useful data for short or failed steps (sacct may report MaxRSS=0 /
-    /// AveCPU=00:00:00 for steps that finished before the accounting daemon could flush).
+    /// In `Summary` mode this method should **not** be called — sacct backfill after job
+    /// completion provides authoritative peak memory (MaxRSS) and average CPU data without
+    /// the overhead of periodic sstat/squeue polling.
     ///
     /// `pid` must be the srun process PID so that the existing `stop_monitoring(pid)` API
     /// continues to work without changes.

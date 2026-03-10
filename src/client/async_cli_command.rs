@@ -259,10 +259,14 @@ impl AsyncCliCommand {
         // slurmstepd (not as a child of the srun process), so sysinfo process-tree
         // monitoring captures only the negligible srun overhead.  Instead:
         //   - TimeSeries mode: use sstat polling via start_monitoring_slurm().
-        //   - Summary mode: skip the monitor; sacct backfill in job_runner provides final stats.
+        //   - Summary mode: skip the monitor entirely; sacct backfill in job_runner
+        //     provides authoritative peak memory (MaxRSS) and average CPU data after
+        //     job completion without the overhead of periodic sstat/squeue polling.
         if let Some(monitor) = resource_monitor {
             if let Some(ref step) = self.step_name {
-                if let Ok(slurm_job_id) = std::env::var("SLURM_JOB_ID") {
+                if monitor.is_timeseries()
+                    && let Ok(slurm_job_id) = std::env::var("SLURM_JOB_ID")
+                {
                     // Discover the numeric step ID that Slurm assigned. sstat requires
                     // numeric IDs (e.g., "1") — name-based lookup doesn't work on all
                     // Slurm installations (notably HPE Cray EX).

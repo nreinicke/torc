@@ -205,7 +205,7 @@ Object.assign(TorcDashboard.prototype, {
                                     <th>Status</th>
                                     <th>Exec Time (min)</th>
                                     <th>Peak Mem</th>
-                                    <th>Peak CPU %</th>
+                                    <th>Avg CPU %</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -217,7 +217,7 @@ Object.assign(TorcDashboard.prototype, {
                                         <td><span class="status-badge status-${statusNames[r.status]?.toLowerCase() || 'unknown'}">${statusNames[r.status] || r.status}</span></td>
                                         <td>${r.exec_time_minutes != null ? r.exec_time_minutes.toFixed(2) : '-'}</td>
                                         <td>${this.formatBytes(r.peak_memory_bytes)}</td>
-                                        <td>${r.peak_cpu_percent != null ? r.peak_cpu_percent.toFixed(1) : '-'}</td>
+                                        <td>${r.avg_cpu_percent != null ? r.avg_cpu_percent.toFixed(1) : '-'}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>

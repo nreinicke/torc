@@ -5,7 +5,7 @@
 # Verifies:
 #   - Workflow completes successfully with use_srun=false
 #   - Both jobs complete with return code 0
-#   - peak_cpu_percent > 0 for cpu_work
+#   - avg_cpu_percent > 0 for cpu_work
 #   - peak_memory_bytes > 0 for memory_work
 #   - Time-series resource metrics DB exists and has sample data
 
@@ -25,7 +25,7 @@ run_test_no_srun_basic() {
     assert_return_code "$wf_id" "memory_work" "0"
 
     # Resource monitoring data captured (via process-level sysinfo, not sstat)
-    assert_peak_cpu_nonzero "$wf_id" "cpu_work"
+    assert_avg_cpu_nonzero "$wf_id" "cpu_work"
     assert_peak_memory_nonzero "$wf_id" "memory_work"
 
     # Check time-series resource metrics DB exists and has data

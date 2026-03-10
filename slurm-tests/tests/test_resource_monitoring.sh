@@ -4,7 +4,7 @@
 #
 # Verifies:
 #   - Both jobs complete successfully
-#   - peak_cpu_percent > 0 for cpu_work
+#   - avg_cpu_percent > 0 for cpu_work
 #   - peak_memory_bytes > 0 for memory_work
 
 run_test_resource_monitoring() {
@@ -23,7 +23,7 @@ run_test_resource_monitoring() {
     assert_return_code "$wf_id" "memory_work" "0"
 
     # Resource monitoring data captured
-    assert_peak_cpu_nonzero "$wf_id" "cpu_work"
+    assert_avg_cpu_nonzero "$wf_id" "cpu_work"
     assert_peak_memory_nonzero "$wf_id" "memory_work"
 
     # Also check that results are available in reports

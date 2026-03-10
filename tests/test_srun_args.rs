@@ -112,9 +112,14 @@ fn run_and_capture_srun_args(
         result.err()
     );
 
-    // Wait for the job to finish
-    thread::sleep(Duration::from_millis(500));
-    let _ = cmd.check_status();
+    // Poll until the process finishes (up to 10s).
+    for _ in 0..100 {
+        let _ = cmd.check_status();
+        if !cmd.is_running {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 
     if args_log.exists() {
         Some(fs::read_to_string(args_log).expect("Failed to read srun args log"))

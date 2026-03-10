@@ -733,7 +733,14 @@ fn draw_results_table(f: &mut Frame, area: Rect, app: &mut App) {
         .add_modifier(Modifier::BOLD);
 
     let header = Row::new(vec![
-        "ID", "Job ID", "Run", "Attempt", "Return", "Status", "Peak Mem", "Peak CPU",
+        "ID",
+        "Job ID",
+        "Run",
+        "Attempt",
+        "Return",
+        "Status",
+        "Peak Mem",
+        "Avg CPU %",
     ])
     .style(header_style)
     .bottom_margin(1);
@@ -752,9 +759,9 @@ fn draw_results_table(f: &mut Frame, area: Rect, app: &mut App) {
             .map(format_bytes)
             .unwrap_or_else(|| "-".to_string());
 
-        // Format peak CPU percentage
-        let peak_cpu = result
-            .peak_cpu_percent
+        // Format average CPU percentage
+        let avg_cpu = result
+            .avg_cpu_percent
             .map(|pct| format!("{:.1}%", pct))
             .unwrap_or_else(|| "-".to_string());
 
@@ -776,7 +783,7 @@ fn draw_results_table(f: &mut Frame, area: Rect, app: &mut App) {
             )),
             Cell::from(Span::styled(status, Style::default().fg(row_color))),
             Cell::from(peak_mem),
-            Cell::from(peak_cpu),
+            Cell::from(avg_cpu),
         ])
     });
 
@@ -808,7 +815,7 @@ fn draw_results_table(f: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Length(7),  // Return
             Constraint::Length(12), // Status
             Constraint::Length(10), // Peak Mem
-            Constraint::Length(10), // Peak CPU
+            Constraint::Length(10), // Avg CPU %
         ],
     )
     .header(header)
@@ -920,7 +927,7 @@ fn draw_slurm_stats_table(f: &mut Frame, area: Rect, app: &mut App) {
         "Max RSS",
         "Max VM",
         "Ave CPU (s)",
-        "CPU %",
+        "Avg CPU %",
         "Nodes",
     ])
     .style(header_style)
@@ -1007,7 +1014,7 @@ fn draw_slurm_stats_table(f: &mut Frame, area: Rect, app: &mut App) {
             Constraint::Length(10), // Max RSS
             Constraint::Length(10), // Max VM
             Constraint::Length(12), // Ave CPU (s)
-            Constraint::Length(10), // CPU %
+            Constraint::Length(10), // Avg CPU %
             Constraint::Min(10),    // Nodes
         ],
     )
