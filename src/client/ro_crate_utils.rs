@@ -54,7 +54,7 @@ pub fn compute_file_sha256(path: &str) -> Option<String> {
 /// - `contentSize`: file size (when available)
 /// - `sha256`: SHA256 hash (when available)
 /// - `dateModified`: ISO8601 from st_mtime
-/// - `run_id`: workflow run that recorded this entity
+/// - `torc:run_id`: workflow run that recorded this entity
 pub fn build_file_entity(
     workflow_id: i64,
     run_id: i64,
@@ -80,7 +80,7 @@ pub fn build_file_entity(
         "@type": "File",
         "name": basename,
         "encodingFormat": mime_type,
-        "run_id": run_id
+        "torc:run_id": run_id
     });
 
     // Add content size if available
@@ -143,7 +143,7 @@ pub fn build_file_entity_with_provenance(
         "name": basename,
         "encodingFormat": mime_type,
         "wasGeneratedBy": { "@id": create_action_id },
-        "run_id": run_id
+        "torc:run_id": run_id
     });
 
     // Add content size if available
@@ -201,7 +201,7 @@ pub fn build_create_action_entity(
         "name": job.name,
         "instrument": { "@id": format!("#workflow-{}", workflow_id) },
         "result": results,
-        "run_id": run_id
+        "torc:run_id": run_id
     });
 
     RoCrateEntityModel {
@@ -538,7 +538,7 @@ fn build_software_entity(workflow_id: i64, run_id: i64, info: &BinaryInfo) -> Ro
         "name": info.name,
         "version": info.version,
         "url": info.path,
-        "run_id": run_id,
+        "torc:run_id": run_id,
     });
 
     if let Some(size) = info.file_size {
@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(metadata["name"], "output.csv");
         assert_eq!(metadata["encodingFormat"], "text/csv");
         assert_eq!(metadata["contentSize"], 1024);
-        assert_eq!(metadata["run_id"], 1);
+        assert_eq!(metadata["torc:run_id"], 1);
     }
 
     #[test]
@@ -669,7 +669,7 @@ mod tests {
 
         let metadata: serde_json::Value = serde_json::from_str(&entity.metadata).unwrap();
         assert_eq!(metadata["wasGeneratedBy"]["@id"], "#job-42-attempt-1");
-        assert_eq!(metadata["run_id"], 1);
+        assert_eq!(metadata["torc:run_id"], 1);
     }
 
     #[test]
@@ -698,7 +698,7 @@ mod tests {
         assert_eq!(metadata["instrument"]["@id"], "#workflow-100");
         assert!(metadata["result"].is_array());
         assert_eq!(metadata["result"][0]["@id"], "output/result1.json");
-        assert_eq!(metadata["run_id"], 1);
+        assert_eq!(metadata["torc:run_id"], 1);
     }
 
     #[test]
@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(metadata["url"], "/usr/local/bin/torc");
         assert_eq!(metadata["contentSize"], 50_000_000);
         assert_eq!(metadata["sha256"], "abc123");
-        assert_eq!(metadata["run_id"], 3);
+        assert_eq!(metadata["torc:run_id"], 3);
     }
 
     #[test]
@@ -895,7 +895,7 @@ mod tests {
 
         let metadata: serde_json::Value = serde_json::from_str(&entity.metadata).unwrap();
         assert_eq!(metadata["name"], "torc-server");
-        assert_eq!(metadata["run_id"], 1);
+        assert_eq!(metadata["torc:run_id"], 1);
         assert!(metadata.get("contentSize").is_none());
         assert!(metadata.get("sha256").is_none());
     }

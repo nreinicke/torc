@@ -596,7 +596,10 @@ fn test_auto_ro_crate_second_run_replaces_entities(start_server: &ServerProcess)
         .find(|e| e.file_id == Some(input_file_id))
         .expect("Should have input file entity");
     let meta_run1: serde_json::Value = serde_json::from_str(&input_entity_run1.metadata).unwrap();
-    assert_eq!(meta_run1["run_id"], 0, "First run should have run_id=0");
+    assert_eq!(
+        meta_run1["torc:run_id"], 0,
+        "First run should have run_id=0"
+    );
 
     // Get the SHA256 of the input file from the first run
     let input_sha_run1 = meta_run1["sha256"].as_str().map(|s| s.to_string());
@@ -671,7 +674,7 @@ fn test_auto_ro_crate_second_run_replaces_entities(start_server: &ServerProcess)
         .expect("Should still have input file entity");
     let meta_run2: serde_json::Value = serde_json::from_str(&input_entity_run2.metadata).unwrap();
     assert_eq!(
-        meta_run2["run_id"], 1,
+        meta_run2["torc:run_id"], 1,
         "Second run should have run_id=1 in input file entity"
     );
 
@@ -692,7 +695,7 @@ fn test_auto_ro_crate_second_run_replaces_entities(start_server: &ServerProcess)
     let output_meta_run2: serde_json::Value =
         serde_json::from_str(&output_entity_run2.metadata).unwrap();
     assert_eq!(
-        output_meta_run2["run_id"], 1,
+        output_meta_run2["torc:run_id"], 1,
         "Second run should have run_id=1 in output file entity"
     );
     assert!(
