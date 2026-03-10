@@ -90,8 +90,8 @@ struct ResultTableRow {
     exec_time: String,
     #[tabled(rename = "Peak Mem")]
     peak_memory: String,
-    #[tabled(rename = "Peak CPU %")]
-    peak_cpu: String,
+    #[tabled(rename = "Avg CPU %")]
+    avg_cpu: String,
     #[tabled(rename = "Completion Time")]
     completion_time: String,
     #[tabled(rename = "Status")]
@@ -276,7 +276,7 @@ pub fn handle_result_commands(config: &Configuration, command: &ResultCommands, 
                                 return_code: result.return_code,
                                 exec_time: format!("{:.2}", result.exec_time_minutes),
                                 peak_memory: format_memory(result.peak_memory_bytes),
-                                peak_cpu: format_cpu(result.peak_cpu_percent),
+                                avg_cpu: format_cpu(result.avg_cpu_percent),
                                 completion_time: result.completion_time.clone(),
                                 status: format!("{:?}", result.status),
                             })
@@ -311,7 +311,6 @@ pub fn handle_result_commands(config: &Configuration, command: &ResultCommands, 
                     // Display resource metrics if available
                     if result.peak_memory_bytes.is_some()
                         || result.avg_memory_bytes.is_some()
-                        || result.peak_cpu_percent.is_some()
                         || result.avg_cpu_percent.is_some()
                     {
                         println!("\n  Resource Metrics:");
@@ -320,9 +319,6 @@ pub fn handle_result_commands(config: &Configuration, command: &ResultCommands, 
                         }
                         if let Some(avg_mem) = result.avg_memory_bytes {
                             println!("    Avg Memory:  {}", format_memory(Some(avg_mem)));
-                        }
-                        if let Some(peak_cpu) = result.peak_cpu_percent {
-                            println!("    Peak CPU:    {}", format_cpu(Some(peak_cpu)));
                         }
                         if let Some(avg_cpu) = result.avg_cpu_percent {
                             println!("    Avg CPU:     {}", format_cpu(Some(avg_cpu)));

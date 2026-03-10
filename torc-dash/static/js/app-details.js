@@ -425,7 +425,7 @@ Object.assign(TorcDashboard.prototype, {
                         <td><span class="status-badge status-${statusNames[result.status]?.toLowerCase() || 'unknown'}">${statusNames[result.status] || result.status}</span></td>
                         <td>${result.exec_time_minutes != null ? result.exec_time_minutes.toFixed(2) : '-'}</td>
                         <td>${this.formatBytes(result.peak_memory_bytes)}</td>
-                        <td>${result.peak_cpu_percent != null ? result.peak_cpu_percent.toFixed(1) : '-'}</td>
+                        <td>${result.avg_cpu_percent != null ? result.avg_cpu_percent.toFixed(1) : '-'}</td>
                     </tr>
                 `).join('');
 
@@ -608,7 +608,7 @@ Object.assign(TorcDashboard.prototype, {
             'return_code': () => item.return_code,
             'exec_time': () => item.exec_time_minutes,
             'peak_mem': () => item.peak_memory_bytes,
-            'peak_cpu': () => item.peak_cpu_percent,
+            'avg_cpu': () => item.avg_cpu_percent,
             'modified': () => item.st_mtime,
         };
         if (fieldMap[field]) {

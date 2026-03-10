@@ -34,7 +34,7 @@ torc results list <workflow_id>
 ```
 Results for workflow ID 2:
 ╭────┬────────┬───────┬────────┬─────────────┬───────────┬──────────┬────────────┬──────────────────────────┬────────╮
-│ ID │ Job ID │ WF ID │ Run ID │ Return Code │ Exec Time │ Peak Mem │ Peak CPU % │ Completion Time          │ Status │
+│ ID │ Job ID │ WF ID │ Run ID │ Return Code │ Exec Time │ Peak Mem │ Avg CPU % │ Completion Time          │ Status │
 ├────┼────────┼───────┼────────┼─────────────┼───────────┼──────────┼────────────┼──────────────────────────┼────────┤
 │ 4  │ 6      │ 2     │ 1      │ 1           │ 1.01      │ 73.8MB   │ 21.9%      │ 2025-11-13T13:35:43.289Z │ Done   │
 │ 5  │ 4      │ 2     │ 1      │ 0           │ 1.01      │ 118.1MB  │ 301.3%     │ 2025-11-13T13:35:43.393Z │ Done   │
@@ -53,7 +53,7 @@ torc results list <workflow_id> --failed
 ```
 Results for workflow ID 2:
 ╭────┬────────┬───────┬────────┬─────────────┬───────────┬──────────┬────────────┬──────────────────────────┬────────╮
-│ ID │ Job ID │ WF ID │ Run ID │ Return Code │ Exec Time │ Peak Mem │ Peak CPU % │ Completion Time          │ Status │
+│ ID │ Job ID │ WF ID │ Run ID │ Return Code │ Exec Time │ Peak Mem │ Avg CPU % │ Completion Time          │ Status │
 ├────┼────────┼───────┼────────┼─────────────┼───────────┼──────────┼────────────┼──────────────────────────┼────────┤
 │ 4  │ 6      │ 2     │ 1      │ 1           │ 1.01      │ 73.8MB   │ 21.9%      │ 2025-11-13T13:35:43.289Z │ Done   │
 ╰────┴────────┴───────┴────────┴─────────────┴───────────┴──────────┴────────────┴──────────────────────────┴────────╯
