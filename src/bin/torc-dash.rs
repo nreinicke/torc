@@ -27,7 +27,7 @@ use std::process::Command as StdCommand;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use torc::config::TorcConfig;
 use torc::network_utils::find_available_port;
 use tracing::{error, info, warn};
@@ -71,12 +71,15 @@ struct AppState {
     torc_mcp_server_bin: String,
     /// Managed server process (if started by torc-dash)
     managed_server: Mutex<ManagedServer>,
-    /// Anthropic API key for AI chat (resolved from direct or Foundry config)
-    anthropic_api_key: Option<String>,
-    /// Base URL for Claude API (e.g. "https://api.anthropic.com/v1" or Foundry URL)
-    anthropic_base_url: String,
-    /// Auth header name ("x-api-key" for both direct and Foundry)
-    anthropic_auth_header: String,
+    /// Anthropic API key for AI chat (resolved from direct or Foundry config).
+    /// Wrapped in RwLock so it can be set at runtime via the dashboard UI.
+    anthropic_api_key: RwLock<Option<String>>,
+    /// Base URL for Claude API (e.g. "https://api.anthropic.com/v1" or Foundry URL).
+    /// Wrapped in RwLock so it can be changed at runtime via the dashboard UI.
+    anthropic_base_url: RwLock<String>,
+    /// Auth header name ("x-api-key" for both direct and Foundry).
+    /// Wrapped in RwLock so it can be changed at runtime via the dashboard UI.
+    anthropic_auth_header: RwLock<String>,
     /// MCP client connection (lazily initialized)
     mcp_client: Mutex<Option<McpClient>>,
     /// Model to use for AI chat
@@ -505,9 +508,9 @@ async fn main() -> Result<()> {
         torc_server_bin: torc_server_bin.clone(),
         torc_mcp_server_bin: cli.torc_mcp_server_bin.clone(),
         managed_server: Mutex::new(managed_server),
-        anthropic_api_key: resolved_api_key,
-        anthropic_base_url,
-        anthropic_auth_header,
+        anthropic_api_key: RwLock::new(resolved_api_key),
+        anthropic_base_url: RwLock::new(anthropic_base_url),
+        anthropic_auth_header: RwLock::new(anthropic_auth_header),
         mcp_client: Mutex::new(None),
         anthropic_model: cli.anthropic_model.clone(),
     });
@@ -559,6 +562,7 @@ async fn main() -> Result<()> {
         // AI Chat endpoints
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/status", get(chat_status_handler))
+        .route("/api/chat/configure", post(configure_chat_handler))
         // Version endpoint
         .route("/api/version", get(version_handler))
         // User endpoint
@@ -2869,7 +2873,7 @@ struct ChatStatusResponse {
 }
 
 async fn chat_status_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let available = state.anthropic_api_key.is_some();
+    let available = state.anthropic_api_key.read().await.is_some();
     let reason = if !available {
         Some(
             "No API key configured. Set ANTHROPIC_API_KEY or \
@@ -2881,6 +2885,99 @@ async fn chat_status_handler(State(state): State<Arc<AppState>>) -> impl IntoRes
     };
 
     Json(ChatStatusResponse { available, reason })
+}
+
+#[derive(Deserialize)]
+struct ConfigureChatRequest {
+    api_key: String,
+    /// Provider type: "anthropic", "foundry", or "custom"
+    #[serde(default = "default_provider")]
+    provider: String,
+    /// Azure AI Foundry resource name (required when provider = "foundry")
+    #[serde(default)]
+    foundry_resource: Option<String>,
+    /// Custom base URL (required when provider = "custom")
+    #[serde(default)]
+    base_url: Option<String>,
+    /// Custom auth header name (optional, defaults to "x-api-key")
+    #[serde(default)]
+    auth_header: Option<String>,
+}
+
+fn default_provider() -> String {
+    "anthropic".to_string()
+}
+
+/// Configure API key and provider at runtime (stored in memory only for this session).
+async fn configure_chat_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ConfigureChatRequest>,
+) -> impl IntoResponse {
+    validate_same_origin(&headers)
+        .map_err(|status| (status, "Cross-origin requests are not allowed"))?;
+
+    let key = req.api_key.trim().to_string();
+    if key.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "API key must not be empty"));
+    }
+
+    let (base_url, auth_header) = match req.provider.as_str() {
+        "foundry" => {
+            let resource = req
+                .foundry_resource
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((StatusCode::BAD_REQUEST, "Foundry resource name is required"))?;
+            info!(
+                "AI Chat: configured via dashboard UI as Azure AI Foundry (resource={})",
+                resource
+            );
+            (
+                format!("https://{}.services.ai.azure.com/anthropic/v1", resource),
+                "x-api-key".to_string(),
+            )
+        }
+        "custom" => {
+            let url = req
+                .base_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((StatusCode::BAD_REQUEST, "Base URL is required"))?
+                .to_string();
+            let header = req
+                .auth_header
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("x-api-key")
+                .to_string();
+            info!(
+                "AI Chat: configured via dashboard UI as custom endpoint (url={})",
+                url
+            );
+            (url, header)
+        }
+        _ => {
+            // "anthropic" (direct)
+            info!("AI Chat: configured via dashboard UI as direct Anthropic API");
+            (
+                "https://api.anthropic.com/v1".to_string(),
+                "x-api-key".to_string(),
+            )
+        }
+    };
+
+    *state.anthropic_api_key.write().await = Some(key);
+    *state.anthropic_base_url.write().await = base_url;
+    *state.anthropic_auth_header.write().await = auth_header;
+
+    Ok(Json(ChatStatusResponse {
+        available: true,
+        reason: None,
+    }))
 }
 
 /// Ensure the MCP client is connected, spawning the subprocess if needed.
@@ -3011,16 +3108,16 @@ async fn chat_handler(
     validate_same_origin(&headers)
         .map_err(|status| (status, "Cross-origin requests are not allowed"))?;
 
-    let api_key = match &state.anthropic_api_key {
-        Some(key) => key.clone(),
+    let api_key = match state.anthropic_api_key.read().await.clone() {
+        Some(key) => key,
         None => {
             return Err((StatusCode::SERVICE_UNAVAILABLE, "No API key configured"));
         }
     };
 
     let model = state.anthropic_model.clone();
-    let messages_url = format!("{}/messages", state.anthropic_base_url);
-    let auth_header = state.anthropic_auth_header.clone();
+    let messages_url = format!("{}/messages", state.anthropic_base_url.read().await);
+    let auth_header = state.anthropic_auth_header.read().await.clone();
     let workflow_id = req.workflow_id;
     let initial_messages = req.messages;
 

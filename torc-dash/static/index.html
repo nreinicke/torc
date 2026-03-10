@@ -480,6 +480,7 @@
                     <div class="chat-header">
                         <h2>AI Chat <span class="badge-experimental">Experimental</span></h2>
                         <div class="header-actions">
+                            <a class="btn btn-secondary btn-sm" href="https://natlabrockies.github.io/torc/v0.20.4/core/monitoring/dashboard.html#ai-chat-tab" target="_blank" rel="noopener" title="AI Chat documentation">?</a>
                             <button class="btn btn-secondary btn-sm" id="chat-clear-btn">Clear</button>
                         </div>
                     </div>
@@ -488,6 +489,45 @@
                             <p><strong>Torc AI Assistant</strong></p>
                             <p>Ask questions about your workflows, job status, logs, and more.</p>
                             <p class="chat-examples">Try: "Help me create a workflow" or "Show me the failed jobs"</p>
+                        </div>
+                    </div>
+                    <!-- Setup overlay shown when no API key is configured -->
+                    <div class="chat-setup" id="chat-setup" style="display:none">
+                        <div class="chat-setup-content">
+                            <div class="chat-setup-icon">&#128172;</div>
+                            <h3>Set up AI Chat</h3>
+                            <p>AI Chat uses Claude to answer questions about your workflows, job status, and more.</p>
+                            <div class="chat-setup-provider">
+                                <label for="chat-provider-select">Provider</label>
+                                <select id="chat-provider-select" class="chat-setup-select">
+                                    <option value="anthropic">Anthropic (Direct API)</option>
+                                    <option value="foundry">Azure AI Foundry</option>
+                                    <option value="custom">Custom Endpoint</option>
+                                </select>
+                            </div>
+                            <div class="chat-setup-field">
+                                <label for="chat-api-key-input">API Key</label>
+                                <input type="password" id="chat-api-key-input" class="chat-input" placeholder="sk-ant-..." aria-label="API key">
+                            </div>
+                            <div class="chat-setup-field" id="chat-foundry-field" style="display:none">
+                                <label for="chat-foundry-resource">Foundry Resource Name</label>
+                                <input type="text" id="chat-foundry-resource" class="chat-input" placeholder="my-resource" aria-label="Azure AI Foundry resource name">
+                                <small>URL: https://{resource}.services.ai.azure.com/anthropic/v1</small>
+                            </div>
+                            <div class="chat-setup-field" id="chat-custom-url-field" style="display:none">
+                                <label for="chat-custom-base-url">Base URL</label>
+                                <input type="text" id="chat-custom-base-url" class="chat-input" placeholder="https://my-proxy.example.com/v1" aria-label="Custom base URL">
+                            </div>
+                            <div class="chat-setup-field" id="chat-custom-header-field" style="display:none">
+                                <label for="chat-custom-auth-header">Auth Header <small>(optional, default: x-api-key)</small></label>
+                                <input type="text" id="chat-custom-auth-header" class="chat-input" placeholder="x-api-key" aria-label="Custom auth header name">
+                            </div>
+                            <div class="chat-setup-actions">
+                                <button class="btn btn-primary" id="chat-api-key-submit">Connect</button>
+                            </div>
+                            <p id="chat-setup-error" class="chat-setup-error" style="display:none"></p>
+                            <p class="chat-setup-note">Credentials are stored in memory only for this session. For persistent configuration, use CLI flags or environment variables.</p>
+                            <p class="chat-setup-docs"><a href="https://natlabrockies.github.io/torc/v0.20.4/core/monitoring/dashboard.html#ai-chat-tab" target="_blank" rel="noopener">View documentation &rarr;</a></p>
                         </div>
                     </div>
                     <div class="chat-input-area">

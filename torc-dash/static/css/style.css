@@ -3272,3 +3272,115 @@ kbd {
     opacity: 0.4;
     pointer-events: none;
 }
+
+/* AI Chat Setup Overlay */
+
+.chat-setup {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+}
+
+.chat-setup-content {
+    max-width: 460px;
+    text-align: center;
+}
+
+.chat-setup-icon {
+    font-size: 3em;
+    margin-bottom: 12px;
+}
+
+.chat-setup-content h3 {
+    margin: 0 0 12px 0;
+    font-size: 1.3em;
+}
+
+.chat-setup-content p {
+    color: var(--text-secondary);
+    font-size: 0.95em;
+    margin: 8px 0;
+    line-height: 1.5;
+}
+
+.chat-setup-provider {
+    margin: 16px 0 8px 0;
+    text-align: left;
+}
+
+.chat-setup-provider label,
+.chat-setup-field label {
+    display: block;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.chat-setup-field {
+    margin: 10px 0;
+    text-align: left;
+}
+
+.chat-setup-field small {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    margin-top: 4px;
+}
+
+.chat-setup-field .chat-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.chat-setup-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.95em;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.chat-setup-actions {
+    margin: 16px 0 8px 0;
+}
+
+.chat-setup-error {
+    color: var(--danger-color) !important;
+    font-size: 0.9em !important;
+}
+
+.chat-setup-note {
+    font-size: 0.85em !important;
+    color: var(--text-tertiary, var(--text-secondary)) !important;
+    margin-top: 16px !important;
+}
+
+.chat-setup-note code {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.9em;
+}
+
+.chat-setup-docs {
+    margin-top: 12px !important;
+}
+
+.chat-setup-docs a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.chat-setup-docs a:hover {
+    text-decoration: underline;
+}

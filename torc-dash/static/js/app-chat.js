@@ -41,23 +41,159 @@ Object.assign(TorcDashboard.prototype, {
         if (stopBtn) {
             stopBtn.addEventListener('click', () => this.stopChat());
         }
+
+        // API key setup form
+        const apiKeySubmit = document.getElementById('chat-api-key-submit');
+        const apiKeyInput = document.getElementById('chat-api-key-input');
+        if (apiKeySubmit) {
+            apiKeySubmit.addEventListener('click', () => this.submitApiKey());
+        }
+        if (apiKeyInput) {
+            apiKeyInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.submitApiKey();
+                }
+            });
+        }
+
+        // Provider selector
+        const providerSelect = document.getElementById('chat-provider-select');
+        if (providerSelect) {
+            providerSelect.addEventListener('change', () => this.updateProviderFields());
+        }
+    },
+
+    updateProviderFields() {
+        const provider = document.getElementById('chat-provider-select')?.value || 'anthropic';
+        const foundryField = document.getElementById('chat-foundry-field');
+        const customUrlField = document.getElementById('chat-custom-url-field');
+        const customHeaderField = document.getElementById('chat-custom-header-field');
+        const apiKeyInput = document.getElementById('chat-api-key-input');
+
+        // Hide all provider-specific fields
+        if (foundryField) foundryField.style.display = 'none';
+        if (customUrlField) customUrlField.style.display = 'none';
+        if (customHeaderField) customHeaderField.style.display = 'none';
+
+        // Show fields for selected provider and update placeholder
+        if (provider === 'foundry') {
+            if (foundryField) foundryField.style.display = '';
+            if (apiKeyInput) apiKeyInput.placeholder = 'Foundry API key';
+        } else if (provider === 'custom') {
+            if (customUrlField) customUrlField.style.display = '';
+            if (customHeaderField) customHeaderField.style.display = '';
+            if (apiKeyInput) apiKeyInput.placeholder = 'API key';
+        } else {
+            if (apiKeyInput) apiKeyInput.placeholder = 'sk-ant-...';
+        }
     },
 
     async checkChatAvailability() {
         try {
             const response = await fetch('/api/chat/status');
             const data = await response.json();
+
+            // Always keep the nav item enabled so users can discover the feature
             const navItem = document.querySelector('.nav-item[data-tab="chat"]');
             if (navItem) {
-                if (!data.available) {
-                    navItem.title = data.reason || 'Chat not available';
-                    navItem.classList.add('nav-item-disabled');
-                } else {
-                    navItem.classList.remove('nav-item-disabled');
-                }
+                navItem.classList.remove('nav-item-disabled');
+                navItem.title = '';
+            }
+
+            if (!data.available) {
+                this.showChatSetup();
+            } else {
+                this.hideChatSetup();
             }
         } catch (e) {
             console.debug('Chat status check failed:', e);
+        }
+    },
+
+    showChatSetup() {
+        const setup = document.getElementById('chat-setup');
+        const inputArea = document.querySelector('.chat-input-area');
+        const messages = document.getElementById('chat-messages');
+        if (setup) setup.style.display = 'flex';
+        if (inputArea) inputArea.style.display = 'none';
+        if (messages) messages.style.display = 'none';
+    },
+
+    hideChatSetup() {
+        const setup = document.getElementById('chat-setup');
+        const inputArea = document.querySelector('.chat-input-area');
+        const messages = document.getElementById('chat-messages');
+        if (setup) setup.style.display = 'none';
+        if (inputArea) inputArea.style.display = '';
+        if (messages) messages.style.display = '';
+    },
+
+    async submitApiKey() {
+        const input = document.getElementById('chat-api-key-input');
+        const errorEl = document.getElementById('chat-setup-error');
+        const submitBtn = document.getElementById('chat-api-key-submit');
+        if (!input) return;
+
+        const key = input.value.trim();
+        if (!key) {
+            if (errorEl) {
+                errorEl.textContent = 'Please enter an API key.';
+                errorEl.style.display = '';
+            }
+            return;
+        }
+
+        const provider = document.getElementById('chat-provider-select')?.value || 'anthropic';
+        const body = { api_key: key, provider };
+
+        if (provider === 'foundry') {
+            body.foundry_resource = document.getElementById('chat-foundry-resource')?.value?.trim() || '';
+            if (!body.foundry_resource) {
+                if (errorEl) {
+                    errorEl.textContent = 'Please enter a Foundry resource name.';
+                    errorEl.style.display = '';
+                }
+                return;
+            }
+        } else if (provider === 'custom') {
+            body.base_url = document.getElementById('chat-custom-base-url')?.value?.trim() || '';
+            if (!body.base_url) {
+                if (errorEl) {
+                    errorEl.textContent = 'Please enter a base URL.';
+                    errorEl.style.display = '';
+                }
+                return;
+            }
+            const authHeader = document.getElementById('chat-custom-auth-header')?.value?.trim();
+            if (authHeader) body.auth_header = authHeader;
+        }
+
+        if (submitBtn) submitBtn.disabled = true;
+        if (errorEl) errorEl.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/chat/configure', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || 'Failed to configure API key');
+            }
+
+            // Clear the input and show the chat
+            input.value = '';
+            this.hideChatSetup();
+        } catch (e) {
+            if (errorEl) {
+                errorEl.textContent = e.message;
+                errorEl.style.display = '';
+            }
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
         }
     },
 
