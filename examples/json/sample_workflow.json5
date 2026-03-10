@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "sample_data_processing_workflow",
-  "user": "testuser",
+
   "description": "A sample workflow that demonstrates data processing with multiple jobs",
 
   // Job definitions

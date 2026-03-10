@@ -3,7 +3,7 @@
 // Compare this file to hundred_jobs_workflow.kdl - same result, 90% less code!
 
 name "hundred_jobs_parameterized"
-user "testuser"
+
 description "A workflow with 100 independent jobs using parameterization"
 
 resource_requirements "work" {

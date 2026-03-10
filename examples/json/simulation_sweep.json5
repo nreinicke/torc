@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "simulation_sweep",
-  "user": "scientist",
+
   "description": "Molecular dynamics simulations across temperature and pressure ranges",
 
   // Job definitions

@@ -10,7 +10,7 @@ The `resource_monitor` section in workflow specifications accepts the following 
 | ------------------------- | ------- | ----------- | -------------------------------- |
 | `enabled`                 | boolean | `true`      | Enable or disable monitoring     |
 | `granularity`             | string  | `"summary"` | `"summary"` or `"time_series"`   |
-| `sample_interval_seconds` | integer | `5`         | Seconds between resource samples |
+| `sample_interval_seconds` | integer | `10`        | Seconds between resource samples |
 | `generate_plots`          | boolean | `false`     | Reserved for future use          |
 
 ### Granularity Modes

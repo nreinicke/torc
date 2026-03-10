@@ -2,7 +2,7 @@
 // Demonstrates a multi-stage data pipeline with automated Slurm node scheduling
 
 name "Data Pipeline with Auto-Scheduling"
-user "datauser"
+
 description "Multi-stage pipeline with workflow actions for automated resource management"
 
 // Resource requirements

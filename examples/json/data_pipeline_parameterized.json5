@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "data_pipeline",
-  "user": "datauser",
+
   "description": "Multi-stage data processing pipeline for multiple datasets",
 
   // Job definitions

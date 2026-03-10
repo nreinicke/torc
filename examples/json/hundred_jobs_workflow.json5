@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "hundred_jobs_workflow",
-  "user": "testuser",
+
   "description": "A workflow with 100 independent jobs that each echo hello",
 
   // Job definitions

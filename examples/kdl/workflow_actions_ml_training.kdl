@@ -4,7 +4,7 @@
 // see the YAML/JSON5 version which uses parameter expansion.
 
 name "ML Training with Auto-Scaling"
-user "ml_researcher"
+
 description "Demonstrates on_jobs_ready action for dynamic resource allocation"
 
 // Resource requirements

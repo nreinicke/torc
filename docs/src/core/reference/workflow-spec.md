@@ -241,7 +241,7 @@ Configuration for resource usage monitoring.
 | ------------------------- | ----------------------------------------- | ----------- | -------------------------------------- |
 | `enabled`                 | boolean                                   | `false`     | Enable resource monitoring             |
 | `granularity`             | [MonitorGranularity](#monitorgranularity) | `"Summary"` | Level of detail for metrics collection |
-| `sample_interval_seconds` | integer                                   | `5`         | Sampling interval in seconds           |
+| `sample_interval_seconds` | integer                                   | `10`        | Sampling interval in seconds           |
 | `generate_plots`          | boolean                                   | `false`     | Generate resource usage plots          |
 
 ## MonitorGranularity

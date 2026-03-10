@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "hyperparameter_sweep",
-  "user": "mluser",
+
   "description": "Grid search over learning rate, batch size, and optimizer",
 
   // Job definitions

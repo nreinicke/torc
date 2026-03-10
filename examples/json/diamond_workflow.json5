@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "diamond_workflow",
-  "user": "test_user",
+
   "description": "A diamond-shaped workflow demonstrating fan-out and fan-in job dependencies",
 
   // Job definitions

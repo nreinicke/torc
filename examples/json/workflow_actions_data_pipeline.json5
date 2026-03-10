@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "Data Processing Pipeline with Actions",
-  "user": "data_engineer",
+
   "description": "Demonstrates multiple action types for different job groups",
 
   // Job definitions

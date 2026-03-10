@@ -18,7 +18,7 @@
 //     f6
 
 name "diamond_workflow"
-user "test_user"
+
 description "A diamond-shaped workflow demonstrating fan-out and fan-in job dependencies"
 
 // File definitions - file paths are defined once here

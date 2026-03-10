@@ -297,7 +297,7 @@ name: my_workflow
 resource_monitor_config:
   enabled: true
   granularity: time_series
-  sample_interval_seconds: 5
+  sample_interval_seconds: 10
 ```
 
 The `collect-logs` command retrieves these databases along with job logs.

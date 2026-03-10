@@ -22,8 +22,7 @@ slurm_defaults:
 resource_monitor:
   enabled: true
   granularity: "time_series"  # Options: "summary" or "time_series"
-  sample_interval_seconds: 5   # Sample every 5 seconds
-  generate_plots: false         # Not yet implemented
+  sample_interval_seconds: 10  # Sample every 10 seconds
 
 # Three independent jobs that run concurrently
 jobs:

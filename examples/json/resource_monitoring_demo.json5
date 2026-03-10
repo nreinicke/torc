@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "resource_monitoring_demo",
-  "user": "demo_user",
+
   "description": "Demonstrates resource monitoring with CPU and memory intensive Python jobs",
 
   // Default Slurm parameters applied to all schedulers
@@ -54,8 +54,7 @@
     "resource_monitor": {
     "enabled": true,
     "granularity": "time_series",
-    "sample_interval_seconds": 5,
-    "generate_plots": false
+    "sample_interval_seconds": 10
   },
 
 }

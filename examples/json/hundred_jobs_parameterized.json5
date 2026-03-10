@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "hundred_jobs_parameterized",
-  "user": "testuser",
+
   "description": "A workflow with 100 independent jobs using parameterization",
 
   // Job definitions

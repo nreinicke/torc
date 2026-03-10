@@ -2,7 +2,7 @@
 // Note: This is a simplified version with 3 work jobs. The full YAML/JSON5 version has 10 work jobs.
 
 name "slurm_staged_pipeline"
-user "pipeline_user"
+
 description "Multi-stage Slurm pipeline with automated scheduling and resource monitoring"
 
 // Slurm schedulers for different pipeline stages
@@ -52,9 +52,8 @@ resource_requirements "postprocess_resources" {
 // Enable time-series resource monitoring
 resource_monitor {
     enabled #true
-    sample_interval_seconds 5
+    sample_interval_seconds 10
     granularity "time_series"
-    generate_plots #false
 }
 
 // Input and output files

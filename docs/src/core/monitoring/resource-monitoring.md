@@ -14,7 +14,7 @@ name: "My Workflow"
 resource_monitor:
   enabled: true
   granularity: "summary"       # or "time_series"
-  sample_interval_seconds: 5
+  sample_interval_seconds: 10
 
 jobs:
   # ... your jobs

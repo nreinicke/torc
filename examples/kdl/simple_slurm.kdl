@@ -2,7 +2,7 @@
 // Demonstrates scheduler actions for different workflow stages
 
 name "Simple Workflow with Actions"
-user "demo"
+
 description "Demonstrates scheduler actions for different workflow stages"
 
 // Resource requirements

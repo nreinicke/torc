@@ -1,7 +1,7 @@
 {
   // Workflow metadata
   "name": "slurm_staged_pipeline",
-  "user": "pipeline_user",
+
   "description": "Multi-stage Slurm pipeline with automated scheduling and resource monitoring",
 
   // Job definitions
@@ -349,9 +349,8 @@
   
     "resource_monitor": {
     "enabled": true,
-    "sample_interval_seconds": 5,
+    "sample_interval_seconds": 10,
     "granularity": "time_series",
-    "generate_plots": false,
     "metrics": [
       "cpu_percent",
       "memory_bytes"
