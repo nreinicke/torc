@@ -4,6 +4,39 @@
  */
 
 Object.assign(TorcDashboard.prototype, {
+    /**
+     * Generate a human-readable message from event data.
+     * Tries various fields that might contain meaningful info.
+     */
+    getEventMessage(event) {
+        const data = event.data;
+        if (!data) return '-';
+
+        // If there's an explicit message field, use it
+        if (data.message) return data.message;
+
+        // For job events, show job name
+        if (data.job_name) {
+            return `Job: ${data.job_name}`;
+        }
+
+        // For action events
+        if (data.action) {
+            const parts = [data.action];
+            if (data.user) parts.push(`by ${data.user}`);
+            return parts.join(' ');
+        }
+
+        // For category-based events
+        if (data.category && data.type) {
+            return `${data.category}: ${data.type}`;
+        }
+
+        // Fallback: show truncated JSON
+        const jsonStr = JSON.stringify(data);
+        return this.truncate(jsonStr, 60);
+    },
+
     renderJobsTable(jobs) {
         const controls = this.renderTableControls('jobs');
         const count = `<span class="table-count">${jobs.length} job${jobs.length !== 1 ? 's' : ''}</span>`;
@@ -192,7 +225,7 @@ Object.assign(TorcDashboard.prototype, {
                                 <tr class="event-row clickable" data-event-index="${index}">
                                     <td><code>${event.id ?? '-'}</code></td>
                                     <td>${this.formatTimestamp(event.timestamp)}</td>
-                                    <td>${this.escapeHtml(event.data?.message || '')}</td>
+                                    <td>${this.escapeHtml(this.getEventMessage(event))}</td>
                                 </tr>
                             `).join('')}
                         </tbody>
