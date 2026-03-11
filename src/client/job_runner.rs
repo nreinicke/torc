@@ -1047,9 +1047,11 @@ impl JobRunner {
             )
         });
 
-        // Check if we should try to recover a failed job
-        if final_result.status == JobStatus::Failed
-            && let Some((job_name, attempt_id, failure_handler_id)) = &job_info
+        // Check if we should try to recover a failed or terminated job
+        if matches!(
+            final_result.status,
+            JobStatus::Failed | JobStatus::Terminated
+        ) && let Some((job_name, attempt_id, failure_handler_id)) = &job_info
         {
             let return_code = final_result.return_code;
             // Try to recover the job if it has a failure handler
