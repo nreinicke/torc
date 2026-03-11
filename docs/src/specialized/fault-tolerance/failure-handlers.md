@@ -19,7 +19,8 @@ By the end of this tutorial, you will:
 
 ## What Are Failure Handlers?
 
-Failure handlers provide per-job automatic retry logic based on exit codes. Unlike
+Failure handlers provide per-job automatic retry logic based on exit codes. They apply to both
+failed jobs and terminated jobs (e.g., Slurm timeouts with exit code 152). Unlike
 `torc watch --recover` which applies workflow-level recovery heuristics, failure handlers let you
 define:
 
@@ -58,7 +59,7 @@ jobs:
 
 ## How It Works
 
-When a job with a failure handler fails:
+When a job with a failure handler fails or is terminated:
 
 1. JobRunner checks the exit code against handler rules
 2. If a matching rule is found and `attempt_id < max_retries`:
@@ -69,7 +70,7 @@ When a job with a failure handler fails:
 
 ```mermaid
 flowchart TD
-    fail["Job Fails<br/>(exit code 10)"]
+    fail["Job Fails/Terminates<br/>(exit code 10)"]
     match{"Matching rule<br/>for exit code?"}
     retry{"attempt_id<br/>< max_retries?"}
     recovery["Run recovery script"]
@@ -240,6 +241,33 @@ failure_handlers:
         max_retries: 2
 ```
 
+## Handling Slurm Timeouts
+
+When a Slurm job exceeds its walltime, it is terminated with exit code 152. You can use a failure
+handler to automatically retry these jobs:
+
+```yaml
+failure_handlers:
+  - name: timeout_recovery
+    rules:
+      - exit_codes: [152] # Slurm TIMEOUT
+        max_retries: 2
+
+jobs:
+  - name: long_running_job
+    command: ./compute.sh
+    failure_handler: timeout_recovery
+```
+
+This is useful when:
+
+- Jobs have variable runtime and occasionally exceed walltime
+- You want to retry with a different allocation that has more time
+- Combined with `--auto-schedule` to automatically request new Slurm allocations
+
+**Note:** Exit code 152 is only set when `sacct` reports `State=TIMEOUT`. User-initiated
+cancellations via `scancel` result in a different exit code (143) and won't match this rule.
+
 ## Log Files
 
 Each attempt gets separate log files, preserving history across retries:
@@ -255,13 +283,13 @@ The `a{N}` suffix indicates the attempt number.
 
 ## Comparison with `torc watch --recover`
 
-| Feature           | Failure Handlers            | `torc watch --recover`   |
-| ----------------- | --------------------------- | ------------------------ |
-| **Scope**         | Per-job, exit-code-specific | Workflow-wide            |
-| **Triggers**      | Specific exit codes         | OOM, timeout detection   |
-| **Recovery**      | Custom scripts              | Resource adjustment      |
-| **Timing**        | Immediate (during run)      | After workflow completes |
-| **Configuration** | In workflow spec            | Command-line options     |
+| Feature           | Failure Handlers                | `torc watch --recover`   |
+| ----------------- | ------------------------------- | ------------------------ |
+| **Scope**         | Per-job, exit-code-specific     | Workflow-wide            |
+| **Triggers**      | Exit codes (including timeouts) | OOM, timeout detection   |
+| **Recovery**      | Custom scripts                  | Resource adjustment      |
+| **Timing**        | Immediate (during run)          | After workflow completes |
+| **Configuration** | In workflow spec                | Command-line options     |
 
 **Use both together for comprehensive recovery:**
 

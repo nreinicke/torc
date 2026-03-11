@@ -7,7 +7,8 @@ For a user-focused tutorial, see
 ## Overview
 
 Failure handlers provide per-job automatic retry logic based on exit codes. They allow workflows to
-recover from transient failures without manual intervention or workflow-level recovery heuristics.
+recover from transient failures and terminations (e.g., Slurm timeouts) without manual intervention
+or workflow-level recovery heuristics.
 
 ```mermaid
 flowchart LR
@@ -131,8 +132,8 @@ erDiagram
 
 ## Rule Matching
 
-Failure handler rules are stored as a JSON array. When a job fails, rules are evaluated in a
-specific order to find a match.
+Failure handler rules are stored as a JSON array. When a job fails or is terminated (e.g., due to a
+Slurm timeout with exit code 152), rules are evaluated in a specific order to find a match.
 
 ### Rule Structure
 
@@ -151,7 +152,7 @@ Rules are evaluated with **specific matches taking priority over catch-all rules
 
 ```mermaid
 flowchart TD
-    START["Job fails with exit code X"]
+    START["Job fails or terminates<br/>with exit code X"]
     SPECIFIC{"Find rule where<br/>exit_codes contains X?"}
     CATCHALL{"Find rule where<br/>match_all_exit_codes = true?"}
     FOUND["Rule matched"]
@@ -477,7 +478,7 @@ pub enum RecoveryOutcome {
 
 ```mermaid
 flowchart TD
-    FAIL["Job fails"]
+    FAIL["Job fails or terminates"]
     TRY["try_recover_job()"]
     RETRIED{"Outcome?"}
     READY["Status: ready<br/>attempt_id += 1"]
