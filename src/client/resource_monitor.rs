@@ -72,13 +72,14 @@ impl JobMetrics {
     const MAX_PLAUSIBLE_CPU_PERCENT: f64 = 100_000.0;
 
     fn add_sample(&mut self, cpu_percent: f64, memory_bytes: u64) {
-        // Sanitize: reject garbage CPU values (NaN, infinity, or unreasonably high).
-        let cpu_percent =
-            if cpu_percent.is_finite() && cpu_percent <= Self::MAX_PLAUSIBLE_CPU_PERCENT {
-                cpu_percent
-            } else {
-                0.0
-            };
+        // Sanitize: reject garbage CPU values (NaN, infinity, negative, or unreasonably high).
+        let cpu_percent = if cpu_percent.is_finite()
+            && (0.0..=Self::MAX_PLAUSIBLE_CPU_PERCENT).contains(&cpu_percent)
+        {
+            cpu_percent
+        } else {
+            0.0
+        };
 
         self.sample_count += 1;
         self.total_cpu_percent += cpu_percent;
