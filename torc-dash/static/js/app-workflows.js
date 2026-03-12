@@ -182,7 +182,7 @@ Object.assign(TorcDashboard.prototype, {
 
             const currentValue = select.value;
             const options = workflows.map(w =>
-                `<option value="${w.id}">${this.escapeHtml(w.name || w.id)}</option>`
+                `<option value="${w.id}">${this.escapeHtml(w.name || 'Unnamed')} (${w.id})</option>`
             ).join('');
 
             if (id === 'events-workflow-selector') {

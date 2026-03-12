@@ -9,6 +9,7 @@ Object.assign(TorcDashboard.prototype, {
     setupDebuggingTab() {
         document.getElementById('debug-workflow-selector')?.addEventListener('change', (e) => {
             this.selectedWorkflowId = e.target.value;
+            this.clearDebuggingState();
         });
 
         document.getElementById('btn-generate-report')?.addEventListener('click', () => {
@@ -31,6 +32,55 @@ Object.assign(TorcDashboard.prototype, {
         document.getElementById('btn-slurm-sacct')?.addEventListener('click', () => {
             this.collectSlurmSacct();
         });
+    },
+
+    clearDebuggingState() {
+        // Clear job debugging state
+        this.debugJobs = [];
+        this.selectedDebugJob = null;
+
+        // Clear the jobs table
+        const tableContainer = document.getElementById('debug-jobs-table-container');
+        if (tableContainer) {
+            tableContainer.innerHTML = '<div class="placeholder-message">Click "Generate Report" to analyze jobs</div>';
+        }
+
+        // Clear job count
+        const jobCount = document.getElementById('debug-job-count');
+        if (jobCount) jobCount.textContent = '';
+
+        // Clear selected job info
+        const infoEl = document.getElementById('debug-selected-job-info');
+        if (infoEl) {
+            infoEl.innerHTML = 'Select a job from the table above';
+            infoEl.classList.add('placeholder-message');
+        }
+
+        // Hide log tabs and viewer
+        const logTabs = document.getElementById('log-tabs');
+        if (logTabs) logTabs.style.display = 'none';
+
+        const logViewer = document.getElementById('log-viewer');
+        if (logViewer) logViewer.style.display = 'none';
+
+        // Clear log content
+        const logPath = document.getElementById('log-path');
+        if (logPath) logPath.textContent = '';
+
+        const logContent = document.getElementById('log-content');
+        if (logContent) logContent.textContent = '';
+
+        // Clear Slurm analysis results
+        const slurmLogsResults = document.getElementById('slurm-logs-results');
+        if (slurmLogsResults) {
+            slurmLogsResults.innerHTML = '<div class="placeholder-message">Click "Analyze Slurm Logs" to scan for issues</div>';
+        }
+
+        // Clear Slurm sacct results
+        const slurmSacctResults = document.getElementById('slurm-sacct-results');
+        if (slurmSacctResults) {
+            slurmSacctResults.innerHTML = '<div class="placeholder-message">Click "Collect Sacct" to gather accounting data</div>';
+        }
     },
 
     async generateDebugReport() {

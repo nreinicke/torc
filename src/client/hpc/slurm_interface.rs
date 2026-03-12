@@ -431,8 +431,8 @@ impl HpcInterface for SlurmInterface {
         // Use new_with_specifics to only refresh memory, avoiding user enumeration
         // which can crash on HPC systems with large LDAP user databases
         let sys = System::new_with_specifics(RefreshKind::new().with_memory());
-        // sysinfo::System::total_memory() returns KiB; convert KiB → GiB with / (1024^2)
-        sys.total_memory() as f64 / (1024.0 * 1024.0)
+        // sysinfo::System::total_memory() returns bytes; convert to GiB
+        sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0)
     }
 
     fn get_node_id(&self) -> String {

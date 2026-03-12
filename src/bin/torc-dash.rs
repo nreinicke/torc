@@ -2241,9 +2241,9 @@ async fn cli_slurm_parse_logs_handler(
         "json",
         "slurm",
         "parse-logs",
-        &workflow_id_str,
-        "--output-dir",
         &req.output_dir,
+        "--workflow-id",
+        &workflow_id_str,
     ];
 
     if req.errors_only {
