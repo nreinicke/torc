@@ -23,7 +23,7 @@
         use_pending_failed=false,
         enable_ro_crate=false,
         status_id=nothing,
-        slurm_config=nothing,
+        execution_config=nothing,
     )
 
     - id::Int64
@@ -44,7 +44,7 @@
     - use_pending_failed::Bool : Use PendingFailed status for failed jobs (enables AI-assisted recovery)
     - enable_ro_crate::Bool : When true, automatically create RO-Crate entities for workflow files. Input files get entities during initialization; output files get entities on job completion.
     - status_id::Int64
-    - slurm_config::String : JSON-encoded blob of Slurm configuration options for the workflow. May include fields such as limit_resources, use_srun, srun_termination_signal, and enable_cpu_bind. Stored as a JSON string to allow flexible, forward-compatible configuration.
+    - execution_config::String : JSON-encoded execution configuration controlling mode (direct/slurm/auto) and related settings such as limit_resources, termination_signal, sigterm_lead_seconds, sigkill_headroom_seconds, timeout_exit_code, oom_exit_code, srun_termination_signal, and enable_cpu_bind. The server stores this without interpretation; only the client deserializes it.
 """
 Base.@kwdef mutable struct WorkflowModel <: OpenAPI.APIModel
     id::Union{Nothing, Int64} = nothing
@@ -65,16 +65,16 @@ Base.@kwdef mutable struct WorkflowModel <: OpenAPI.APIModel
     use_pending_failed::Union{Nothing, Bool} = false
     enable_ro_crate::Union{Nothing, Bool} = false
     status_id::Union{Nothing, Int64} = nothing
-    slurm_config::Union{Nothing, String} = nothing
+    execution_config::Union{Nothing, String} = nothing
 
-    function WorkflowModel(id, name, user, description, timestamp, project, metadata, compute_node_expiration_buffer_seconds, compute_node_wait_for_new_jobs_seconds, compute_node_ignore_workflow_completion, compute_node_wait_for_healthy_database_minutes, compute_node_min_time_for_new_jobs_seconds, jobs_sort_method, resource_monitor_config, slurm_defaults, use_pending_failed, enable_ro_crate, status_id, slurm_config, )
-        o = new(id, name, user, description, timestamp, project, metadata, compute_node_expiration_buffer_seconds, compute_node_wait_for_new_jobs_seconds, compute_node_ignore_workflow_completion, compute_node_wait_for_healthy_database_minutes, compute_node_min_time_for_new_jobs_seconds, jobs_sort_method, resource_monitor_config, slurm_defaults, use_pending_failed, enable_ro_crate, status_id, slurm_config, )
+    function WorkflowModel(id, name, user, description, timestamp, project, metadata, compute_node_expiration_buffer_seconds, compute_node_wait_for_new_jobs_seconds, compute_node_ignore_workflow_completion, compute_node_wait_for_healthy_database_minutes, compute_node_min_time_for_new_jobs_seconds, jobs_sort_method, resource_monitor_config, slurm_defaults, use_pending_failed, enable_ro_crate, status_id, execution_config, )
+        o = new(id, name, user, description, timestamp, project, metadata, compute_node_expiration_buffer_seconds, compute_node_wait_for_new_jobs_seconds, compute_node_ignore_workflow_completion, compute_node_wait_for_healthy_database_minutes, compute_node_min_time_for_new_jobs_seconds, jobs_sort_method, resource_monitor_config, slurm_defaults, use_pending_failed, enable_ro_crate, status_id, execution_config, )
         OpenAPI.validate_properties(o)
         return o
     end
 end # type WorkflowModel
 
-const _property_types_WorkflowModel = Dict{Symbol,String}(Symbol("id")=>"Int64", Symbol("name")=>"String", Symbol("user")=>"String", Symbol("description")=>"String", Symbol("timestamp")=>"String", Symbol("project")=>"String", Symbol("metadata")=>"String", Symbol("compute_node_expiration_buffer_seconds")=>"Int64", Symbol("compute_node_wait_for_new_jobs_seconds")=>"Int64", Symbol("compute_node_ignore_workflow_completion")=>"Bool", Symbol("compute_node_wait_for_healthy_database_minutes")=>"Int64", Symbol("compute_node_min_time_for_new_jobs_seconds")=>"Int64", Symbol("jobs_sort_method")=>"JobsSortMethod", Symbol("resource_monitor_config")=>"String", Symbol("slurm_defaults")=>"String", Symbol("use_pending_failed")=>"Bool", Symbol("enable_ro_crate")=>"Bool", Symbol("status_id")=>"Int64", Symbol("slurm_config")=>"String", )
+const _property_types_WorkflowModel = Dict{Symbol,String}(Symbol("id")=>"Int64", Symbol("name")=>"String", Symbol("user")=>"String", Symbol("description")=>"String", Symbol("timestamp")=>"String", Symbol("project")=>"String", Symbol("metadata")=>"String", Symbol("compute_node_expiration_buffer_seconds")=>"Int64", Symbol("compute_node_wait_for_new_jobs_seconds")=>"Int64", Symbol("compute_node_ignore_workflow_completion")=>"Bool", Symbol("compute_node_wait_for_healthy_database_minutes")=>"Int64", Symbol("compute_node_min_time_for_new_jobs_seconds")=>"Int64", Symbol("jobs_sort_method")=>"JobsSortMethod", Symbol("resource_monitor_config")=>"String", Symbol("slurm_defaults")=>"String", Symbol("use_pending_failed")=>"Bool", Symbol("enable_ro_crate")=>"Bool", Symbol("status_id")=>"Int64", Symbol("execution_config")=>"String", )
 OpenAPI.property_type(::Type{ WorkflowModel }, name::Symbol) = Union{Nothing,eval(Base.Meta.parse(_property_types_WorkflowModel[name]))}
 
 function OpenAPI.check_required(o::WorkflowModel)
@@ -102,7 +102,7 @@ function OpenAPI.validate_properties(o::WorkflowModel)
     OpenAPI.validate_property(WorkflowModel, Symbol("use_pending_failed"), o.use_pending_failed)
     OpenAPI.validate_property(WorkflowModel, Symbol("enable_ro_crate"), o.enable_ro_crate)
     OpenAPI.validate_property(WorkflowModel, Symbol("status_id"), o.status_id)
-    OpenAPI.validate_property(WorkflowModel, Symbol("slurm_config"), o.slurm_config)
+    OpenAPI.validate_property(WorkflowModel, Symbol("execution_config"), o.execution_config)
 end
 
 function OpenAPI.validate_property(::Type{ WorkflowModel }, name::Symbol, val)

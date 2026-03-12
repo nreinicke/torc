@@ -163,6 +163,12 @@ EXAMPLES:
         /// Output directory for jobs
         #[arg(short, long)]
         output_dir: Option<PathBuf>,
+        /// Time limit for execution (ISO8601 duration, e.g., "PT1H" for 1 hour)
+        #[arg(long)]
+        time_limit: Option<String>,
+        /// End time for execution (ISO8601 timestamp, e.g., "2024-03-14T15:00:00Z")
+        #[arg(long)]
+        end_time: Option<String>,
         /// Skip validation checks (e.g., scheduler node requirements). Use with caution.
         #[arg(long, default_value = "false")]
         skip_checks: bool,

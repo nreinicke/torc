@@ -176,6 +176,8 @@ fn main() {
             num_gpus,
             poll_interval,
             output_dir,
+            time_limit,
+            end_time,
             skip_checks,
         } => {
             let workflow_id = if is_spec_file(workflow_spec_or_id) {
@@ -225,8 +227,8 @@ fn main() {
                     .unwrap_or_else(|| run_config.output_dir.clone()),
                 poll_interval: poll_interval.unwrap_or(run_config.poll_interval),
                 max_parallel_jobs: max_parallel_jobs.or(run_config.max_parallel_jobs),
-                time_limit: None,
-                end_time: None,
+                time_limit: time_limit.clone(),
+                end_time: end_time.clone(),
                 num_cpus: num_cpus.or(run_config.num_cpus),
                 memory_gb: memory_gb.or(run_config.memory_gb),
                 num_gpus: num_gpus.or(run_config.num_gpus),

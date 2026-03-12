@@ -9895,9 +9895,17 @@ pub struct WorkflowModel {
 
     /// Opaque JSON blob containing Slurm-specific configuration.
     /// The server stores this without interpretation; only the client deserializes it.
+    /// DEPRECATED: Use execution_config instead.
     #[serde(rename = "slurm_config")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slurm_config: Option<String>,
+
+    /// Opaque JSON blob containing execution configuration.
+    /// Controls execution mode (direct/slurm/auto) and related settings.
+    /// The server stores this without interpretation; only the client deserializes it.
+    #[serde(rename = "execution_config")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<String>,
 }
 
 impl WorkflowModel {
@@ -9923,6 +9931,7 @@ impl WorkflowModel {
             metadata: None,
             status_id: None,
             slurm_config: None,
+            execution_config: None,
         }
     }
 }
@@ -10041,6 +10050,7 @@ impl std::str::FromStr for WorkflowModel {
             pub metadata: Vec<String>,
             pub status_id: Vec<i64>,
             pub slurm_config: Vec<String>,
+            pub execution_config: Vec<String>,
         }
 
         let mut intermediate_rep = IntermediateRep::default();
@@ -10125,6 +10135,9 @@ impl std::str::FromStr for WorkflowModel {
                     "slurm_config" => intermediate_rep.slurm_config.push(
                         <String as std::str::FromStr>::from_str(val).map_err(|x| x.to_string())?,
                     ),
+                    "execution_config" => intermediate_rep.execution_config.push(
+                        <String as std::str::FromStr>::from_str(val).map_err(|x| x.to_string())?,
+                    ),
                     _ => {
                         return std::result::Result::Err(
                             "Unexpected key while parsing WorkflowModel".to_string(),
@@ -10181,6 +10194,7 @@ impl std::str::FromStr for WorkflowModel {
             metadata: intermediate_rep.metadata.into_iter().next(),
             status_id: intermediate_rep.status_id.into_iter().next(),
             slurm_config: intermediate_rep.slurm_config.into_iter().next(),
+            execution_config: intermediate_rep.execution_config.into_iter().next(),
         })
     }
 }

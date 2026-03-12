@@ -404,9 +404,9 @@ EXAMPLES:
         /// Output directory for job output files
         #[arg(short, long, default_value = "torc_output")]
         output: String,
-        /// Poll interval in seconds
-        #[arg(short, long, default_value = "60")]
-        poll_interval: i32,
+        /// Poll interval in seconds (default: from config file or 30)
+        #[arg(short, long)]
+        poll_interval: Option<i32>,
         /// Scheduler config ID
         #[arg(long)]
         scheduler_config_id: Option<i64>,
@@ -640,9 +640,9 @@ EXAMPLES:
         #[arg(short, long, default_value = "torc_output")]
         output_dir: PathBuf,
 
-        /// Poll interval in seconds (used when submitting)
-        #[arg(short, long, default_value = "60")]
-        poll_interval: i32,
+        /// Poll interval in seconds (default: from config file or 30)
+        #[arg(short, long)]
+        poll_interval: Option<i32>,
 
         /// Show what would be created without making changes
         #[arg(long)]
@@ -1246,6 +1246,11 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
                 })
             });
 
+            // Use poll_interval from CLI arg, or fall back to config file value
+            let torc_config = TorcConfig::load().unwrap_or_default();
+            let effective_poll_interval =
+                poll_interval.unwrap_or(torc_config.client.slurm.poll_interval);
+
             match schedule_slurm_nodes(
                 config,
                 wf_id,
@@ -1253,7 +1258,7 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
                 *num_hpc_jobs,
                 job_prefix,
                 output,
-                *poll_interval,
+                effective_poll_interval,
                 *max_parallel_jobs,
                 *keep_submission_scripts,
             ) {
@@ -3351,13 +3356,14 @@ fn handle_regenerate(
     walltime_multiplier: f64,
     submit: bool,
     output_dir: &PathBuf,
-    poll_interval: i32,
+    poll_interval: Option<i32>,
     dry_run: bool,
     include_job_ids: Option<&[i64]>,
     format: &str,
 ) {
     // Load HPC config and registry
     let torc_config = TorcConfig::load().unwrap_or_default();
+    let effective_poll_interval = poll_interval.unwrap_or(torc_config.client.slurm.poll_interval);
     let registry = create_registry_with_config_public(&torc_config.client.hpc);
 
     // Get the HPC profile
@@ -3910,7 +3916,7 @@ fn handle_regenerate(
                 scheduler_info.num_allocations as i32,
                 "",
                 output_dir.to_str().unwrap_or("torc_output"),
-                poll_interval,
+                effective_poll_interval,
                 None,  // max_parallel_jobs
                 false, // keep_submission_scripts
             ) {

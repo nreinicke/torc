@@ -7187,7 +7187,7 @@ components:
         compute_node_min_time_for_new_jobs_seconds: 300
         worker_startup_script: worker_startup_script
         worker_completion_script: worker_completion_script
-        slurm_config: '{"limit_resources":true,"use_srun":true,"srun_termination_signal":"TERM@120","enable_cpu_bind":false}'
+        execution_config: '{"mode":"auto","limit_resources":true,"srun_termination_signal":"TERM@120"}'
       properties:
         id:
           type: integer
@@ -7263,11 +7263,13 @@ components:
           type: boolean
         status_id:
           type: integer
-        slurm_config:
-          description: "JSON-encoded blob of Slurm configuration options for the\
-            \ workflow. May include fields such as limit_resources, use_srun,\
-            \ srun_termination_signal, and enable_cpu_bind. Stored as a JSON\
-            \ string to allow flexible, forward-compatible configuration."
+        execution_config:
+          description: "JSON-encoded execution configuration controlling mode\
+            \ (direct/slurm/auto) and related settings such as limit_resources,\
+            \ termination_signal, sigterm_lead_seconds, sigkill_headroom_seconds,\
+            \ timeout_exit_code, oom_exit_code, srun_termination_signal, and\
+            \ enable_cpu_bind. The server stores this without interpretation;\
+            \ only the client deserializes it."
           type:
           - string
           - "null"

@@ -22,7 +22,7 @@ Name | Type | Description | Notes
 **use_pending_failed** | **Bool** | Use PendingFailed status for failed jobs (enables AI-assisted recovery) | [optional] [default to false]
 **enable_ro_crate** | **Bool** | When true, automatically create RO-Crate entities for workflow files. Input files get entities during initialization; output files get entities on job completion. | [optional] [default to false]
 **status_id** | **Int64** |  | [optional] [default to nothing]
-**slurm_config** | **String** | JSON-encoded blob of Slurm configuration options for the workflow. May include fields such as limit_resources, use_srun, srun_termination_signal, and enable_cpu_bind. Stored as a JSON string to allow flexible, forward-compatible configuration. | [optional] [default to nothing]
+**execution_config** | **String** | JSON-encoded execution configuration controlling mode (direct/slurm/auto) and related settings such as limit_resources, termination_signal, sigterm_lead_seconds, sigkill_headroom_seconds, timeout_exit_code, oom_exit_code, srun_termination_signal, and enable_cpu_bind. The server stores this without interpretation; only the client deserializes it. | [optional] [default to nothing]
 
 
 [[Back to Model list]](../README.md#models) [[Back to API list]](../README.md#api-endpoints) [[Back to README]](../README.md)

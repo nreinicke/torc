@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
 use torc::client::async_cli_command::AsyncCliCommand;
+use torc::client::workflow_spec::ExecutionMode;
 use torc::models::{JobModel, JobStatus};
 
 /// Helper to create a temporary output directory for job stdio
@@ -67,10 +68,11 @@ fn test_async_cli_command_start_simple_command(start_server: &ServerProcess) {
         "http://localhost:8080/torc-service/v1",
         None,
         true,
-        true,
+        ExecutionMode::Slurm,
         false,
         None,
         None,
+        60,   // sigkill_headroom_seconds
         None, // target_node
     );
     assert!(
@@ -109,10 +111,11 @@ fn test_async_cli_command_start_already_running() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("First start should succeed");
@@ -128,10 +131,11 @@ fn test_async_cli_command_start_already_running() {
         "http://localhost:8080/torc-service/v1",
         None,
         true,
-        true,
+        ExecutionMode::Slurm,
         false,
         None,
         None,
+        60,   // sigkill_headroom_seconds
         None, // target_node
     );
     assert!(result.is_err());
@@ -158,10 +162,11 @@ fn test_async_cli_command_start_invalid_directory() {
         "http://localhost:8080/torc-service/v1",
         None,
         true,
-        true,
+        ExecutionMode::Slurm,
         false,
         None,
         None,
+        60,   // sigkill_headroom_seconds
         None, // target_node
     );
     assert!(result.is_err());
@@ -184,10 +189,11 @@ fn test_async_cli_command_check_status_completion() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -232,10 +238,11 @@ fn test_async_cli_command_with_exit_code_success() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -264,10 +271,11 @@ fn test_async_cli_command_with_exit_code_failure() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -297,10 +305,11 @@ fn test_async_cli_command_cancel() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -343,10 +352,11 @@ fn test_async_cli_command_terminate() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -382,10 +392,11 @@ fn test_async_cli_command_wait_for_completion() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -423,10 +434,11 @@ fn test_async_cli_command_get_result() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -471,10 +483,11 @@ fn test_async_cli_command_with_invocation_script() {
         "http://localhost:8080/torc-service/v1",
         None,
         true,
-        true,
+        ExecutionMode::Slurm,
         false,
         None,
         None,
+        60,   // sigkill_headroom_seconds
         None, // target_node
     );
     assert!(result.is_ok());
@@ -506,10 +519,11 @@ fn test_async_cli_command_environment_variables() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -543,10 +557,11 @@ fn test_async_cli_command_stdout_stderr_separation() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -580,10 +595,11 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start job 1");
@@ -600,10 +616,11 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start job 2");
@@ -620,10 +637,11 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start job 3");
@@ -664,10 +682,11 @@ fn test_async_cli_command_long_running_job() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -714,10 +733,11 @@ fn test_async_cli_command_complex_shell_command() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -754,10 +774,11 @@ fn test_async_cli_command_file_creation() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -788,10 +809,11 @@ fn test_async_cli_command_drop_while_running() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -824,10 +846,11 @@ fn test_async_cli_command_execution_time() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
@@ -856,10 +879,11 @@ fn test_async_cli_command_empty_command() {
         "http://localhost:8080/torc-service/v1",
         None,
         true,
-        true,
+        ExecutionMode::Slurm,
         false,
         None,
         None,
+        60,   // sigkill_headroom_seconds
         None, // target_node
     );
     assert!(result.is_ok());
@@ -885,10 +909,11 @@ fn test_async_cli_command_command_not_found() {
             "http://localhost:8080/torc-service/v1",
             None,
             true,
-            true,
+            ExecutionMode::Slurm,
             false,
             None,
             None,
+            60,   // sigkill_headroom_seconds
             None, // target_node
         )
         .expect("Failed to start command");
