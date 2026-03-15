@@ -44,7 +44,7 @@ url = "2.5"
 validator = { version = "0.20", features = ["derive"] }
 mime = "0.3"
 futures = "0.3"
-bcrypt = "0.18"
+bcrypt = "0.19"
 rpassword = "7.3"
 zxcvbn = "3.1"
 
