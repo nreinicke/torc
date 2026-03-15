@@ -200,6 +200,8 @@ fn test_effective_mode_slurm() {
 #[test]
 #[serial]
 fn test_effective_mode_auto_without_slurm_env() {
+    // Save original value
+    let original = std::env::var("SLURM_JOB_ID").ok();
     // Ensure SLURM_JOB_ID is not set
     // SAFETY: Using serial_test to prevent concurrent access to env vars
     unsafe {
@@ -212,11 +214,20 @@ fn test_effective_mode_auto_without_slurm_env() {
     };
     assert_eq!(config.effective_mode(), ExecutionMode::Direct);
     assert!(!config.use_srun());
+
+    // Restore original value
+    if let Some(val) = original {
+        unsafe {
+            std::env::set_var("SLURM_JOB_ID", val);
+        }
+    }
 }
 
 #[test]
 #[serial]
 fn test_effective_mode_auto_with_slurm_env() {
+    // Save original value
+    let original = std::env::var("SLURM_JOB_ID").ok();
     // Set SLURM_JOB_ID temporarily
     // SAFETY: Using serial_test to prevent concurrent access to env vars
     unsafe {
@@ -230,9 +241,13 @@ fn test_effective_mode_auto_with_slurm_env() {
     assert_eq!(config.effective_mode(), ExecutionMode::Slurm);
     assert!(config.use_srun());
 
-    // Clean up
+    // Restore original value
     unsafe {
-        std::env::remove_var("SLURM_JOB_ID");
+        if let Some(val) = original {
+            std::env::set_var("SLURM_JOB_ID", val);
+        } else {
+            std::env::remove_var("SLURM_JOB_ID");
+        }
     }
 }
 

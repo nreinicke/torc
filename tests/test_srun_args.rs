@@ -433,32 +433,46 @@ fn test_srun_with_end_time() {
 
 #[test]
 #[serial]
-fn test_srun_with_end_time_minimum_one_minute() {
+fn test_srun_with_end_time_insufficient_time_rejected() {
     let temp_dir = TempDir::new().unwrap();
-    let args_log = setup_srun_env(&temp_dir);
+    let _args_log = setup_srun_env(&temp_dir);
     let rr = make_rr("compute", 2, "4g", 1);
 
-    // Set end_time 10 seconds from now (should clamp to minimum 1 minute)
+    // Set end_time 10 seconds from now — with 60s default headroom, usable time
+    // is negative, so the launch should be refused.
     let end_time = chrono::Utc::now() + chrono::Duration::seconds(10);
 
-    let args = run_and_capture_srun_args(
-        &temp_dir,
-        &args_log,
+    let job = make_job(1, "echo hello");
+    let mut cmd = AsyncCliCommand::new(job);
+
+    let result = cmd.start(
+        temp_dir.path(),
+        1,
+        1,
+        1,
+        None,
+        "http://localhost:8080/torc-service/v1",
         Some(&rr),
         true,
         ExecutionMode::Slurm,
         false,
         Some(end_time),
         None,
-    )
-    .expect("srun should have been invoked");
+        60,
+        None,
+    );
 
     cleanup_srun_env();
 
     assert!(
-        args.contains("--time=1"),
-        "Should clamp to --time=1 for near-expired end_time: {}",
-        args
+        result.is_err(),
+        "Should refuse to launch srun step when insufficient time remains"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Refusing to launch"),
+        "Error should mention refusing to launch: {}",
+        err_msg
     );
 }
 

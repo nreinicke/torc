@@ -285,6 +285,7 @@ impl WorkflowsApiImpl {
                 ,w.project
                 ,w.metadata
                 ,w.status_id
+                ,w.slurm_config
                 ,w.execution_config
             FROM workflow w
             INNER JOIN workflow_status ws ON w.status_id = ws.id
@@ -311,6 +312,7 @@ impl WorkflowsApiImpl {
                 ,project
                 ,metadata
                 ,status_id
+                ,slurm_config
                 ,execution_config
             FROM workflow
             "
@@ -474,7 +476,10 @@ impl WorkflowsApiImpl {
                 project: record.get("project"),
                 metadata: record.get("metadata"),
                 status_id: Some(record.get("status_id")),
-                slurm_config: None,
+                slurm_config: record
+                    .try_get::<Option<String>, _>("slurm_config")
+                    .ok()
+                    .flatten(),
                 execution_config: record
                     .try_get::<Option<String>, _>("execution_config")
                     .ok()
@@ -650,9 +655,10 @@ where
                 project,
                 metadata,
                 status_id,
+                slurm_config,
                 execution_config
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING rowid
             "#,
             body.name,
@@ -672,6 +678,7 @@ where
             body.project,
             body.metadata,
             status_result[0].id,
+            body.slurm_config,
             body.execution_config,
         )
         .fetch_all(&mut *tx)
@@ -947,7 +954,7 @@ where
                     project: row.project,
                     metadata: row.metadata,
                     status_id: Some(row.status_id),
-                    slurm_config: None,
+                    slurm_config: row.slurm_config,
                     execution_config: row.execution_config,
                 },
             )),
@@ -1256,8 +1263,9 @@ where
                 enable_ro_crate = COALESCE($10, enable_ro_crate),
                 project = COALESCE($11, project),
                 metadata = COALESCE($12, metadata),
-                execution_config = COALESCE($13, execution_config)
-            WHERE id = $14
+                slurm_config = COALESCE($13, slurm_config),
+                execution_config = COALESCE($14, execution_config)
+            WHERE id = $15
             "#,
             body.name,
             body.description,
@@ -1271,6 +1279,7 @@ where
             enable_ro_crate_int,
             body.project,
             body.metadata,
+            body.slurm_config,
             body.execution_config,
             id
         )

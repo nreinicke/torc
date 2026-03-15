@@ -45,8 +45,9 @@ class WorkflowModel(BaseModel):
     use_pending_failed: Optional[StrictBool] = Field(default=False, description="Use PendingFailed status for failed jobs (enables AI-assisted recovery)")
     enable_ro_crate: Optional[StrictBool] = Field(default=False, description="When true, automatically create RO-Crate entities for workflow files. Input files get entities during initialization; output files get entities on job completion.")
     status_id: Optional[StrictInt] = None
+    slurm_config: Optional[StrictStr] = Field(default=None, description="Deprecated: Use execution_config instead. JSON-encoded blob of Slurm configuration options for the workflow. May include fields such as limit_resources, use_srun, srun_termination_signal, and enable_cpu_bind. Stored as a JSON string.")
     execution_config: Optional[StrictStr] = Field(default=None, description="JSON-encoded execution configuration controlling mode (direct/slurm/auto) and related settings such as limit_resources, termination_signal, sigterm_lead_seconds, sigkill_headroom_seconds, timeout_exit_code, oom_exit_code, srun_termination_signal, and enable_cpu_bind. The server stores this without interpretation; only the client deserializes it.")
-    __properties: ClassVar[List[str]] = ["id", "name", "user", "description", "timestamp", "project", "metadata", "compute_node_expiration_buffer_seconds", "compute_node_wait_for_new_jobs_seconds", "compute_node_ignore_workflow_completion", "compute_node_wait_for_healthy_database_minutes", "compute_node_min_time_for_new_jobs_seconds", "jobs_sort_method", "resource_monitor_config", "slurm_defaults", "use_pending_failed", "enable_ro_crate", "status_id", "execution_config"]
+    __properties: ClassVar[List[str]] = ["id", "name", "user", "description", "timestamp", "project", "metadata", "compute_node_expiration_buffer_seconds", "compute_node_wait_for_new_jobs_seconds", "compute_node_ignore_workflow_completion", "compute_node_wait_for_healthy_database_minutes", "compute_node_min_time_for_new_jobs_seconds", "jobs_sort_method", "resource_monitor_config", "slurm_defaults", "use_pending_failed", "enable_ro_crate", "status_id", "slurm_config", "execution_config"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -87,6 +88,11 @@ class WorkflowModel(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if slurm_config (nullable) is None
+        # and model_fields_set contains the field
+        if self.slurm_config is None and "slurm_config" in self.model_fields_set:
+            _dict['slurm_config'] = None
+
         # set to None if execution_config (nullable) is None
         # and model_fields_set contains the field
         if self.execution_config is None and "execution_config" in self.model_fields_set:
@@ -122,6 +128,7 @@ class WorkflowModel(BaseModel):
             "use_pending_failed": obj.get("use_pending_failed") if obj.get("use_pending_failed") is not None else False,
             "enable_ro_crate": obj.get("enable_ro_crate") if obj.get("enable_ro_crate") is not None else False,
             "status_id": obj.get("status_id"),
+            "slurm_config": obj.get("slurm_config"),
             "execution_config": obj.get("execution_config")
         })
         return _obj

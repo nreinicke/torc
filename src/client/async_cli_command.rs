@@ -117,15 +117,15 @@ fn build_srun_command(params: &SrunParams) -> Result<Command, String> {
     // Floor of 1 minute because --time=0 means unlimited in Slurm.
     if let Some(end) = params.end_time {
         let remaining_secs = (end - Utc::now()).num_seconds();
-        if remaining_secs <= params.sigkill_headroom_seconds {
+        let usable_secs = remaining_secs - params.sigkill_headroom_seconds;
+        if usable_secs < 60 {
             return Err(format!(
                 "Refusing to launch srun step for job {}: only {}s remaining \
-                 (need at least {}s sigkill headroom)",
-                params.job_id, remaining_secs, params.sigkill_headroom_seconds
+                 ({}s usable after {}s sigkill headroom, need at least 60s)",
+                params.job_id, remaining_secs, usable_secs, params.sigkill_headroom_seconds
             ));
         }
-        let headroom_minutes = (params.sigkill_headroom_seconds + 59) / 60;
-        let remaining_minutes = ((remaining_secs / 60) - headroom_minutes).max(1);
+        let remaining_minutes = usable_secs / 60;
         srun.arg(format!("--time={}", remaining_minutes));
     }
 
@@ -343,6 +343,7 @@ impl AsyncCliCommand {
                         resource_requirements
                             .and_then(|rr| memory_string_to_bytes(&rr.memory).ok())
                             .map(|b| b as u64)
+                            .filter(|&b| b > 0)
                     } else {
                         None
                     };

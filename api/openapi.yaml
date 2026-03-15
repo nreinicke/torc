@@ -7187,6 +7187,7 @@ components:
         compute_node_min_time_for_new_jobs_seconds: 300
         worker_startup_script: worker_startup_script
         worker_completion_script: worker_completion_script
+        slurm_config: null
         execution_config: '{"mode":"auto","limit_resources":true,"srun_termination_signal":"TERM@120"}'
       properties:
         id:
@@ -7263,6 +7264,15 @@ components:
           type: boolean
         status_id:
           type: integer
+        slurm_config:
+          deprecated: true
+          description: "Deprecated: Use execution_config instead. JSON-encoded\
+            \ blob of Slurm configuration options for the workflow. May include\
+            \ fields such as limit_resources, use_srun, srun_termination_signal,\
+            \ and enable_cpu_bind. Stored as a JSON string."
+          type:
+          - string
+          - "null"
         execution_config:
           description: "JSON-encoded execution configuration controlling mode\
             \ (direct/slurm/auto) and related settings such as limit_resources,\
