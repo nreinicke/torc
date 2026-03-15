@@ -25,7 +25,7 @@ config = { version = "0.14", features = ["toml"] }
 dirs = "6"
 toml = "1.0"
 serde_repr = "0.1"
-serde_with = { version = "3.17", default-features = false, features = ["base64", "std", "macros"] }
+serde_with = { version = "3.18", default-features = false, features = ["base64", "std", "macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4.28"
 env_logger = "0.11"
@@ -37,8 +37,8 @@ hdrhistogram = "7.5"
 signal-hook = "0.4"
 libc = "0.2"
 file-rotate = "0.7"
-clap = { version = "4.5", features = ["derive", "env", "color", "wrap_help"] }
-clap_complete = "4.5"
+clap = { version = "4.6", features = ["derive", "env", "color", "wrap_help"] }
+clap_complete = "4.6"
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "signal", "process", "io-util"] }
 url = "2.5"
 validator = { version = "0.20", features = ["derive"] }
