@@ -21,6 +21,7 @@ mod unix_main {
     use torc::client::apis::configuration::{Configuration, TlsConfig};
     use torc::client::apis::default_api;
     use torc::client::commands::slurm::{create_compute_node, create_node_resources};
+    use torc::client::config::TorcConfig;
     use torc::client::hpc::hpc_interface::HpcInterface;
     use torc::client::hpc::slurm_interface::SlurmInterface;
     use torc::client::job_runner::{JobRunner, PerNodeTracker};
@@ -82,6 +83,10 @@ mod unix_main {
         /// Password for authentication (can also use TORC_PASSWORD env var)
         #[arg(long, env = "TORC_PASSWORD", hide_env_values = true)]
         password: Option<String>,
+
+        /// Log level: error, warn, info, debug, trace
+        #[arg(long)]
+        log_level: Option<String>,
     }
 
     fn workflow_has_multi_node_jobs(
@@ -172,11 +177,33 @@ mod unix_main {
             }
         };
 
+        // Resolve log level: CLI arg > config file > default ("info")
+        let file_config = TorcConfig::load().unwrap_or_default();
+        let log_level_str = args
+            .log_level
+            .clone()
+            .unwrap_or_else(|| file_config.client.log_level.clone());
+
+        let level_filter = match log_level_str.to_lowercase().as_str() {
+            "error" => LevelFilter::Error,
+            "warn" => LevelFilter::Warn,
+            "info" => LevelFilter::Info,
+            "debug" => LevelFilter::Debug,
+            "trace" => LevelFilter::Trace,
+            _ => {
+                eprintln!(
+                    "Warning: unknown log level '{}', defaulting to 'info'",
+                    log_level_str
+                );
+                LevelFilter::Info
+            }
+        };
+
         // Initialize logger now that we have the log file
         let mut builder = Builder::from_default_env();
         builder
             .target(env_logger::Target::Pipe(Box::new(log_file)))
-            .filter_level(LevelFilter::Info)
+            .filter_level(level_filter)
             .init();
 
         let hostname = hostname::get()
@@ -184,7 +211,7 @@ mod unix_main {
             .into_string()
             .expect("Hostname is not valid UTF-8");
 
-        info!("Starting Slurm job runner");
+        info!("Starting Slurm job runner (log_level={})", log_level_str);
         info!("Job ID: {}", job_id);
         info!("Node ID: {}", node_id);
         info!("Task PID: {}", task_pid);
