@@ -2062,14 +2062,14 @@ fn test_scheduler_node_validation_passes_single_node_jobs_in_multi_node_allocati
     }
 }
 
-/// Test that start_one_worker_per_node is accepted in spec (backward compat, ignored)
+/// Test that start_one_worker_per_node is accepted for direct-mode workflows.
 #[rstest]
 fn test_scheduler_node_validation_passes_with_start_one_worker_per_node(
     start_server: &ServerProcess,
 ) {
     let workflow_data = serde_json::json!({
         "name": "multi_node_with_workers_workflow",
-        "description": "Workflow with multi-node scheduler and deprecated start_one_worker_per_node",
+        "description": "Workflow with multi-node scheduler and start_one_worker_per_node",
         "jobs": [
             {
                 "name": "job1",
@@ -2080,6 +2080,153 @@ fn test_scheduler_node_validation_passes_with_start_one_worker_per_node(
         ],
         "files": null,
         "user_data": null,
+        "resource_requirements": [
+            {
+                "name": "single_node_req",
+                "num_cpus": 1,
+                "num_nodes": 1,
+                "memory": "1g",
+                "runtime": "PT1H"
+            }
+        ],
+        "slurm_schedulers": [
+            {
+                "name": "multi_node_scheduler",
+                "account": "test_account",
+                "nodes": 2,
+                "walltime": "01:00:00"
+            }
+        ],
+        "execution_config": {
+            "mode": "direct"
+        },
+        "actions": [
+            {
+                "trigger_type": "on_workflow_start",
+                "action_type": "schedule_nodes",
+                "scheduler": "multi_node_scheduler",
+                "scheduler_type": "slurm",
+                "start_one_worker_per_node": true
+            }
+        ]
+    });
+
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    fs::write(
+        temp_file.path(),
+        serde_json::to_string_pretty(&workflow_data).unwrap(),
+    )
+    .expect("Failed to write temp file");
+
+    let result = WorkflowSpec::create_workflow_from_spec(
+        &start_server.config,
+        temp_file.path(),
+        "test_user",
+        false,
+        false, // skip_checks = false
+    );
+
+    // Should succeed for direct mode workflows.
+    assert!(
+        result.is_ok(),
+        "Expected success with start_one_worker_per_node in spec, got: {:?}",
+        result.err()
+    );
+
+    // Clean up
+    if let Ok(workflow_id) = result {
+        let _ = default_api::delete_workflow(&start_server.config, workflow_id, None);
+    }
+}
+
+#[rstest]
+fn test_scheduler_node_validation_fails_with_start_one_worker_per_node_in_slurm_mode(
+    start_server: &ServerProcess,
+) {
+    let workflow_data = serde_json::json!({
+        "name": "multi_node_with_workers_slurm_mode",
+        "description": "Workflow with start_one_worker_per_node in slurm execution mode",
+        "jobs": [
+            {
+                "name": "job1",
+                "command": "echo hello",
+                "resource_requirements": "single_node_req",
+                "scheduler": "multi_node_scheduler"
+            }
+        ],
+        "resource_requirements": [
+            {
+                "name": "single_node_req",
+                "num_cpus": 1,
+                "num_nodes": 1,
+                "memory": "1g",
+                "runtime": "PT1H"
+            }
+        ],
+        "slurm_schedulers": [
+            {
+                "name": "multi_node_scheduler",
+                "account": "test_account",
+                "nodes": 2,
+                "walltime": "01:00:00"
+            }
+        ],
+        "execution_config": {
+            "mode": "slurm"
+        },
+        "actions": [
+            {
+                "trigger_type": "on_workflow_start",
+                "action_type": "schedule_nodes",
+                "scheduler": "multi_node_scheduler",
+                "scheduler_type": "slurm",
+                "start_one_worker_per_node": true
+            }
+        ]
+    });
+
+    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+    fs::write(
+        temp_file.path(),
+        serde_json::to_string_pretty(&workflow_data).unwrap(),
+    )
+    .expect("Failed to write temp file");
+
+    let result = WorkflowSpec::create_workflow_from_spec(
+        &start_server.config,
+        temp_file.path(),
+        "test_user",
+        false,
+        false,
+    );
+
+    assert!(result.is_err(), "Expected workflow creation to fail");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains(
+            "start_one_worker_per_node requires execution_config.mode to be 'direct'"
+        ),
+        "Unexpected error: {}",
+        err
+    );
+}
+
+/// Test that start_one_worker_per_node is rejected when execution_config.mode is auto (default).
+#[rstest]
+fn test_scheduler_node_validation_fails_with_start_one_worker_per_node_in_auto_mode(
+    start_server: &ServerProcess,
+) {
+    let workflow_data = serde_json::json!({
+        "name": "multi_node_with_workers_auto_mode",
+        "description": "Workflow with start_one_worker_per_node in auto execution mode",
+        "jobs": [
+            {
+                "name": "job1",
+                "command": "echo hello",
+                "resource_requirements": "single_node_req",
+                "scheduler": "multi_node_scheduler"
+            }
+        ],
         "resource_requirements": [
             {
                 "name": "single_node_req",
@@ -2120,20 +2267,18 @@ fn test_scheduler_node_validation_passes_with_start_one_worker_per_node(
         temp_file.path(),
         "test_user",
         false,
-        false, // skip_checks = false
+        false,
     );
 
-    // Should succeed — start_one_worker_per_node is accepted for backward compat (ignored)
+    assert!(result.is_err(), "Expected workflow creation to fail");
+    let err = result.err().unwrap().to_string();
     assert!(
-        result.is_ok(),
-        "Expected success with start_one_worker_per_node in spec, got: {:?}",
-        result.err()
+        err.contains(
+            "start_one_worker_per_node requires execution_config.mode to be 'direct'"
+        ),
+        "Unexpected error: {}",
+        err
     );
-
-    // Clean up
-    if let Ok(workflow_id) = result {
-        let _ = default_api::delete_workflow(&start_server.config, workflow_id, None);
-    }
 }
 
 /// Test that validation passes when job num_nodes matches scheduler nodes

@@ -235,7 +235,7 @@ mod unix_main {
             insecure: args.tls_insecure,
         };
         let mut config = Configuration::with_tls(tls);
-        config.base_path = args.url;
+        config.base_path = args.url.clone();
 
         // Set up authentication if password is provided
         if let Some(ref password) = args.password {
@@ -292,12 +292,6 @@ mod unix_main {
         let scheduled_compute_node =
             get_scheduled_compute_node(&config, args.workflow_id, &slurm_interface);
 
-        if slurm_interface.is_head_node()
-            && let Some(ref node) = scheduled_compute_node
-        {
-            set_scheduled_compute_node_status(&config, node, "active");
-        }
-
         let scheduler_id = scheduled_compute_node.as_ref().map(|node| node.id);
         let scheduler_config_id = scheduled_compute_node
             .as_ref()
@@ -331,6 +325,12 @@ mod unix_main {
                 args.workflow_id,
                 args.wait_for_healthy_database_minutes,
             );
+
+        if slurm_interface.is_head_node()
+            && let Some(ref node) = scheduled_compute_node
+        {
+            set_scheduled_compute_node_status(&config, node, "active");
+        }
 
         let node_tracker = if num_nodes > 1 && !has_multi_node_jobs {
             match slurm_interface.list_active_nodes(&job_id) {

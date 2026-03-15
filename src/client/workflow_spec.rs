@@ -1979,6 +1979,25 @@ impl WorkflowSpec {
             }
         }
 
+        if spec.actions.as_ref().is_some_and(|actions| {
+            actions.iter().any(|action| {
+                action.action_type == "schedule_nodes"
+                    && action.start_one_worker_per_node == Some(true)
+            })
+        }) {
+            let mode = spec
+                .execution_config
+                .as_ref()
+                .map(|config| &config.mode)
+                .unwrap_or(&ExecutionMode::Auto);
+            if *mode != ExecutionMode::Direct {
+                return Err(
+                    "start_one_worker_per_node requires execution_config.mode to be 'direct'"
+                        .into(),
+                );
+            }
+        }
+
         // Set enable_ro_crate if present
         if let Some(value) = spec.enable_ro_crate {
             workflow_model.enable_ro_crate = Some(value);
@@ -2315,14 +2334,6 @@ impl WorkflowSpec {
                             // For now, just use 0 as placeholder
                             &0
                         };
-
-                        if action_spec.start_one_worker_per_node == Some(true) {
-                            log::warn!(
-                                "start_one_worker_per_node is deprecated and ignored. \
-                                 Multi-node allocations now use a single worker with \
-                                 per-node resource tracking via srun --nodelist."
-                            );
-                        }
 
                         let mut config = serde_json::json!({
                             "scheduler_type": scheduler_type,

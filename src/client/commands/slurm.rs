@@ -57,7 +57,9 @@ use crate::client::hpc::hpc_interface::HpcInterface;
 use crate::client::utils;
 use crate::client::workflow_graph::WorkflowGraph;
 use crate::client::workflow_manager::WorkflowManager;
-use crate::client::workflow_spec::{ResourceRequirementsSpec, SlurmDefaultsSpec, WorkflowSpec};
+use crate::client::workflow_spec::{
+    ExecutionConfig, ExecutionMode, ResourceRequirementsSpec, SlurmDefaultsSpec, WorkflowSpec,
+};
 use crate::config::TorcConfig;
 use crate::models;
 use tabled::Tabled;
@@ -389,6 +391,10 @@ EXAMPLES:
         /// Workflow ID
         #[arg()]
         workflow_id: Option<i64>,
+        /// Start one worker per allocated node.
+        /// Use this for direct-mode single-node jobs sharing a multi-node allocation.
+        #[arg(long, default_value = "false")]
+        start_one_worker_per_node: bool,
         /// Job prefix for the Slurm job names
         #[arg(short, long, default_value = "")]
         job_prefix: String,
@@ -1178,6 +1184,7 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
         }
         SlurmCommands::ScheduleNodes {
             workflow_id,
+            start_one_worker_per_node,
             job_prefix,
             keep_submission_scripts,
             max_parallel_jobs,
@@ -1256,6 +1263,7 @@ pub fn handle_slurm_commands(config: &Configuration, command: &SlurmCommands, fo
                 wf_id,
                 sched_config_id,
                 *num_hpc_jobs,
+                *start_one_worker_per_node,
                 job_prefix,
                 output,
                 effective_poll_interval,
@@ -1433,6 +1441,7 @@ pub fn schedule_slurm_nodes(
     workflow_id: i64,
     scheduler_config_id: i64,
     num_hpc_jobs: i32,
+    start_one_worker_per_node: bool,
     job_prefix: &str,
     output: &str,
     poll_interval: i32,
@@ -1461,6 +1470,12 @@ pub fn schedule_slurm_nodes(
             return Err(format!("Failed to get workflow: {}", e).into());
         }
     };
+    let execution_config = ExecutionConfig::from_workflow_model(&workflow);
+    if start_one_worker_per_node && execution_config.mode != ExecutionMode::Direct {
+        return Err(
+            "start_one_worker_per_node requires execution_config.mode to be 'direct'".into(),
+        );
+    }
 
     let slurm_interface = match crate::client::hpc::slurm_interface::SlurmInterface::new() {
         Ok(interface) => interface,
@@ -1539,6 +1554,7 @@ pub fn schedule_slurm_nodes(
             max_parallel_jobs,
             Path::new(&script_path),
             &config_map,
+            start_one_worker_per_node,
             tls_ca_cert,
             tls_insecure,
         ) {
@@ -1633,7 +1649,13 @@ pub fn create_node_resources(
     };
 
     let num_gpus = interface.get_num_gpus() as i64;
-    let num_nodes = interface.get_num_nodes() as i64;
+    // When running as a subtask (one worker per node), each worker manages
+    // only its own node regardless of the total allocation size.
+    let num_nodes = if is_subtask {
+        1
+    } else {
+        interface.get_num_nodes() as i64
+    };
 
     // Return per-node resource values. The job runner is responsible for
     // multiplying by num_nodes to compute total allocation capacity.
@@ -3914,6 +3936,7 @@ fn handle_regenerate(
                 workflow_id,
                 scheduler_info.id,
                 scheduler_info.num_allocations as i32,
+                false, // start_one_worker_per_node
                 "",
                 output_dir.to_str().unwrap_or("torc_output"),
                 effective_poll_interval,

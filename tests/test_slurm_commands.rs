@@ -346,6 +346,7 @@ fn test_create_submission_script() {
         None,
         &script_path,
         &config,
+        false,
         None,
         false,
     );
@@ -423,6 +424,7 @@ fn test_create_submission_script_with_extra() {
         Some(4),
         &script_path,
         &config,
+        false,
         None,
         false,
     );
@@ -449,11 +451,11 @@ fn test_create_submission_script_with_extra() {
 }
 
 #[test]
-fn test_create_submission_script_with_srun() {
+fn test_create_submission_script_without_srun() {
     let interface = SlurmInterface::new().expect("Failed to create SlurmInterface");
 
     let temp_dir = env::temp_dir();
-    let script_path = temp_dir.join("test_submission_script_srun.sh");
+    let script_path = temp_dir.join("test_submission_script_without_srun.sh");
 
     let mut config = std::collections::HashMap::new();
     config.insert("account".to_string(), "test_account".to_string());
@@ -468,6 +470,7 @@ fn test_create_submission_script_with_srun() {
         None,
         &script_path,
         &config,
+        false,
         None,
         false,
     );
@@ -496,6 +499,52 @@ fn test_create_submission_script_with_srun() {
     assert!(
         script_content.contains("torc-slurm-job-runner"),
         "Should run torc-slurm-job-runner directly"
+    );
+
+    let _ = fs::remove_file(&script_path);
+}
+
+#[test]
+fn test_create_submission_script_with_srun() {
+    let interface = SlurmInterface::new().expect("Failed to create SlurmInterface");
+
+    let temp_dir = env::temp_dir();
+    let script_path = temp_dir.join("test_submission_script_with_srun.sh");
+
+    let mut config = std::collections::HashMap::new();
+    config.insert("account".to_string(), "test_account".to_string());
+    config.insert("walltime".to_string(), "01:00:00".to_string());
+
+    let result = interface.create_submission_script(
+        "test_srun_job",
+        "http://localhost:8080/torc-service/v1",
+        11111,
+        "/tmp/output",
+        5,
+        None,
+        &script_path,
+        &config,
+        true,
+        None,
+        false,
+    );
+
+    assert!(
+        result.is_ok(),
+        "Failed to create submission script: {:?}",
+        result.err()
+    );
+
+    let script_content =
+        fs::read_to_string(&script_path).expect("Failed to read submission script");
+
+    assert!(
+        script_content.contains("srun --ntasks-per-node=1 "),
+        "Should have outer srun wrapper when start_one_worker_per_node is true"
+    );
+    assert!(
+        script_content.contains("torc-slurm-job-runner"),
+        "Should run torc-slurm-job-runner via srun"
     );
 
     let _ = fs::remove_file(&script_path);

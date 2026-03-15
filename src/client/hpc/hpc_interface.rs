@@ -54,6 +54,7 @@ pub trait HpcInterface: Send + Sync {
     /// * `max_parallel_jobs` - Optional maximum number of parallel jobs
     /// * `filename` - Path where the submission script should be written
     /// * `config` - Configuration parameters for the HPC scheduler
+    /// * `start_one_worker_per_node` - Whether to launch one worker per node via srun
     /// * `tls_ca_cert` - Optional path to a PEM-encoded CA certificate
     /// * `tls_insecure` - Whether to skip certificate verification
     #[allow(clippy::too_many_arguments)]
@@ -67,6 +68,7 @@ pub trait HpcInterface: Send + Sync {
         max_parallel_jobs: Option<i32>,
         filename: &Path,
         config: &HashMap<String, String>,
+        start_one_worker_per_node: bool,
         tls_ca_cert: Option<&str>,
         tls_insecure: bool,
     ) -> Result<()>;

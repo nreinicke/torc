@@ -133,6 +133,7 @@ impl HpcManager {
         workflow_id: i64,
         poll_interval: i32,
         max_parallel_jobs: Option<i32>,
+        start_one_worker_per_node: bool,
         keep_submission_script: bool,
         tls_ca_cert: Option<&str>,
         tls_insecure: bool,
@@ -148,6 +149,7 @@ impl HpcManager {
             max_parallel_jobs,
             &filename,
             &self.config,
+            start_one_worker_per_node,
             tls_ca_cert,
             tls_insecure,
         )?;
