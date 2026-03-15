@@ -26,7 +26,7 @@
 
 use chrono::{DateTime, Utc};
 use log::{self, debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -240,6 +240,13 @@ pub struct JobRunner {
     is_subtask: bool,
     running_jobs: HashMap<i64, AsyncCliCommand>,
     job_resources: HashMap<i64, ResourceRequirementsModel>,
+    /// Pool of GPU device identifiers available to this runner (e.g. `"0"`, `"1"` or UUIDs).
+    ///
+    /// When running in direct mode, Torc sets `CUDA_VISIBLE_DEVICES` (and friends) itself
+    /// to prevent concurrent GPU jobs from all defaulting to GPU 0.
+    available_gpu_devices: VecDeque<String>,
+    /// GPUs assigned to a running job, keyed by job_id.
+    job_gpu_devices: HashMap<i64, Vec<String>>,
     /// Per-node resource tracker for multi-node Slurm allocations.
     /// None for single-node allocations where dividing total by 1 is correct.
     node_tracker: Option<PerNodeTracker>,
@@ -264,6 +271,100 @@ pub struct JobRunner {
 }
 
 impl JobRunner {
+    fn parse_visible_devices_list(value: &str) -> Vec<String> {
+        value
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    fn detect_gpu_devices(resources_num_gpus: i64) -> (VecDeque<String>, bool) {
+        // Prefer an explicit allocation-scoped device list if present.
+        // Slurm: CUDA_VISIBLE_DEVICES is commonly set at allocation scope.
+        // Some clusters also set SLURM_JOB_GPUS / SLURM_STEP_GPUS.
+        if let Ok(v) = std::env::var("CUDA_VISIBLE_DEVICES") {
+            let parsed = Self::parse_visible_devices_list(&v);
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+        if let Ok(v) = std::env::var("SLURM_STEP_GPUS") {
+            let parsed = Self::parse_visible_devices_list(&v)
+                .into_iter()
+                .map(|s| {
+                    s.trim_start_matches("gpu:")
+                        .trim_start_matches("GPU:")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+        if let Ok(v) = std::env::var("SLURM_JOB_GPUS") {
+            let parsed = Self::parse_visible_devices_list(&v)
+                .into_iter()
+                .map(|s| {
+                    s.trim_start_matches("gpu:")
+                        .trim_start_matches("GPU:")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+
+        // Fall back to ordinal device indices.
+        let fallback = (0..resources_num_gpus.max(0))
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>();
+        (VecDeque::from(fallback), false)
+    }
+
+    fn allocate_gpu_devices(&mut self, job_id: i64, num_gpus: i64) -> Option<String> {
+        if num_gpus <= 0 {
+            return None;
+        }
+
+        let requested = num_gpus as usize;
+        if self.available_gpu_devices.len() < requested {
+            error!(
+                "Insufficient GPUs to start job workflow_id={} job_id={} requested={} available={}",
+                self.workflow_id,
+                job_id,
+                requested,
+                self.available_gpu_devices.len()
+            );
+            return None;
+        }
+
+        let mut assigned = Vec::with_capacity(requested);
+        for _ in 0..requested {
+            if let Some(dev) = self.available_gpu_devices.pop_front() {
+                assigned.push(dev);
+            }
+        }
+
+        let visible = assigned.join(",");
+        self.job_gpu_devices.insert(job_id, assigned);
+        debug!(
+            "Assigned GPUs workflow_id={} job_id={} gpus={}",
+            self.workflow_id, job_id, visible
+        );
+        Some(visible)
+    }
+
+    fn release_gpu_devices(&mut self, job_id: i64) {
+        if let Some(devs) = self.job_gpu_devices.remove(&job_id) {
+            for dev in devs {
+                self.available_gpu_devices.push_back(dev);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Configuration,
@@ -295,6 +396,15 @@ impl JobRunner {
         );
         let execution_config = ExecutionConfig::from_workflow_model(&workflow);
         let job_resources: HashMap<i64, ResourceRequirementsModel> = HashMap::new();
+
+        // If the environment already constrains visible GPUs (common inside Slurm allocations),
+        // use that list as the authoritative pool and sync the resource counts to match.
+        let mut resources = resources;
+        let (available_gpu_devices, env_constrained) = Self::detect_gpu_devices(resources.num_gpus);
+        if env_constrained {
+            resources.num_gpus = available_gpu_devices.len() as i64;
+        }
+
         let orig_resources = ComputeNodesResources {
             id: resources.id,
             num_cpus: resources.num_cpus,
@@ -352,6 +462,8 @@ impl JobRunner {
             is_subtask,
             running_jobs,
             job_resources,
+            available_gpu_devices,
+            job_gpu_devices: HashMap::new(),
             node_tracker,
             job_nodes: HashMap::new(),
             execution_config,
@@ -1374,6 +1486,7 @@ impl JobRunner {
         }
         self.running_jobs.remove(&job_id);
         self.job_resources.remove(&job_id);
+        self.release_gpu_devices(job_id);
     }
 
     /// Run a recovery script with environment variables set.
@@ -1819,6 +1932,12 @@ impl JobRunner {
                     }
 
                     let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+                    let effective_mode = self.execution_config.effective_mode();
+                    let gpu_visible_devices = if effective_mode == ExecutionMode::Slurm {
+                        None
+                    } else {
+                        self.allocate_gpu_devices(job_id, job_rr.num_gpus)
+                    };
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -1827,8 +1946,9 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
-                        self.execution_config.effective_mode(),
+                        effective_mode,
                         self.execution_config.enable_cpu_bind(),
                         self.end_time,
                         self.execution_config.srun_termination_signal.as_deref(),
@@ -1857,6 +1977,7 @@ impl JobRunner {
                                 "Job start failed workflow_id={} job_id={} error={}",
                                 self.workflow_id, job_id, e
                             );
+                            self.release_gpu_devices(job_id);
                             continue;
                         }
                     }
@@ -1950,6 +2071,12 @@ impl JobRunner {
                     }
 
                     let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+                    let effective_mode = self.execution_config.effective_mode();
+                    let gpu_visible_devices = if effective_mode == ExecutionMode::Slurm {
+                        None
+                    } else {
+                        self.allocate_gpu_devices(job_id, job_rr.num_gpus)
+                    };
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -1958,8 +2085,9 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
-                        self.execution_config.effective_mode(),
+                        effective_mode,
                         self.execution_config.enable_cpu_bind(),
                         self.end_time,
                         self.execution_config.srun_termination_signal.as_deref(),
@@ -1982,6 +2110,7 @@ impl JobRunner {
                                 "Job start failed workflow_id={} job_id={} error={}",
                                 self.workflow_id, job_id, e
                             );
+                            self.release_gpu_devices(job_id);
                             continue;
                         }
                     }
