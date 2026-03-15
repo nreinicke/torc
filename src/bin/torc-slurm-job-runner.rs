@@ -61,8 +61,8 @@ mod unix_main {
         max_parallel_jobs: Option<i32>,
 
         /// Poll interval for job completions (seconds)
-        #[arg(short, long, default_value = "60")]
-        poll_interval: i64,
+        #[arg(short, long)]
+        poll_interval: Option<i64>,
 
         /// Set to true if this is a subtask and multiple workers are running on one Slurm allocation
         #[arg(long, default_value = "false")]
@@ -396,7 +396,8 @@ mod unix_main {
             run_id,
             compute_node.id.expect("Compute node ID is required"),
             args.output_dir.clone(),
-            args.poll_interval as f64,
+            args.poll_interval
+                .unwrap_or(file_config.client.slurm.poll_interval as i64) as f64,
             args.max_parallel_jobs.map(|x| x as i64),
             None, // time_limit
             Some(job_end_time),
