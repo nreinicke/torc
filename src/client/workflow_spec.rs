@@ -633,71 +633,246 @@ impl JobSpec {
     }
 }
 
-/// Slurm-specific configuration that is opaque to the server.
+/// Execution mode for job processes.
 ///
-/// New Slurm settings should be added here instead of as top-level workflow fields.
-/// The server stores this as a JSON blob without interpretation; only the client
-/// deserializes it. This avoids requiring server code changes and database migrations
-/// for each new Slurm setting.
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SlurmConfig {
-    /// When true (default), srun passes --mem and --cpus-per-task to enforce cgroup limits
-    /// for each job step when running inside a Slurm allocation.
+/// Controls how torc manages job processes during execution, particularly
+/// around termination and resource enforcement.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    /// Direct shell execution - torc manages termination via SIGTERM/SIGKILL.
+    /// Use when srun/sacct are unreliable or running outside Slurm.
+    Direct,
+    /// Slurm srun execution - Slurm manages resource limits and termination.
+    /// Jobs are wrapped with `srun` inside Slurm allocations.
+    Slurm,
+    /// Auto-detect based on environment - uses `slurm` if SLURM_JOB_ID is set,
+    /// otherwise `direct`. This is the default behavior.
+    #[default]
+    Auto,
+}
+
+/// Unified execution configuration that controls how jobs are run.
+///
+/// This replaces the old `SlurmConfig` with a mode-based approach that clearly
+/// distinguishes between direct execution (torc manages everything) and Slurm
+/// execution (srun manages resources and termination).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct ExecutionConfig {
+    /// Execution mode: direct, slurm, or auto (default).
+    #[serde(default)]
+    pub mode: ExecutionMode,
+
+    // ========== Shared settings (both modes) ==========
+    /// When true (default), enforce memory/CPU limits.
+    /// - direct mode: monitor & kill if exceeded (OOM)
+    /// - slurm mode: pass --mem/--cpus to srun
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_resources: Option<bool>,
-    /// When true (default), jobs are wrapped with srun inside Slurm allocations.
+
+    // ========== Direct mode settings ==========
+    /// Signal to send before SIGKILL for graceful termination.
+    /// Default: "SIGTERM". Other common values: "SIGINT", "SIGUSR1".
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_srun: Option<bool>,
+    pub termination_signal: Option<String>,
+
+    /// Seconds before SIGKILL to send the termination signal.
+    /// Default: 30. This gives jobs time to handle the signal gracefully.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigterm_lead_seconds: Option<i64>,
+
+    /// Seconds before end_time to send SIGKILL (direct mode) or set srun --time (slurm mode).
+    /// Default: 60.
+    /// - Direct mode: After this time, any remaining jobs are force-killed with SIGKILL.
+    /// - Slurm mode: srun --time is set to (remaining_time - sigkill_headroom_seconds) so
+    ///   Slurm kills the step before the allocation expires, giving the job runner time
+    ///   to detect the timeout and report results.
+    ///
+    /// If `srun_termination_signal` is set (e.g., "TERM@120"), ensure its time value
+    /// (120 seconds) is less than `sigkill_headroom_seconds` so the signal is sent
+    /// before Slurm kills the step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigkill_headroom_seconds: Option<i64>,
+
+    /// Exit code to use when a job times out.
+    /// Default: 152 (matches Slurm's TIMEOUT exit code).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_exit_code: Option<i32>,
+
+    /// Exit code to use when a job is OOM-killed.
+    /// Default: 137 (128 + SIGKILL = 128 + 9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oom_exit_code: Option<i32>,
+
+    // ========== Slurm mode settings ==========
     /// Signal specification for srun steps, passed as `srun --signal=<value>`.
-    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds before
-    /// the step time limit).
+    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds
+    /// before the step time limit).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub srun_termination_signal: Option<String>,
-    /// When true, allow Slurm to bind tasks to specific CPU cores. By default (false),
-    /// srun passes `--cpu-bind=none` to disable binding.
+
+    /// When true, allow Slurm to bind tasks to specific CPU cores. By default
+    /// (false), srun passes `--cpu-bind=none` to disable binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_cpu_bind: Option<bool>,
 }
 
-impl SlurmConfig {
-    /// Merge with individual flat fields, where `self` (from slurm_config) takes precedence.
-    pub fn merge_with_flat_fields(
-        &self,
-        limit_resources: Option<bool>,
-        use_srun: Option<bool>,
-        srun_termination_signal: Option<String>,
-        enable_cpu_bind: Option<bool>,
-    ) -> SlurmConfig {
-        SlurmConfig {
-            limit_resources: self.limit_resources.or(limit_resources),
-            use_srun: self.use_srun.or(use_srun),
-            srun_termination_signal: self
-                .srun_termination_signal
-                .clone()
-                .or(srun_termination_signal),
-            enable_cpu_bind: self.enable_cpu_bind.or(enable_cpu_bind),
+impl ExecutionConfig {
+    /// Default value for sigterm_lead_seconds (30 seconds)
+    pub const DEFAULT_SIGTERM_LEAD_SECONDS: i64 = 30;
+    /// Default value for sigkill_headroom_seconds (60 seconds)
+    pub const DEFAULT_SIGKILL_HEADROOM_SECONDS: i64 = 60;
+    /// Default exit code for timeout (matches Slurm's TIMEOUT)
+    pub const DEFAULT_TIMEOUT_EXIT_CODE: i32 = 152;
+    /// Default exit code for OOM kill (128 + SIGKILL)
+    pub const DEFAULT_OOM_EXIT_CODE: i32 = 137;
+
+    /// Resolve the effective execution mode based on the configured mode and environment.
+    /// - Direct -> Direct
+    /// - Slurm -> Slurm
+    /// - Auto -> Slurm if SLURM_JOB_ID is set, else Direct
+    pub fn effective_mode(&self) -> ExecutionMode {
+        match self.mode {
+            ExecutionMode::Direct => ExecutionMode::Direct,
+            ExecutionMode::Slurm => ExecutionMode::Slurm,
+            ExecutionMode::Auto => {
+                if std::env::var("SLURM_JOB_ID").is_ok() {
+                    ExecutionMode::Slurm
+                } else {
+                    ExecutionMode::Direct
+                }
+            }
         }
     }
 
-    /// Build a SlurmConfig from a WorkflowModel's slurm_config JSON blob.
-    pub fn from_workflow_model(workflow: &models::WorkflowModel) -> SlurmConfig {
-        if let Some(ref json_str) = workflow.slurm_config {
-            serde_json::from_str(json_str).unwrap_or_default()
-        } else {
-            SlurmConfig::default()
-        }
+    /// Whether to use srun wrapping (true for effective Slurm mode).
+    pub fn use_srun(&self) -> bool {
+        matches!(self.effective_mode(), ExecutionMode::Slurm)
     }
 
+    /// Whether to enforce resource limits.
     pub fn limit_resources(&self) -> bool {
         self.limit_resources.unwrap_or(true)
     }
 
-    pub fn use_srun(&self) -> bool {
-        self.use_srun.unwrap_or(true)
-    }
-
+    /// Whether to enable CPU binding in Slurm mode.
     pub fn enable_cpu_bind(&self) -> bool {
         self.enable_cpu_bind.unwrap_or(false)
+    }
+
+    /// Get the termination signal name for direct mode.
+    pub fn termination_signal(&self) -> &str {
+        self.termination_signal.as_deref().unwrap_or("SIGTERM")
+    }
+
+    /// Get the sigterm lead time in seconds.
+    pub fn sigterm_lead_seconds(&self) -> i64 {
+        self.sigterm_lead_seconds
+            .unwrap_or(Self::DEFAULT_SIGTERM_LEAD_SECONDS)
+    }
+
+    /// Get the sigkill headroom time in seconds.
+    pub fn sigkill_headroom_seconds(&self) -> i64 {
+        self.sigkill_headroom_seconds
+            .unwrap_or(Self::DEFAULT_SIGKILL_HEADROOM_SECONDS)
+    }
+
+    /// Get the timeout exit code.
+    pub fn timeout_exit_code(&self) -> i32 {
+        self.timeout_exit_code
+            .unwrap_or(Self::DEFAULT_TIMEOUT_EXIT_CODE)
+    }
+
+    /// Get the OOM exit code.
+    pub fn oom_exit_code(&self) -> i32 {
+        self.oom_exit_code.unwrap_or(Self::DEFAULT_OOM_EXIT_CODE)
+    }
+
+    /// Validate the configuration, returning any warnings.
+    ///
+    /// Returns a list of warning messages for potential issues:
+    /// - If `srun_termination_signal` time value is >= `sigkill_headroom_seconds`,
+    ///   the signal won't be sent before Slurm kills the step.
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        // Check srun_termination_signal vs sigkill_headroom_seconds
+        if let Some(ref signal_spec) = self.srun_termination_signal
+            && let Some(signal_seconds) = Self::parse_srun_signal_seconds(signal_spec)
+        {
+            let headroom = self.sigkill_headroom_seconds();
+            if signal_seconds >= headroom {
+                warnings.push(format!(
+                    "srun_termination_signal '{}' specifies {}s, which is >= sigkill_headroom_seconds ({}s). \
+                     The signal will not be sent before Slurm kills the step. \
+                     Consider increasing sigkill_headroom_seconds or reducing the signal time.",
+                    signal_spec, signal_seconds, headroom
+                ));
+            }
+        }
+
+        warnings
+    }
+
+    /// Parse the seconds value from an srun --signal spec like "TERM@120".
+    /// Returns None if the spec doesn't contain a valid time value.
+    fn parse_srun_signal_seconds(signal_spec: &str) -> Option<i64> {
+        // Format: "<signal>@<seconds>" or just "<signal>"
+        if let Some(at_pos) = signal_spec.find('@') {
+            let seconds_str = &signal_spec[at_pos + 1..];
+            seconds_str.parse::<i64>().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Build from a WorkflowModel's execution_config or legacy slurm_config JSON blob.
+    ///
+    /// Checks execution_config first; falls back to slurm_config for old workflows.
+    pub fn from_workflow_model(workflow: &models::WorkflowModel) -> ExecutionConfig {
+        if let Some(ref json_str) = workflow.execution_config {
+            serde_json::from_str(json_str).unwrap_or_default()
+        } else if let Some(ref json_str) = workflow.slurm_config {
+            // Fall back to legacy slurm_config for old workflows
+            Self::from_legacy_slurm_config_json(json_str)
+        } else {
+            ExecutionConfig::default()
+        }
+    }
+
+    /// Convert a legacy slurm_config JSON blob to ExecutionConfig for backward compatibility.
+    ///
+    /// This handles workflows created before ExecutionConfig was introduced.
+    fn from_legacy_slurm_config_json(json_str: &str) -> ExecutionConfig {
+        // Legacy slurm_config format:
+        // { "limit_resources": bool, "use_srun": bool, "srun_termination_signal": str, "enable_cpu_bind": bool }
+        #[derive(Deserialize, Default)]
+        struct LegacySlurmConfig {
+            limit_resources: Option<bool>,
+            use_srun: Option<bool>,
+            srun_termination_signal: Option<String>,
+            enable_cpu_bind: Option<bool>,
+        }
+
+        let legacy: LegacySlurmConfig = serde_json::from_str(json_str).unwrap_or_default();
+        ExecutionConfig {
+            // use_srun=true means Slurm mode, use_srun=false means Direct mode
+            // If not set, default to Auto for backward compatibility
+            mode: match legacy.use_srun {
+                Some(true) => ExecutionMode::Slurm,
+                Some(false) => ExecutionMode::Direct,
+                None => ExecutionMode::Auto,
+            },
+            limit_resources: legacy.limit_resources,
+            srun_termination_signal: legacy.srun_termination_signal,
+            enable_cpu_bind: legacy.enable_cpu_bind,
+            // Direct mode settings use defaults when converting from legacy
+            termination_signal: None,
+            sigterm_lead_seconds: None,
+            sigkill_headroom_seconds: None,
+            timeout_exit_code: None,
+            oom_exit_code: None,
+        }
     }
 }
 
@@ -762,15 +937,6 @@ pub struct WorkflowSpec {
     /// Use PendingFailed status for failed jobs (enables AI-assisted recovery)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub use_pending_failed: Option<bool>,
-    /// When true (default), srun passes --mem and --cpus-per-task to enforce cgroup limits
-    /// for each job step when running inside a Slurm allocation. Set to false to allow jobs
-    /// to exceed their stated resource requirements.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit_resources: Option<bool>,
-    /// When true (default), jobs are wrapped with srun inside Slurm allocations.
-    /// Set to false to use direct shell execution.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_srun: Option<bool>,
     /// When true, automatically create RO-Crate entities for workflow files.
     /// Input files get entities during initialization; output files get entities on job completion.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -781,19 +947,11 @@ pub struct WorkflowSpec {
     /// Arbitrary metadata as JSON string
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
-    /// Signal specification for srun steps, passed as `srun --signal=<value>`.
-    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds before
-    /// the step time limit). This allows jobs to checkpoint before being killed.
+    /// Unified execution configuration controlling how jobs are run.
+    /// Controls execution mode (direct, slurm, or auto) and related settings like
+    /// resource limits, termination signals, and timeouts.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub srun_termination_signal: Option<String>,
-    /// When true, allow Slurm to bind tasks to specific CPU cores. By default (false),
-    /// srun passes `--cpu-bind=none` to disable binding.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enable_cpu_bind: Option<bool>,
-    /// Grouped Slurm configuration (preferred over individual flat fields above).
-    /// New Slurm settings should be added to SlurmConfig instead of as top-level fields.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub slurm_config: Option<SlurmConfig>,
+    pub execution_config: Option<ExecutionConfig>,
 }
 
 impl WorkflowSpec {
@@ -825,14 +983,10 @@ impl WorkflowSpec {
             resource_monitor: None,
             actions: None,
             use_pending_failed: None,
-            limit_resources: None,
-            use_srun: None,
             enable_ro_crate: None,
             project: None,
             metadata: None,
-            srun_termination_signal: None,
-            enable_cpu_bind: None,
-            slurm_config: None,
+            execution_config: None,
         }
     }
 
@@ -1811,26 +1965,18 @@ impl WorkflowSpec {
             workflow_model.use_pending_failed = Some(value);
         }
 
-        // Build merged SlurmConfig from flat fields and nested slurm_config.
-        // The nested slurm_config takes precedence over flat fields.
-        let merged_slurm = spec
-            .slurm_config
-            .clone()
-            .unwrap_or_default()
-            .merge_with_flat_fields(
-                spec.limit_resources,
-                spec.use_srun,
-                spec.srun_termination_signal.clone(),
-                spec.enable_cpu_bind,
-            );
+        // Store execution_config as JSON if any non-default settings are configured
+        if let Some(ref execution_config) = spec.execution_config {
+            // Validate and warn about potential issues
+            for warning in execution_config.validate() {
+                log::warn!("{}", warning);
+            }
 
-        // Store the merged config as a JSON blob (server treats it opaquely).
-        // Only set it when at least one field is configured, so that workflows
-        // without Slurm settings keep slurm_config = NULL in the database.
-        if merged_slurm != SlurmConfig::default() {
-            let slurm_config_json = serde_json::to_string(&merged_slurm)
-                .map_err(|e| format!("Failed to serialize slurm_config: {}", e))?;
-            workflow_model.slurm_config = Some(slurm_config_json);
+            if *execution_config != ExecutionConfig::default() {
+                let execution_config_json = serde_json::to_string(execution_config)
+                    .map_err(|e| format!("Failed to serialize execution_config: {}", e))?;
+                workflow_model.execution_config = Some(execution_config_json);
+            }
         }
 
         // Set enable_ro_crate if present
@@ -3291,6 +3437,69 @@ impl WorkflowSpec {
         Ok(serde_json::Value::Object(obj))
     }
 
+    /// Convert a KDL execution_config node to a JSON object
+    ///
+    /// Parses execution_config block with mode and various settings for job execution.
+    #[cfg(feature = "client")]
+    fn kdl_execution_config_to_json(
+        node: &KdlNode,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let mut obj = serde_json::Map::new();
+
+        if let Some(children) = node.children() {
+            for child in children.nodes() {
+                let key = child.name().value();
+                if let Some(entry) = child.entries().first() {
+                    let value = entry.value();
+                    match key {
+                        "mode" => {
+                            if let Some(s) = value.as_string() {
+                                obj.insert(
+                                    "mode".to_string(),
+                                    serde_json::Value::String(s.to_string()),
+                                );
+                            }
+                        }
+                        "limit_resources" | "enable_cpu_bind" => {
+                            if let Some(b) = value.as_bool() {
+                                obj.insert(key.to_string(), serde_json::Value::Bool(b));
+                            }
+                        }
+                        "termination_signal" | "srun_termination_signal" => {
+                            if let Some(s) = value.as_string() {
+                                obj.insert(
+                                    key.to_string(),
+                                    serde_json::Value::String(s.to_string()),
+                                );
+                            }
+                        }
+                        "sigterm_lead_seconds" | "sigkill_headroom_seconds" => {
+                            if let Some(i) = value.as_integer() {
+                                obj.insert(
+                                    key.to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(i as i64)),
+                                );
+                            }
+                        }
+                        "timeout_exit_code" | "oom_exit_code" => {
+                            if let Some(i) = value.as_integer() {
+                                obj.insert(
+                                    key.to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(i as i64)),
+                                );
+                            }
+                        }
+                        _ => {
+                            log::warn!("Unknown execution_config field '{}' will be ignored", key);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(serde_json::Value::Object(obj))
+    }
+
     /// Convert a KDL slurm_defaults node to a JSON object
     ///
     /// Parses slurm_defaults block containing arbitrary key-value pairs for Slurm parameters.
@@ -3562,32 +3771,15 @@ impl WorkflowSpec {
                         Self::kdl_slurm_defaults_to_json(node)?,
                     );
                 }
+                "execution_config" => {
+                    obj.insert(
+                        "execution_config".to_string(),
+                        Self::kdl_execution_config_to_json(node)?,
+                    );
+                }
                 "use_pending_failed" => {
                     if let Some(v) = node.entries().first().and_then(|e| e.value().as_bool()) {
                         obj.insert("use_pending_failed".to_string(), serde_json::Value::Bool(v));
-                    }
-                }
-                "limit_resources" => {
-                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_bool()) {
-                        obj.insert("limit_resources".to_string(), serde_json::Value::Bool(v));
-                    }
-                }
-                "use_srun" => {
-                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_bool()) {
-                        obj.insert("use_srun".to_string(), serde_json::Value::Bool(v));
-                    }
-                }
-                "srun_termination_signal" => {
-                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_string()) {
-                        obj.insert(
-                            "srun_termination_signal".to_string(),
-                            serde_json::Value::String(v.to_string()),
-                        );
-                    }
-                }
-                "enable_cpu_bind" => {
-                    if let Some(v) = node.entries().first().and_then(|e| e.value().as_bool()) {
-                        obj.insert("enable_cpu_bind".to_string(), serde_json::Value::Bool(v));
                     }
                 }
                 _ => {
@@ -3757,6 +3949,51 @@ impl WorkflowSpec {
                     "#false"
                 }
             ));
+            lines.push("}".to_string());
+            lines.push(String::new());
+        }
+
+        // Execution config
+        if let Some(ref exec_config) = self.execution_config {
+            lines.push("execution_config {".to_string());
+            match exec_config.mode {
+                ExecutionMode::Direct => lines.push("    mode \"direct\"".to_string()),
+                ExecutionMode::Slurm => lines.push("    mode \"slurm\"".to_string()),
+                ExecutionMode::Auto => lines.push("    mode \"auto\"".to_string()),
+            }
+            if let Some(limit) = exec_config.limit_resources {
+                lines.push(format!(
+                    "    limit_resources {}",
+                    if limit { "#true" } else { "#false" }
+                ));
+            }
+            if let Some(ref signal) = exec_config.termination_signal {
+                lines.push(format!("    termination_signal {}", kdl_escape(signal)));
+            }
+            if let Some(secs) = exec_config.sigterm_lead_seconds {
+                lines.push(format!("    sigterm_lead_seconds {}", secs));
+            }
+            if let Some(secs) = exec_config.sigkill_headroom_seconds {
+                lines.push(format!("    sigkill_headroom_seconds {}", secs));
+            }
+            if let Some(code) = exec_config.timeout_exit_code {
+                lines.push(format!("    timeout_exit_code {}", code));
+            }
+            if let Some(code) = exec_config.oom_exit_code {
+                lines.push(format!("    oom_exit_code {}", code));
+            }
+            if let Some(ref signal) = exec_config.srun_termination_signal {
+                lines.push(format!(
+                    "    srun_termination_signal {}",
+                    kdl_escape(signal)
+                ));
+            }
+            if let Some(bind) = exec_config.enable_cpu_bind {
+                lines.push(format!(
+                    "    enable_cpu_bind {}",
+                    if bind { "#true" } else { "#false" }
+                ));
+            }
             lines.push("}".to_string());
             lines.push(String::new());
         }
@@ -4732,14 +4969,10 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
             actions: None,
             failure_handlers: None,
             use_pending_failed: None,
-            limit_resources: None,
-            use_srun: None,
             enable_ro_crate: None,
             project: None,
             metadata: None,
-            srun_termination_signal: None,
-            enable_cpu_bind: None,
-            slurm_config: None,
+            execution_config: None,
         };
 
         spec.expand_parameters()
@@ -5366,5 +5599,157 @@ jobs:
 
         // Default should be product mode: 2 * 2 = 4 combinations
         assert_eq!(spec.jobs.len(), 4);
+    }
+
+    // ========== ExecutionConfig Tests ==========
+
+    #[test]
+    fn test_execution_config_defaults() {
+        let config = ExecutionConfig::default();
+        assert_eq!(config.mode, ExecutionMode::Auto);
+        assert!(config.limit_resources.is_none());
+        assert!(config.termination_signal.is_none());
+        assert!(config.sigterm_lead_seconds.is_none());
+        assert!(config.sigkill_headroom_seconds.is_none());
+        assert!(config.timeout_exit_code.is_none());
+        assert!(config.oom_exit_code.is_none());
+    }
+
+    #[test]
+    fn test_execution_config_default_getters() {
+        let config = ExecutionConfig::default();
+        assert!(config.limit_resources());
+        assert_eq!(config.termination_signal(), "SIGTERM");
+        assert_eq!(config.sigterm_lead_seconds(), 30);
+        assert_eq!(config.sigkill_headroom_seconds(), 60);
+        assert_eq!(config.timeout_exit_code(), 152);
+        assert_eq!(config.oom_exit_code(), 137);
+    }
+
+    #[test]
+    fn test_execution_config_custom_values() {
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Direct,
+            limit_resources: Some(false),
+            termination_signal: Some("SIGUSR1".to_string()),
+            sigterm_lead_seconds: Some(60),
+            sigkill_headroom_seconds: Some(120),
+            timeout_exit_code: Some(200),
+            oom_exit_code: Some(201),
+            srun_termination_signal: None,
+            enable_cpu_bind: None,
+        };
+        assert!(!config.limit_resources());
+        assert_eq!(config.termination_signal(), "SIGUSR1");
+        assert_eq!(config.sigterm_lead_seconds(), 60);
+        assert_eq!(config.sigkill_headroom_seconds(), 120);
+        assert_eq!(config.timeout_exit_code(), 200);
+        assert_eq!(config.oom_exit_code(), 201);
+    }
+
+    #[test]
+    fn test_execution_mode_serialization() {
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Direct,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("\"mode\":\"direct\""));
+
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Slurm,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("\"mode\":\"slurm\""));
+
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Auto,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("\"mode\":\"auto\""));
+    }
+
+    #[test]
+    fn test_execution_mode_deserialization() {
+        let json = r#"{"mode":"direct"}"#;
+        let config: ExecutionConfig = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(config.mode, ExecutionMode::Direct);
+
+        let json = r#"{"mode":"slurm"}"#;
+        let config: ExecutionConfig = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(config.mode, ExecutionMode::Slurm);
+
+        let json = r#"{"mode":"auto"}"#;
+        let config: ExecutionConfig = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(config.mode, ExecutionMode::Auto);
+    }
+
+    #[test]
+    fn test_execution_config_use_srun_by_mode() {
+        // Direct mode: use_srun = false
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Direct,
+            ..Default::default()
+        };
+        assert!(!config.use_srun());
+
+        // Slurm mode: use_srun = true
+        let config = ExecutionConfig {
+            mode: ExecutionMode::Slurm,
+            ..Default::default()
+        };
+        assert!(config.use_srun());
+    }
+
+    #[test]
+    fn test_execution_config_yaml_parsing() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+execution_config:
+  mode: direct
+  limit_resources: false
+  termination_signal: SIGUSR2
+  sigterm_lead_seconds: 45
+  sigkill_headroom_seconds: 90
+  timeout_exit_code: 200
+  oom_exit_code: 201
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let config = spec
+            .execution_config
+            .expect("execution_config should be present");
+        assert_eq!(config.mode, ExecutionMode::Direct);
+        assert_eq!(config.limit_resources, Some(false));
+        assert_eq!(config.termination_signal, Some("SIGUSR2".to_string()));
+        assert_eq!(config.sigterm_lead_seconds, Some(45));
+        assert_eq!(config.sigkill_headroom_seconds, Some(90));
+        assert_eq!(config.timeout_exit_code, Some(200));
+        assert_eq!(config.oom_exit_code, Some(201));
+    }
+
+    #[test]
+    fn test_execution_config_with_slurm_settings() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+execution_config:
+  mode: slurm
+  srun_termination_signal: "TERM@120"
+  enable_cpu_bind: true
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let config = spec
+            .execution_config
+            .expect("execution_config should be present");
+        assert_eq!(config.mode, ExecutionMode::Slurm);
+        assert_eq!(config.srun_termination_signal, Some("TERM@120".to_string()));
+        assert_eq!(config.enable_cpu_bind, Some(true));
     }
 }

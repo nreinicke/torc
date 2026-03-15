@@ -8,6 +8,7 @@ use crate::client::utils::detect_nvidia_gpus;
 use crate::client::workflow_manager::WorkflowManager;
 use crate::config::TorcConfig;
 use crate::models;
+use crate::time_utils::duration_string_to_seconds;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use env_logger::Builder;
@@ -94,6 +95,26 @@ pub struct Args {
     /// Skip TLS certificate verification (for testing only)
     #[arg(long, env = "TORC_TLS_INSECURE")]
     pub tls_insecure: bool,
+}
+
+fn resolve_end_time(
+    end_time: Option<&str>,
+    time_limit: Option<&str>,
+) -> Result<Option<DateTime<Utc>>, String> {
+    if let Some(end_time_str) = end_time {
+        return end_time_str
+            .parse::<DateTime<Utc>>()
+            .map(Some)
+            .map_err(|e| format!("Error parsing end_time: {}", e));
+    }
+
+    if let Some(time_limit_str) = time_limit {
+        let seconds = duration_string_to_seconds(time_limit_str)
+            .map_err(|e| format!("Error parsing time_limit '{}': {}", time_limit_str, e))?;
+        return Ok(Some(Utc::now() + chrono::Duration::seconds(seconds)));
+    }
+
+    Ok(None)
 }
 
 pub fn run(args: &Args) {
@@ -222,17 +243,14 @@ pub fn run(args: &Args) {
     info!("Output directory: {}", args.output_dir.display());
     info!("Log file: {}", log_file_path);
 
-    let parsed_end_time = if let Some(end_time_str) = &args.end_time {
-        match end_time_str.parse::<DateTime<Utc>>() {
-            Ok(dt) => Some(dt),
+    let parsed_end_time =
+        match resolve_end_time(args.end_time.as_deref(), args.time_limit.as_deref()) {
+            Ok(end_time) => end_time,
             Err(e) => {
-                error!("Error parsing end_time: {}", e);
+                error!("{}", e);
                 std::process::exit(1);
             }
-        }
-    } else {
-        None
-    };
+        };
 
     // Use new_with_specifics to only refresh CPU and memory, avoiding user enumeration
     // which can crash on HPC systems with large LDAP user databases
@@ -246,12 +264,13 @@ pub fn run(args: &Args) {
     let system_memory_gb = (system.total_memory() as f64) / (1024.0 * 1024.0 * 1024.0);
     let system_gpus = detect_nvidia_gpus();
 
-    let resources = models::ComputeNodesResources::new(
+    let mut resources = models::ComputeNodesResources::new(
         args.num_cpus.unwrap_or(system_cpus),
         args.memory_gb.unwrap_or(system_memory_gb),
         args.num_gpus.unwrap_or(system_gpus),
         args.num_nodes.unwrap_or(1),
     );
+    resources.time_limit.clone_from(&args.time_limit);
     let pid = 1; // TODO
     let unique_label = format!("wf{}_h{}_r{}", workflow_id, hostname, run_id);
 
@@ -307,5 +326,35 @@ pub fn run(args: &Args) {
             error!("Job runner failed: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_end_time;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn test_resolve_end_time_prefers_explicit_end_time() {
+        let explicit = "2026-03-15T12:00:00Z";
+        let resolved = resolve_end_time(Some(explicit), Some("PT1H")).unwrap();
+
+        assert_eq!(resolved.unwrap().to_rfc3339(), "2026-03-15T12:00:00+00:00");
+    }
+
+    #[test]
+    fn test_resolve_end_time_from_time_limit() {
+        let before = Utc::now();
+        let resolved = resolve_end_time(None, Some("PT1M")).unwrap().unwrap();
+        let after = Utc::now();
+
+        assert!(resolved >= before + Duration::seconds(60));
+        assert!(resolved <= after + Duration::seconds(60));
+    }
+
+    #[test]
+    fn test_resolve_end_time_rejects_invalid_time_limit() {
+        let err = resolve_end_time(None, Some("not-a-duration")).unwrap_err();
+        assert!(err.contains("Error parsing time_limit"));
     }
 }

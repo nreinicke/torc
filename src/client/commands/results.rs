@@ -40,25 +40,11 @@ fn get_job_name_map(
 ) -> std::collections::HashMap<i64, String> {
     let mut job_names = std::collections::HashMap::new();
 
-    match default_api::list_jobs(
-        config,
-        workflow_id,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None, // include_relationships
-        None, // active_compute_node_id
-    ) {
-        Ok(response) => {
-            if let Some(jobs) = response.items {
-                for job in jobs {
-                    if let Some(id) = job.id {
-                        job_names.insert(id, job.name);
-                    }
+    match pagination::paginate_jobs(config, workflow_id, pagination::JobListParams::new()) {
+        Ok(jobs) => {
+            for job in jobs {
+                if let Some(id) = job.id {
+                    job_names.insert(id, job.name);
                 }
             }
         }

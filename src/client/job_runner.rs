@@ -40,7 +40,7 @@ use crate::client::async_cli_command::AsyncCliCommand;
 use crate::client::resource_correction::format_duration_iso8601;
 use crate::client::resource_monitor::{ResourceMonitor, ResourceMonitorConfig};
 use crate::client::utils;
-use crate::client::workflow_spec::SlurmConfig;
+use crate::client::workflow_spec::{ExecutionConfig, ExecutionMode};
 use crate::config::TorcConfig;
 use crate::memory_utils::memory_string_to_gb;
 use crate::models::{
@@ -246,7 +246,7 @@ pub struct JobRunner {
     /// Maps job_id to the node name where the job is running.
     /// Used to increment the correct node's resources on job completion.
     job_nodes: HashMap<i64, String>,
-    slurm_config: SlurmConfig,
+    execution_config: ExecutionConfig,
     rules: ComputeNodeRules,
     resource_monitor: Option<ResourceMonitor>,
     /// Flag set when SIGTERM is received. Shared with signal handler.
@@ -293,7 +293,7 @@ impl JobRunner {
             workflow.compute_node_min_time_for_new_jobs_seconds,
             workflow.jobs_sort_method,
         );
-        let slurm_config = SlurmConfig::from_workflow_model(&workflow);
+        let execution_config = ExecutionConfig::from_workflow_model(&workflow);
         let job_resources: HashMap<i64, ResourceRequirementsModel> = HashMap::new();
         let orig_resources = ComputeNodesResources {
             id: resources.id,
@@ -354,7 +354,7 @@ impl JobRunner {
             job_resources,
             node_tracker,
             job_nodes: HashMap::new(),
-            slurm_config,
+            execution_config,
             rules,
             resource_monitor,
             termination_requested: Arc::new(AtomicBool::new(false)),
@@ -446,12 +446,6 @@ impl JobRunner {
             .expect("Failed to get hostname")
             .into_string()
             .expect("Hostname is not valid UTF-8");
-        let end_time = if let Some(end_time) = self.end_time {
-            end_time.timestamp()
-        } else {
-            i64::MAX
-        };
-
         // Create output directory if it doesn't exist
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir)?;
@@ -469,11 +463,12 @@ impl JobRunner {
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
 
+        let exec_mode = self.execution_config.effective_mode();
         info!(
             "Starting torc job runner version={} client_api_version={} server_version={} server_api_version={} \
             workflow_id={} hostname={} output_dir={} resources={:?} rules={:?} \
             job_completion_poll_interval={}s max_parallel_jobs={:?} end_time={:?} strict_scheduler_match={} \
-            use_srun={} limit_resources={}",
+            execution_mode={:?} limit_resources={}",
             version,
             version_check::CLIENT_API_VERSION,
             server_version,
@@ -487,8 +482,8 @@ impl JobRunner {
             self.max_parallel_jobs,
             self.end_time,
             self.torc_config.client.slurm.strict_scheduler_match,
-            self.slurm_config.use_srun(),
-            self.slurm_config.limit_resources(),
+            exec_mode,
+            self.execution_config.limit_resources(),
         );
 
         // Warn about version mismatches
@@ -535,6 +530,9 @@ impl JobRunner {
             }
 
             self.check_job_status();
+            if self.execution_config.limit_resources() && exec_mode == ExecutionMode::Direct {
+                self.handle_oom_violations();
+            }
             self.check_and_execute_actions();
 
             debug!("Check for new jobs");
@@ -563,17 +561,38 @@ impl JobRunner {
 
             thread::sleep(Duration::from_secs_f64(self.job_completion_poll_interval));
 
-            // Check if termination was requested (e.g., via SIGTERM)
             if self.is_termination_requested() {
                 info!("Termination requested (SIGTERM received). Terminating jobs.");
                 self.terminate_jobs();
                 break;
             }
 
-            if Utc::now().timestamp() >= end_time {
-                info!("End time reached. Terminating jobs and stopping job runner.");
-                self.terminate_jobs();
-                break;
+            if let Some(end_time_dt) = self.end_time {
+                if exec_mode == ExecutionMode::Direct {
+                    let timeout_start = self.direct_mode_timeout_start_time(end_time_dt);
+                    if Utc::now() >= timeout_start {
+                        info!(
+                            "Direct-mode timeout window reached. Starting termination sequence \
+                            workflow_id={} timeout_start={} end_time={} sigterm_lead_seconds={} \
+                            sigkill_headroom_seconds={}",
+                            self.workflow_id,
+                            timeout_start,
+                            end_time_dt,
+                            self.execution_config.sigterm_lead_seconds(),
+                            self.execution_config.sigkill_headroom_seconds()
+                        );
+                        self.terminate_jobs();
+                        break;
+                    }
+                } else if Utc::now() >= end_time_dt {
+                    info!(
+                        "End time reached. Terminating jobs and stopping job runner \
+                        workflow_id={} end_time={}",
+                        self.workflow_id, end_time_dt
+                    );
+                    self.terminate_jobs();
+                    break;
+                }
             }
 
             // Check if we should exit due to no new jobs being claimed for too long
@@ -704,6 +723,20 @@ impl JobRunner {
         }
     }
 
+    /// Returns when direct-mode timeout handling should start for a given end time.
+    ///
+    /// The runner begins graceful termination at:
+    /// `end_time - sigkill_headroom_seconds - sigterm_lead_seconds`
+    ///
+    /// This allows `terminate_jobs()` to send the configured termination signal first,
+    /// then wait `sigterm_lead_seconds`, and finally send SIGKILL at the configured
+    /// `sigkill_headroom_seconds` boundary.
+    fn direct_mode_timeout_start_time(&self, end_time: DateTime<Utc>) -> DateTime<Utc> {
+        let total_lead = self.execution_config.sigkill_headroom_seconds()
+            + self.execution_config.sigterm_lead_seconds();
+        end_time - chrono::Duration::seconds(total_lead)
+    }
+
     /// Terminates all running jobs and reports results to the server.
     ///
     /// This method performs a three-phase termination:
@@ -719,7 +752,15 @@ impl JobRunner {
     ///    - All terminated jobs are set to `JobStatus::Terminated`
     ///    - Results include execution time and resource metrics (if monitoring is enabled)
     ///
-    /// Sends SIGTERM to all running jobs and waits for them to exit.
+    /// Terminates all running jobs with a graceful shutdown timeline.
+    ///
+    /// The termination timeline (for direct mode) is:
+    /// 1. Send termination signal (configurable, default SIGTERM) to all jobs
+    /// 2. Wait `sigterm_lead_seconds` (default 30) for jobs to exit gracefully
+    /// 3. Send SIGKILL to any jobs still running
+    /// 4. Wait for all jobs to complete
+    ///
+    /// In Slurm mode, srun handles the termination timeline, so we just send SIGTERM.
     ///
     /// Called automatically by `run_worker()` when:
     /// - The termination flag is set (typically by a SIGTERM signal handler)
@@ -736,50 +777,120 @@ impl JobRunner {
             self.running_jobs.len()
         );
 
-        // Send SIGTERM to all running jobs for graceful termination.
-        // When running under srun, Slurm's KillWait controls the grace period before
-        // SIGKILL. The deprecated supports_termination field is no longer consulted.
-        for (job_id, async_job) in self.running_jobs.iter_mut() {
-            info!(
-                "Job SIGTERM workflow_id={} job_id={}",
-                self.workflow_id, job_id
-            );
-            if let Err(e) = async_job.terminate() {
-                warn!(
-                    "Job SIGTERM failed workflow_id={} job_id={} error={}",
-                    self.workflow_id, job_id, e
-                );
-            }
-        }
+        // Track which jobs were force-killed (did not respond to the graceful signal).
+        // These get the configured timeout_exit_code; jobs that exited on their own
+        // keep their actual exit code.
+        let mut force_killed: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
-        // Second pass: wait for all jobs to complete and collect results
-        let mut results = Vec::new();
-        for (job_id, async_job) in self.running_jobs.iter_mut() {
-            match async_job.wait_for_completion() {
-                Ok(exit_code) => {
-                    debug!(
-                        "Job terminated workflow_id={} job_id={} exit_code={}",
-                        self.workflow_id, job_id, exit_code
+        // In direct mode, we manage the termination timeline ourselves.
+        // In Slurm mode, we SIGTERM the srun wrapper processes so they exit
+        // promptly rather than blocking wait_for_completion() indefinitely.
+        if self.execution_config.effective_mode() == ExecutionMode::Direct {
+            let termination_signal = self.execution_config.termination_signal();
+            let sigterm_lead_seconds = self.execution_config.sigterm_lead_seconds();
+
+            // First pass: send termination signal to all running jobs
+            for (job_id, async_job) in self.running_jobs.iter_mut() {
+                info!(
+                    "Job {} workflow_id={} job_id={}",
+                    termination_signal, self.workflow_id, job_id
+                );
+                if let Err(e) = async_job.send_signal(termination_signal) {
+                    warn!(
+                        "Job {} failed workflow_id={} job_id={} error={}",
+                        termination_signal, self.workflow_id, job_id, e
                     );
-                    let attempt_id = async_job.job.attempt_id.unwrap_or(1);
-                    let result = async_job.get_result(
-                        self.run_id,
-                        attempt_id,
-                        self.compute_node_id,
-                        self.resource_monitor.as_ref(),
-                    );
-                    results.push((*job_id, result));
                 }
-                Err(e) => {
-                    error!(
-                        "Job wait failed workflow_id={} job_id={} error={}",
+            }
+
+            // Wait for graceful termination before sending SIGKILL
+            if sigterm_lead_seconds > 0 {
+                info!(
+                    "Waiting {}s for graceful termination before SIGKILL",
+                    sigterm_lead_seconds
+                );
+                thread::sleep(Duration::from_secs(sigterm_lead_seconds as u64));
+
+                // Check which jobs exited gracefully during the wait
+                for async_job in self.running_jobs.values_mut() {
+                    let _ = async_job.check_status();
+                }
+
+                // Send SIGKILL to any jobs still running
+                for (job_id, async_job) in self.running_jobs.iter_mut() {
+                    if async_job.is_running {
+                        info!(
+                            "Job SIGKILL workflow_id={} job_id={}",
+                            self.workflow_id, job_id
+                        );
+                        force_killed.insert(*job_id);
+                        if let Err(e) = async_job.send_sigkill() {
+                            warn!(
+                                "Job SIGKILL failed workflow_id={} job_id={} error={}",
+                                self.workflow_id, job_id, e
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // Slurm mode: send SIGTERM to srun wrapper processes so they
+            // exit and don't block wait_for_completion() indefinitely.
+            for (job_id, async_job) in self.running_jobs.iter_mut() {
+                info!(
+                    "Job SIGTERM (srun) workflow_id={} job_id={}",
+                    self.workflow_id, job_id
+                );
+                if let Err(e) = async_job.terminate() {
+                    warn!(
+                        "Job SIGTERM (srun) failed workflow_id={} job_id={} error={}",
                         self.workflow_id, job_id, e
                     );
                 }
             }
         }
 
-        // Third pass: handle completions (notify server)
+        // Wait for all jobs to complete and collect results.
+        // Jobs that responded to SIGTERM keep their own exit code (the user may
+        // want to trigger off it). Jobs that were SIGKILLed get timeout_exit_code.
+        let timeout_exit_code = self.execution_config.timeout_exit_code();
+        let mut results = Vec::new();
+        for (job_id, async_job) in self.running_jobs.iter_mut() {
+            // Jobs that already exited during check_status() above are already
+            // complete — get_result() works on them without wait_for_completion().
+            if !async_job.is_complete {
+                match async_job.wait_for_completion() {
+                    Ok(exit_code) => {
+                        debug!(
+                            "Job terminated workflow_id={} job_id={} exit_code={}",
+                            self.workflow_id, job_id, exit_code
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "Job wait failed workflow_id={} job_id={} error={}",
+                            self.workflow_id, job_id, e
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+            let mut result = async_job.get_result(
+                self.run_id,
+                attempt_id,
+                self.compute_node_id,
+                self.resource_monitor.as_ref(),
+            );
+            result.status = JobStatus::Terminated;
+            if force_killed.contains(job_id) {
+                result.return_code = timeout_exit_code as i64;
+            }
+            results.push((*job_id, result));
+        }
+
+        // Final pass: handle completions (notify server)
         for (job_id, result) in results {
             self.handle_job_completion(job_id, result);
         }
@@ -828,6 +939,102 @@ impl JobRunner {
                 result.status = JobStatus::Failed;
             }
 
+            self.handle_job_completion(job_id, result);
+        }
+    }
+
+    /// Handle OOM violations detected by the resource monitor.
+    ///
+    /// When running in direct mode with `limit_resources: true`, the resource monitor
+    /// tracks memory usage for each job. If a job exceeds its configured memory limit,
+    /// an OOM violation is sent. This method:
+    ///
+    /// 1. Polls for OOM violations from the resource monitor
+    /// 2. Immediately SIGKILLs the violating job (no grace period for OOM)
+    /// 3. Waits for the job to exit and collects its result
+    /// 4. Reports the job as failed with the configured `oom_exit_code`
+    fn handle_oom_violations(&mut self) {
+        let violations = match &self.resource_monitor {
+            Some(monitor) => monitor.recv_oom_violations(),
+            None => return,
+        };
+
+        if violations.is_empty() {
+            return;
+        }
+
+        let oom_exit_code = self.execution_config.oom_exit_code();
+
+        // First pass: log and send SIGKILL to all OOM jobs
+        let mut killed_job_ids = Vec::new();
+        for violation in &violations {
+            warn!(
+                "OOM violation detected: workflow_id={} job_id={} pid={} memory={:.2}GB limit={:.2}GB",
+                self.workflow_id,
+                violation.job_id,
+                violation.pid,
+                violation.memory_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+                violation.limit_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            );
+
+            if let Some(async_job) = self.running_jobs.get_mut(&violation.job_id) {
+                // Check if still running - job may have exited between OOM detection and now
+                if !async_job.is_running {
+                    debug!(
+                        "OOM job already exited workflow_id={} job_id={}",
+                        self.workflow_id, violation.job_id
+                    );
+                    continue;
+                }
+                warn!(
+                    "Killing OOM job workflow_id={} job_id={}",
+                    self.workflow_id, violation.job_id
+                );
+                if let Err(e) = async_job.send_sigkill() {
+                    error!(
+                        "Failed to SIGKILL OOM job workflow_id={} job_id={} error={}",
+                        self.workflow_id, violation.job_id, e
+                    );
+                } else {
+                    killed_job_ids.push(violation.job_id);
+                }
+            }
+        }
+
+        // Second pass: wait for completion and handle results
+        let mut results = Vec::new();
+        for job_id in &killed_job_ids {
+            if let Some(async_job) = self.running_jobs.get_mut(job_id) {
+                match async_job.wait_for_completion() {
+                    Ok(_) => {
+                        debug!(
+                            "OOM job exited workflow_id={} job_id={}",
+                            self.workflow_id, job_id
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "OOM job wait failed workflow_id={} job_id={} error={}",
+                            self.workflow_id, job_id, e
+                        );
+                    }
+                }
+
+                let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+                let mut result = async_job.get_result(
+                    self.run_id,
+                    attempt_id,
+                    self.compute_node_id,
+                    self.resource_monitor.as_ref(),
+                );
+                result.return_code = oom_exit_code as i64;
+                result.status = JobStatus::Failed;
+                results.push((*job_id, result));
+            }
+        }
+
+        // Third pass: handle completions (notify server)
+        for (job_id, result) in results {
             self.handle_job_completion(job_id, result);
         }
     }
@@ -1620,11 +1827,12 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
-                        self.slurm_config.limit_resources(),
-                        self.slurm_config.use_srun(),
-                        self.slurm_config.enable_cpu_bind(),
+                        self.execution_config.limit_resources(),
+                        self.execution_config.effective_mode(),
+                        self.execution_config.enable_cpu_bind(),
                         self.end_time,
-                        self.slurm_config.srun_termination_signal.as_deref(),
+                        self.execution_config.srun_termination_signal.as_deref(),
+                        self.execution_config.sigkill_headroom_seconds(),
                         target_node,
                     ) {
                         Ok(()) => {
@@ -1750,11 +1958,12 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
-                        self.slurm_config.limit_resources(),
-                        self.slurm_config.use_srun(),
-                        self.slurm_config.enable_cpu_bind(),
+                        self.execution_config.limit_resources(),
+                        self.execution_config.effective_mode(),
+                        self.execution_config.enable_cpu_bind(),
                         self.end_time,
-                        self.slurm_config.srun_termination_signal.as_deref(),
+                        self.execution_config.srun_termination_signal.as_deref(),
+                        self.execution_config.sigkill_headroom_seconds(),
                         None, // target_node: user-parallelism mode doesn't use per-node placement
                     ) {
                         Ok(()) => {
@@ -2408,6 +2617,36 @@ mod tests {
         let stats = make_stats(None, None);
         backfill_sacct_into_result(&mut result, &stats);
         assert_eq!(result.peak_memory_bytes, None);
+    }
+
+    #[test]
+    fn test_direct_mode_timeout_start_time_subtracts_headroom_and_lead() {
+        let mut runner = make_runner(ComputeNodesResources::new(1, 1.0, 0, 1));
+        runner.execution_config = ExecutionConfig {
+            mode: ExecutionMode::Direct,
+            sigterm_lead_seconds: Some(30),
+            sigkill_headroom_seconds: Some(60),
+            ..Default::default()
+        };
+
+        let end_time = Utc::now() + chrono::Duration::hours(1);
+        let timeout_start = runner.direct_mode_timeout_start_time(end_time);
+
+        assert_eq!(timeout_start, end_time - chrono::Duration::seconds(90));
+    }
+
+    #[test]
+    fn test_direct_mode_timeout_start_time_uses_default_values() {
+        let mut runner = make_runner(ComputeNodesResources::new(1, 1.0, 0, 1));
+        runner.execution_config = ExecutionConfig {
+            mode: ExecutionMode::Direct,
+            ..Default::default()
+        };
+
+        let end_time = Utc::now() + chrono::Duration::hours(1);
+        let timeout_start = runner.direct_mode_timeout_start_time(end_time);
+
+        assert_eq!(timeout_start, end_time - chrono::Duration::seconds(90));
     }
 
     #[test]

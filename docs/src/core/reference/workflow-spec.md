@@ -25,7 +25,7 @@ The top-level container for a complete workflow definition.
 | `resource_monitor`                               | [ResourceMonitorConfig](#resourcemonitorconfig)         | none         | Resource monitoring configuration                                         |
 | `actions`                                        | [[WorkflowActionSpec](#workflowactionspec)]             | none         | Actions to execute based on workflow/job state transitions                |
 | `use_pending_failed`                             | boolean                                                 | false        | Use PendingFailed status for failed jobs (enables AI-assisted recovery)   |
-| `slurm_config`                                   | [SlurmConfig](#slurmconfig)                             | none         | Slurm job step configuration (srun options)                               |
+| `execution_config`                               | [ExecutionConfig](#executionconfig)                     | none         | Execution mode and termination settings                                   |
 | `compute_node_wait_for_new_jobs_seconds`         | integer                                                 | none         | Compute nodes wait for new jobs this long before exiting                  |
 | `compute_node_ignore_workflow_completion`        | boolean                                                 | false        | Compute nodes hold allocations even after workflow completes              |
 | `compute_node_wait_for_healthy_database_minutes` | integer                                                 | none         | Compute nodes wait this many minutes for database recovery                |
@@ -170,31 +170,67 @@ Defines a Slurm HPC job scheduler configuration.
 | `tmp`             | string  | none         | Temporary storage specification              |
 | `extra`           | string  | none         | Additional Slurm parameters                  |
 
-## SlurmConfig
+## ExecutionConfig
 
-Slurm job step configuration controlling how jobs are executed inside Slurm allocations. These
-settings affect srun arguments passed for each job step.
+Controls how jobs are executed and terminated. Supports three modes for different execution
+environments.
 
-For backward compatibility, these fields can also be specified as top-level WorkflowSpec fields
-(`limit_resources`, `use_srun`, `srun_termination_signal`, `enable_cpu_bind`). When both are
-present, `slurm_config` takes precedence.
+| Name                       | Type    | Default     | Description                                                   |
+| -------------------------- | ------- | ----------- | ------------------------------------------------------------- |
+| `mode`                     | string  | `"auto"`    | Execution mode: `"direct"`, `"slurm"`, or `"auto"`            |
+| `limit_resources`          | boolean | `true`      | Enforce memory/CPU limits                                     |
+| `termination_signal`       | string  | `"SIGTERM"` | Signal to send before SIGKILL (direct mode)                   |
+| `sigterm_lead_seconds`     | integer | `30`        | Seconds before SIGKILL to send termination signal             |
+| `sigkill_headroom_seconds` | integer | `60`        | Seconds before end_time for SIGKILL or srun --time adjustment |
+| `timeout_exit_code`        | integer | `152`       | Exit code for timed-out jobs (matches Slurm TIMEOUT)          |
+| `oom_exit_code`            | integer | `137`       | Exit code for OOM-killed jobs (128 + SIGKILL)                 |
+| `srun_termination_signal`  | string  | none        | Slurm signal spec for `srun --signal=<value>`                 |
+| `enable_cpu_bind`          | boolean | `false`     | Allow Slurm CPU binding                                       |
 
-| Name                      | Type    | Default | Description                                                            |
-| ------------------------- | ------- | ------- | ---------------------------------------------------------------------- |
-| `limit_resources`         | boolean | `true`  | Pass `--mem` and `--cpus-per-task` to srun for cgroup enforcement      |
-| `use_srun`                | boolean | `true`  | Wrap jobs with srun for accounting and cgroup enforcement              |
-| `srun_termination_signal` | string  | none    | Signal spec for `srun --signal=<value>` (e.g. `"TERM@120"`)            |
-| `enable_cpu_bind`         | boolean | `false` | Allow Slurm CPU binding (default: disabled via `srun --cpu-bind=none`) |
+### Execution Modes
 
-**Example:**
+| Mode     | Description                                                                    |
+| -------- | ------------------------------------------------------------------------------ |
+| `direct` | Torc manages job execution directly. Use outside Slurm or when srun unreliable |
+| `slurm`  | Jobs wrapped with `srun`. Slurm manages resource limits and termination        |
+| `auto`   | Uses `slurm` if `SLURM_JOB_ID` is set, otherwise `direct` (default)            |
+
+### Direct Mode Example
 
 ```yaml
-slurm_config:
+execution_config:
+  mode: direct
   limit_resources: true
-  use_srun: true
+  termination_signal: SIGTERM
+  sigterm_lead_seconds: 30
+  sigkill_headroom_seconds: 60
+  timeout_exit_code: 152
+  oom_exit_code: 137
+```
+
+### Slurm Mode Example
+
+```yaml
+execution_config:
+  mode: slurm
   srun_termination_signal: "TERM@120"
+  sigkill_headroom_seconds: 180
   enable_cpu_bind: false
 ```
+
+### Termination Timeline (Direct Mode)
+
+With `sigkill_headroom_seconds=60` and `sigterm_lead_seconds=30`:
+
+1. `end_time - 90s`: Send SIGTERM (or configured `termination_signal`)
+2. `end_time - 60s`: Send SIGKILL to remaining jobs, set exit code to `timeout_exit_code`
+3. `end_time`: Job runner exits
+
+### Slurm Mode Headroom
+
+In Slurm mode, `sigkill_headroom_seconds` controls `srun --time`. The step time limit is set to
+`remaining_time - sigkill_headroom_seconds`, allowing the job runner to detect completion before the
+allocation expires.
 
 ## SlurmDefaultsSpec
 
