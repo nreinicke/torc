@@ -26,7 +26,7 @@
 
 use chrono::{DateTime, Utc};
 use log::{self, debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -240,6 +240,18 @@ pub struct JobRunner {
     is_subtask: bool,
     running_jobs: HashMap<i64, AsyncCliCommand>,
     job_resources: HashMap<i64, ResourceRequirementsModel>,
+    /// Pool of GPU device identifiers available to this runner (e.g. `"0"`, `"1"` or UUIDs).
+    ///
+    /// When running in direct mode, Torc sets `CUDA_VISIBLE_DEVICES` (and friends) itself
+    /// to prevent concurrent GPU jobs from all defaulting to GPU 0.
+    available_gpu_devices: VecDeque<String>,
+    /// Snapshot of the full GPU device pool at startup, used for modulo-based fallback
+    /// when the available pool is exhausted (e.g. in user-parallelism mode).
+    all_gpu_devices: Vec<String>,
+    /// Counter for round-robin GPU assignment when the pool is exhausted.
+    gpu_fallback_counter: usize,
+    /// GPUs assigned to a running job, keyed by job_id.
+    job_gpu_devices: HashMap<i64, Vec<String>>,
     /// Per-node resource tracker for multi-node Slurm allocations.
     /// None for single-node allocations where dividing total by 1 is correct.
     node_tracker: Option<PerNodeTracker>,
@@ -264,6 +276,131 @@ pub struct JobRunner {
 }
 
 impl JobRunner {
+    fn parse_visible_devices_list(value: &str) -> Vec<String> {
+        value
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    fn detect_gpu_devices(resources_num_gpus: i64) -> (VecDeque<String>, bool) {
+        // Prefer an explicit allocation-scoped device list if present.
+        // Slurm: CUDA_VISIBLE_DEVICES is commonly set at allocation scope.
+        // Some clusters also set SLURM_JOB_GPUS / SLURM_STEP_GPUS.
+        if let Ok(v) = std::env::var("CUDA_VISIBLE_DEVICES") {
+            let parsed = Self::parse_visible_devices_list(&v);
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+        if let Ok(v) = std::env::var("SLURM_STEP_GPUS") {
+            let parsed = Self::parse_visible_devices_list(&v)
+                .into_iter()
+                .map(|s| {
+                    s.trim_start_matches("gpu:")
+                        .trim_start_matches("GPU:")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+        if let Ok(v) = std::env::var("SLURM_JOB_GPUS") {
+            let parsed = Self::parse_visible_devices_list(&v)
+                .into_iter()
+                .map(|s| {
+                    s.trim_start_matches("gpu:")
+                        .trim_start_matches("GPU:")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            if !parsed.is_empty() {
+                return (VecDeque::from(parsed), true);
+            }
+        }
+
+        // Fall back to ordinal device indices.
+        let fallback = (0..resources_num_gpus.max(0))
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>();
+        (VecDeque::from(fallback), false)
+    }
+
+    fn allocate_gpu_devices(&mut self, job_id: i64, num_gpus: i64) -> Option<String> {
+        if num_gpus <= 0 {
+            return None;
+        }
+
+        let requested = num_gpus as usize;
+        if self.available_gpu_devices.len() >= requested {
+            // Normal path: allocate from the available pool.
+            let mut assigned = Vec::with_capacity(requested);
+            for _ in 0..requested {
+                if let Some(dev) = self.available_gpu_devices.pop_front() {
+                    assigned.push(dev);
+                }
+            }
+
+            let visible = assigned.join(",");
+            self.job_gpu_devices.insert(job_id, assigned);
+            debug!(
+                "Assigned GPUs workflow_id={} job_id={} gpus={}",
+                self.workflow_id, job_id, visible
+            );
+            return Some(visible);
+        }
+
+        // Pool exhausted — this can happen in user-parallelism mode where jobs are
+        // claimed without resource filtering. Use round-robin over the full device
+        // pool so behaviour is deterministic and jobs don't all default to GPU 0.
+        if self.all_gpu_devices.is_empty() {
+            error!(
+                "No GPU devices configured but job requires GPUs \
+                 workflow_id={} job_id={} requested={}",
+                self.workflow_id, job_id, requested
+            );
+            return None;
+        }
+
+        let pool_size = self.all_gpu_devices.len();
+        // Clamp to pool size to avoid duplicate device IDs in CUDA_VISIBLE_DEVICES,
+        // which can cause confusing behavior with CUDA/HIP runtimes.
+        let clamped = requested.min(pool_size);
+        if clamped < requested {
+            warn!(
+                "Job requests {} GPUs but only {} devices exist, clamping \
+                 workflow_id={} job_id={}",
+                requested, pool_size, self.workflow_id, job_id
+            );
+        }
+        let mut assigned = Vec::with_capacity(clamped);
+        for _ in 0..clamped {
+            let idx = self.gpu_fallback_counter % pool_size;
+            assigned.push(self.all_gpu_devices[idx].clone());
+            self.gpu_fallback_counter += 1;
+        }
+
+        let visible = assigned.join(",");
+        warn!(
+            "GPU pool exhausted, using round-robin fallback \
+             workflow_id={} job_id={} gpus={} (oversubscribed)",
+            self.workflow_id, job_id, visible
+        );
+        // Don't track in job_gpu_devices — these are shared, not exclusively owned.
+        Some(visible)
+    }
+
+    fn release_gpu_devices(&mut self, job_id: i64) {
+        if let Some(devs) = self.job_gpu_devices.remove(&job_id) {
+            for dev in devs {
+                self.available_gpu_devices.push_back(dev);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Configuration,
@@ -294,7 +431,24 @@ impl JobRunner {
             workflow.jobs_sort_method,
         );
         let execution_config = ExecutionConfig::from_workflow_model(&workflow);
+        if execution_config.effective_mode() == ExecutionMode::Slurm
+            && std::env::var("SLURM_JOB_ID").is_err()
+        {
+            panic!(
+                "Execution mode is 'slurm' but SLURM_JOB_ID is not set. \
+                 Cannot run jobs with srun outside a Slurm allocation."
+            );
+        }
         let job_resources: HashMap<i64, ResourceRequirementsModel> = HashMap::new();
+
+        // If the environment already constrains visible GPUs (common inside Slurm allocations),
+        // use that list as the authoritative pool and sync the resource counts to match.
+        let mut resources = resources;
+        let (available_gpu_devices, env_constrained) = Self::detect_gpu_devices(resources.num_gpus);
+        if env_constrained {
+            resources.num_gpus = available_gpu_devices.len() as i64;
+        }
+
         let orig_resources = ComputeNodesResources {
             id: resources.id,
             num_cpus: resources.num_cpus,
@@ -352,6 +506,10 @@ impl JobRunner {
             is_subtask,
             running_jobs,
             job_resources,
+            all_gpu_devices: Vec::from(available_gpu_devices.clone()),
+            gpu_fallback_counter: 0,
+            available_gpu_devices,
+            job_gpu_devices: HashMap::new(),
             node_tracker,
             job_nodes: HashMap::new(),
             execution_config,
@@ -1374,6 +1532,7 @@ impl JobRunner {
         }
         self.running_jobs.remove(&job_id);
         self.job_resources.remove(&job_id);
+        self.release_gpu_devices(job_id);
     }
 
     /// Run a recovery script with environment variables set.
@@ -1819,6 +1978,12 @@ impl JobRunner {
                     }
 
                     let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+                    let effective_mode = self.execution_config.effective_mode();
+                    let gpu_visible_devices = if effective_mode == ExecutionMode::Slurm {
+                        None
+                    } else {
+                        self.allocate_gpu_devices(job_id, job_rr.num_gpus)
+                    };
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -1827,8 +1992,9 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
-                        self.execution_config.effective_mode(),
+                        effective_mode,
                         self.execution_config.enable_cpu_bind(),
                         self.end_time,
                         self.execution_config.srun_termination_signal.as_deref(),
@@ -1857,6 +2023,7 @@ impl JobRunner {
                                 "Job start failed workflow_id={} job_id={} error={}",
                                 self.workflow_id, job_id, e
                             );
+                            self.release_gpu_devices(job_id);
                             continue;
                         }
                     }
@@ -1950,6 +2117,12 @@ impl JobRunner {
                     }
 
                     let attempt_id = async_job.job.attempt_id.unwrap_or(1);
+                    let effective_mode = self.execution_config.effective_mode();
+                    let gpu_visible_devices = if effective_mode == ExecutionMode::Slurm {
+                        None
+                    } else {
+                        self.allocate_gpu_devices(job_id, job_rr.num_gpus)
+                    };
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -1958,8 +2131,9 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
-                        self.execution_config.effective_mode(),
+                        effective_mode,
                         self.execution_config.enable_cpu_bind(),
                         self.end_time,
                         self.execution_config.srun_termination_signal.as_deref(),
@@ -1982,6 +2156,7 @@ impl JobRunner {
                                 "Job start failed workflow_id={} job_id={} error={}",
                                 self.workflow_id, job_id, e
                             );
+                            self.release_gpu_devices(job_id);
                             continue;
                         }
                     }
@@ -2525,6 +2700,7 @@ mod tests {
     use super::*;
     use crate::client::apis::configuration::Configuration;
     use crate::models::{JobStatus, ResultModel, SlurmStatsModel};
+    use serial_test::serial;
 
     fn make_result(
         peak_memory_bytes: Option<i64>,
@@ -2810,5 +2986,126 @@ mod tests {
         assert_eq!(runner.resources.num_cpus, resources.num_cpus);
         assert!((runner.resources.memory_gb - resources.memory_gb).abs() < 0.01);
         assert_eq!(runner.resources.num_gpus, resources.num_gpus);
+    }
+
+    // =========================================================================
+    // GPU device allocation tests
+    // =========================================================================
+
+    /// Clear GPU-related env vars so `detect_gpu_devices()` falls back to ordinal
+    /// indices, making tests deterministic regardless of the host environment.
+    fn clear_gpu_env_vars() {
+        // SAFETY: GPU tests are marked #[serial] so no concurrent env var access.
+        unsafe {
+            std::env::remove_var("CUDA_VISIBLE_DEVICES");
+            std::env::remove_var("SLURM_STEP_GPUS");
+            std::env::remove_var("SLURM_JOB_GPUS");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_zero_gpus_returns_none() {
+        clear_gpu_env_vars();
+        let resources = ComputeNodesResources::new(4, 16.0, 2, 1);
+        let mut runner = make_runner(resources);
+        assert_eq!(runner.allocate_gpu_devices(1, 0), None);
+        assert_eq!(runner.allocate_gpu_devices(1, -1), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_normal_allocation() {
+        clear_gpu_env_vars();
+        let resources = ComputeNodesResources::new(4, 16.0, 4, 1);
+        let mut runner = make_runner(resources);
+
+        // Allocate 2 GPUs for job 1
+        let result = runner.allocate_gpu_devices(1, 2);
+        assert_eq!(result, Some("0,1".to_string()));
+
+        // Allocate 1 GPU for job 2
+        let result = runner.allocate_gpu_devices(2, 1);
+        assert_eq!(result, Some("2".to_string()));
+
+        // Only 1 GPU left
+        assert_eq!(runner.available_gpu_devices.len(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_release_returns_to_pool() {
+        clear_gpu_env_vars();
+        let resources = ComputeNodesResources::new(4, 16.0, 2, 1);
+        let mut runner = make_runner(resources);
+
+        // Allocate all GPUs
+        let result = runner.allocate_gpu_devices(1, 2);
+        assert_eq!(result, Some("0,1".to_string()));
+        assert!(runner.available_gpu_devices.is_empty());
+
+        // Release them
+        runner.release_gpu_devices(1);
+        assert_eq!(runner.available_gpu_devices.len(), 2);
+
+        // Can allocate again
+        let result = runner.allocate_gpu_devices(2, 2);
+        assert_eq!(result, Some("0,1".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_fallback_on_exhaustion() {
+        clear_gpu_env_vars();
+        let resources = ComputeNodesResources::new(4, 16.0, 2, 1);
+        let mut runner = make_runner(resources);
+
+        // Exhaust the pool
+        let result = runner.allocate_gpu_devices(1, 2);
+        assert_eq!(result, Some("0,1".to_string()));
+
+        // Pool is empty — should get round-robin fallback
+        let result = runner.allocate_gpu_devices(2, 1);
+        assert_eq!(result, Some("0".to_string()));
+
+        // Next round-robin picks device 1
+        let result = runner.allocate_gpu_devices(3, 1);
+        assert_eq!(result, Some("1".to_string()));
+
+        // Wraps around
+        let result = runner.allocate_gpu_devices(4, 1);
+        assert_eq!(result, Some("0".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_fallback_multi_gpu() {
+        clear_gpu_env_vars();
+        let resources = ComputeNodesResources::new(4, 16.0, 3, 1);
+        let mut runner = make_runner(resources);
+
+        // Exhaust the pool
+        runner.allocate_gpu_devices(1, 3);
+
+        // Request 2 GPUs via fallback — should get round-robin across pool of 3
+        let result = runner.allocate_gpu_devices(2, 2);
+        assert_eq!(result, Some("0,1".to_string()));
+
+        // Next fallback continues from counter=2
+        let result = runner.allocate_gpu_devices(3, 2);
+        assert_eq!(result, Some("2,0".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_allocate_gpu_devices_no_pool_returns_none() {
+        clear_gpu_env_vars();
+        // 0 GPUs configured
+        let resources = ComputeNodesResources::new(4, 16.0, 0, 1);
+        let mut runner = make_runner(resources);
+
+        // Even with fallback, no devices exist
+        let result = runner.allocate_gpu_devices(1, 1);
+        assert_eq!(result, None);
     }
 }

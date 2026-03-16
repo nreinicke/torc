@@ -201,6 +201,7 @@ impl AsyncCliCommand {
         resource_monitor: Option<&ResourceMonitor>,
         api_url: &str,
         resource_requirements: Option<&ResourceRequirementsModel>,
+        gpu_visible_devices: Option<&str>,
         limit_resources: bool,
         execution_mode: ExecutionMode,
         enable_cpu_bind: bool,
@@ -233,7 +234,10 @@ impl AsyncCliCommand {
         };
 
         let slurm_job_id = if execution_mode == ExecutionMode::Slurm {
-            std::env::var("SLURM_JOB_ID").ok()
+            // JobRunner::new() guarantees SLURM_JOB_ID is set when mode is Slurm.
+            Some(std::env::var("SLURM_JOB_ID").expect(
+                "SLURM_JOB_ID must be set in Slurm mode (should have been caught at startup)",
+            ))
         } else {
             None
         };
@@ -270,6 +274,13 @@ impl AsyncCliCommand {
             shell.arg(&command_str);
             shell
         };
+
+        if let Some(v) = gpu_visible_devices {
+            cmd.env("CUDA_VISIBLE_DEVICES", v)
+                .env("HIP_VISIBLE_DEVICES", v)
+                .env("ROCR_VISIBLE_DEVICES", v)
+                .env("TORC_GPU_VISIBLE_DEVICES", v);
+        }
 
         let child = cmd
             .env("TORC_WORKFLOW_ID", workflow_id_str)

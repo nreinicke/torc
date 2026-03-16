@@ -137,6 +137,7 @@ fn run_and_capture_srun_args_with_headroom(
         None,
         "http://localhost:8080/torc-service/v1",
         rr,
+        None, // gpu_visible_devices
         limit_resources,
         execution_mode,
         enable_cpu_bind,
@@ -453,6 +454,7 @@ fn test_srun_with_end_time_insufficient_time_rejected() {
         None,
         "http://localhost:8080/torc-service/v1",
         Some(&rr),
+        None, // gpu_visible_devices
         true,
         ExecutionMode::Slurm,
         false,
@@ -657,6 +659,7 @@ fn test_srun_step_name_format() {
         None,
         "http://localhost:8080/torc-service/v1",
         Some(&rr),
+        None, // gpu_visible_devices
         true,
         ExecutionMode::Slurm,
         false,
@@ -677,44 +680,6 @@ fn test_srun_step_name_format() {
     assert!(
         args.contains("--job-name=wf100_j42_r3_a5"),
         "Missing expected step name --job-name=wf100_j42_r3_a5: {}",
-        args
-    );
-}
-
-#[test]
-#[serial]
-fn test_srun_no_slurm_job_id_falls_back_to_shell() {
-    let temp_dir = TempDir::new().unwrap();
-    let args_log = temp_dir.path().join("srun_args.log");
-
-    // Set TORC_FAKE_SRUN but NOT SLURM_JOB_ID
-    unsafe {
-        env::remove_var("SLURM_JOB_ID");
-        env::set_var(
-            "TORC_FAKE_SRUN",
-            fake_srun_path().to_string_lossy().to_string(),
-        );
-        env::set_var("TORC_SRUN_ARGS_LOG", args_log.to_string_lossy().to_string());
-    }
-
-    let rr = make_rr("compute", 4, "8g", 1);
-    let args = run_and_capture_srun_args(
-        &temp_dir,
-        &args_log,
-        Some(&rr),
-        true,                 // limit_resources
-        ExecutionMode::Slurm, // execution_mode
-        false,                // enable_cpu_bind
-        None,
-        None,
-    );
-
-    cleanup_srun_env();
-
-    // Without SLURM_JOB_ID, even with use_srun=true, it should fall back to shell
-    assert!(
-        args.is_none(),
-        "srun should not have been invoked without SLURM_JOB_ID, but got: {:?}",
         args
     );
 }

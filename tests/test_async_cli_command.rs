@@ -67,8 +67,9 @@ fn test_async_cli_command_start_simple_command(start_server: &ServerProcess) {
         None,
         "http://localhost:8080/torc-service/v1",
         None,
+        None, // gpu_visible_devices
         true,
-        ExecutionMode::Slurm,
+        ExecutionMode::Direct,
         false,
         None,
         None,
@@ -110,8 +111,9 @@ fn test_async_cli_command_start_already_running() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -130,8 +132,9 @@ fn test_async_cli_command_start_already_running() {
         None,
         "http://localhost:8080/torc-service/v1",
         None,
+        None, // gpu_visible_devices
         true,
-        ExecutionMode::Slurm,
+        ExecutionMode::Direct,
         false,
         None,
         None,
@@ -161,8 +164,9 @@ fn test_async_cli_command_start_invalid_directory() {
         None,
         "http://localhost:8080/torc-service/v1",
         None,
+        None, // gpu_visible_devices
         true,
-        ExecutionMode::Slurm,
+        ExecutionMode::Direct,
         false,
         None,
         None,
@@ -188,8 +192,9 @@ fn test_async_cli_command_check_status_completion() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -237,8 +242,9 @@ fn test_async_cli_command_with_exit_code_success() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -270,8 +276,9 @@ fn test_async_cli_command_with_exit_code_failure() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -304,8 +311,9 @@ fn test_async_cli_command_cancel() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -351,8 +359,9 @@ fn test_async_cli_command_terminate() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -391,8 +400,9 @@ fn test_async_cli_command_wait_for_completion() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -433,8 +443,9 @@ fn test_async_cli_command_get_result() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -482,8 +493,9 @@ fn test_async_cli_command_with_invocation_script() {
         None,
         "http://localhost:8080/torc-service/v1",
         None,
+        None, // gpu_visible_devices
         true,
-        ExecutionMode::Slurm,
+        ExecutionMode::Direct,
         false,
         None,
         None,
@@ -518,8 +530,9 @@ fn test_async_cli_command_environment_variables() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -541,6 +554,67 @@ fn test_async_cli_command_environment_variables() {
 
 #[rstest]
 #[cfg(unix)]
+fn test_async_cli_command_gpu_visible_devices_env() {
+    let job = create_test_job_model(
+        1,
+        124,
+        "echo CUDA=$CUDA_VISIBLE_DEVICES HIP=$HIP_VISIBLE_DEVICES ROCR=$ROCR_VISIBLE_DEVICES TORC=$TORC_GPU_VISIBLE_DEVICES",
+    );
+    let mut async_cmd = AsyncCliCommand::new(job);
+
+    let temp_dir = create_temp_output_dir();
+
+    async_cmd
+        .start(
+            temp_dir.path(),
+            1, // workflow_id
+            1, // run_id
+            1, // attempt_id
+            None,
+            "http://localhost:8080/torc-service/v1",
+            None,
+            Some("1,3"), // gpu_visible_devices
+            true,
+            ExecutionMode::Direct, // direct execution
+            false,
+            None,
+            None,
+            60,   // sigkill_headroom_seconds
+            None, // target_node
+        )
+        .expect("Failed to start command");
+    let _ = async_cmd.wait_for_completion();
+
+    let stdout_path = temp_dir
+        .path()
+        .join("job_stdio")
+        .join("job_wf1_j124_r1_a1.o");
+    let contents = fs::read_to_string(stdout_path).expect("Failed to read stdout");
+
+    assert!(
+        contents.contains("CUDA=1,3"),
+        "Missing CUDA_VISIBLE_DEVICES: {}",
+        contents
+    );
+    assert!(
+        contents.contains("HIP=1,3"),
+        "Missing HIP_VISIBLE_DEVICES: {}",
+        contents
+    );
+    assert!(
+        contents.contains("ROCR=1,3"),
+        "Missing ROCR_VISIBLE_DEVICES: {}",
+        contents
+    );
+    assert!(
+        contents.contains("TORC=1,3"),
+        "Missing TORC_GPU_VISIBLE_DEVICES: {}",
+        contents
+    );
+}
+
+#[rstest]
+#[cfg(unix)]
 fn test_async_cli_command_stdout_stderr_separation() {
     let job = create_test_job_model(1, 1, "echo 'stdout message'; echo 'stderr message' >&2");
     let mut async_cmd = AsyncCliCommand::new(job);
@@ -556,8 +630,9 @@ fn test_async_cli_command_stdout_stderr_separation() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -594,8 +669,9 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -615,8 +691,9 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -636,8 +713,9 @@ fn test_async_cli_command_multiple_jobs_same_workflow() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -681,8 +759,9 @@ fn test_async_cli_command_long_running_job() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -732,8 +811,9 @@ fn test_async_cli_command_complex_shell_command() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -773,8 +853,9 @@ fn test_async_cli_command_file_creation() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -808,8 +889,9 @@ fn test_async_cli_command_drop_while_running() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -845,8 +927,9 @@ fn test_async_cli_command_execution_time() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
@@ -878,8 +961,9 @@ fn test_async_cli_command_empty_command() {
         None,
         "http://localhost:8080/torc-service/v1",
         None,
+        None, // gpu_visible_devices
         true,
-        ExecutionMode::Slurm,
+        ExecutionMode::Direct,
         false,
         None,
         None,
@@ -908,8 +992,9 @@ fn test_async_cli_command_command_not_found() {
             None,
             "http://localhost:8080/torc-service/v1",
             None,
+            None, // gpu_visible_devices
             true,
-            ExecutionMode::Slurm,
+            ExecutionMode::Direct,
             false,
             None,
             None,
