@@ -18,13 +18,21 @@ nodes are in the allocation.
 **Use when**: You have many independent jobs that each fit on one node, and you want them to run in
 parallel across multiple nodes for throughput.
 
-**How it works**: Torc requests a multi-node Slurm allocation (e.g., 4 nodes). One worker manages
-the allocation and places each single-node job onto one node via `srun --nodes=1`. Single-node jobs
-may share a node as long as CPU, memory, and GPU limits allow. With N nodes, Torc can spread work
-across the allocation for throughput.
+**How it works**: Torc requests a multi-node Slurm allocation (e.g., 4 nodes). The behavior depends
+on the execution mode:
 
-**Example**: 100 independent analysis jobs, each needing 8 CPUs and 32 GB, across a 4-node
-allocation:
+- **Slurm mode** (default): A single worker manages the allocation and places each single-node job
+  onto a node via `srun --nodes=1`. Slurm handles resource isolation and node placement.
+- **Direct mode**: Jobs are executed directly without `srun` wrapping. To distribute work across
+  nodes, set `start_one_worker_per_node: true` on the `schedule_nodes` action. This launches one
+  worker per node via `srun --ntasks-per-node=1`, and each worker executes jobs directly on its
+  node.
+
+Single-node jobs may share a node as long as CPU, memory, and GPU limits allow. With N nodes, Torc
+can spread work across the allocation for throughput.
+
+**Example (Slurm mode)**: 100 independent analysis jobs, each needing 8 CPUs and 32 GB, across a
+4-node allocation:
 
 ```yaml
 name: parallel_analysis
@@ -58,8 +66,51 @@ actions:
     num_allocations: 1
 ```
 
+**Example (Direct mode)**: The same workload using direct execution with one worker per node:
+
+```yaml
+name: parallel_analysis_direct
+description: Run 20 analysis tasks across 2 nodes via direct execution
+
+execution_config:
+  mode: direct
+
+resource_requirements:
+  - name: analysis
+    num_cpus: 5
+    num_nodes: 1
+    memory: 2g
+    runtime: PT3M
+
+jobs:
+  - name: analyze_{i}
+    command: python analyze.py --chunk {i}
+    resource_requirements: analysis
+    scheduler: multi_node
+    parameters:
+      i: "1:20"
+
+slurm_schedulers:
+  - name: multi_node
+    account: myproject
+    nodes: 2
+    walltime: "00:10:00"
+
+actions:
+  - trigger_type: on_workflow_start
+    action_type: schedule_nodes
+    scheduler: multi_node
+    scheduler_type: slurm
+    start_one_worker_per_node: true
+    num_allocations: 1
+```
+
 Each node has 8 CPUs and 32 GB available per job. If a node has 64 CPUs total, it can run up to 8
 jobs concurrently (64 / 8 = 8). Across 4 nodes, that means up to 32 jobs running at once.
+
+> **Note:** `start_one_worker_per_node` is only supported with `execution_config.mode: direct`. It
+> is not compatible with slurm execution mode, where Torc uses a single worker with `srun`-based
+> node placement.
 
 ### Pattern 2: True Multi-Node Jobs (MPI, Distributed Training)
 
@@ -136,8 +187,9 @@ underlying Slurm allocations. There are two approaches, each with trade-offs.
 
 ### One multi-node allocation
 
-Request all nodes in a single `sbatch` job (e.g., `nodes: 4`). Torc runs one worker per node and
-distributes jobs across them.
+Request all nodes in a single `sbatch` job (e.g., `nodes: 4`). In slurm mode, a single worker
+distributes jobs across nodes via `srun`. In direct mode with `start_one_worker_per_node`, Torc runs
+one worker per node and each worker executes jobs locally.
 
 **Advantages:**
 

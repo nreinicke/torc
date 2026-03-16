@@ -250,22 +250,14 @@ impl WorkflowManager {
                         action_id
                     );
 
-                    if action_config
-                        .get("start_one_worker_per_node")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                    {
-                        warn!(
-                            "start_one_worker_per_node is deprecated and ignored. \
-                             Multi-node allocations now use a single worker with \
-                             per-node resource tracking via srun --nodelist."
-                        );
-                    }
-
                     let scheduler_id = action_config
                         .get("scheduler_id")
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0);
+                    let start_one_worker_per_node = action_config
+                        .get("start_one_worker_per_node")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let num_allocations = action_config
                         .get("num_allocations")
                         .and_then(|v| v.as_i64())
@@ -284,6 +276,7 @@ impl WorkflowManager {
                         self.workflow_id,
                         scheduler_id,
                         num_allocations,
+                        start_one_worker_per_node,
                         "",
                         output_dir,
                         poll_interval,

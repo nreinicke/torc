@@ -33,7 +33,6 @@ use crate::models::{JobModel, JobStatus, ResourceRequirementsModel, ResultModel,
 use chrono::{DateTime, Utc};
 use log::{self, debug, error, info, warn};
 use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
@@ -160,8 +159,6 @@ pub struct AsyncCliCommand {
     return_code: Option<i64>,
     pub is_complete: bool,
     status: JobStatus,
-    stdout_fp: Option<BufWriter<File>>,
-    stderr_fp: Option<BufWriter<File>>,
 }
 
 impl AsyncCliCommand {
@@ -185,8 +182,6 @@ impl AsyncCliCommand {
             return_code: None,
             is_complete: false,
             status,
-            stdout_fp: None,
-            stderr_fp: None,
         }
     }
 
@@ -230,11 +225,6 @@ impl AsyncCliCommand {
             get_job_stdout_path(output_dir, workflow_id, self.job_id, run_id, attempt_id);
         let stderr_path =
             get_job_stderr_path(output_dir, workflow_id, self.job_id, run_id, attempt_id);
-
-        let stdout_file = File::create(&stdout_path)?;
-        let stderr_file = File::create(&stderr_path)?;
-        self.stdout_fp = Some(BufWriter::new(stdout_file));
-        self.stderr_fp = Some(BufWriter::new(stderr_file));
 
         let command_str = if let Some(ref invocation_script) = self.job.invocation_script {
             format!("{} {}", invocation_script, self.job.command)
@@ -680,8 +670,6 @@ impl AsyncCliCommand {
             (self.completion_time.unwrap() - self.start_time).num_milliseconds() as f64 / 1000.0;
         self.status = status;
         self.return_code = Some(return_code);
-        self.stdout_fp = None;
-        self.stderr_fp = None;
         self.handle = None;
 
         // Collect Slurm accounting stats via sacct when running inside an allocation.
