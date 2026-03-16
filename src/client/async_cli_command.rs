@@ -234,7 +234,10 @@ impl AsyncCliCommand {
         };
 
         let slurm_job_id = if execution_mode == ExecutionMode::Slurm {
-            std::env::var("SLURM_JOB_ID").ok()
+            // JobRunner::new() guarantees SLURM_JOB_ID is set when mode is Slurm.
+            Some(std::env::var("SLURM_JOB_ID").expect(
+                "SLURM_JOB_ID must be set in Slurm mode (should have been caught at startup)",
+            ))
         } else {
             None
         };

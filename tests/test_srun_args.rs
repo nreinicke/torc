@@ -686,44 +686,6 @@ fn test_srun_step_name_format() {
 
 #[test]
 #[serial]
-fn test_srun_no_slurm_job_id_falls_back_to_shell() {
-    let temp_dir = TempDir::new().unwrap();
-    let args_log = temp_dir.path().join("srun_args.log");
-
-    // Set TORC_FAKE_SRUN but NOT SLURM_JOB_ID
-    unsafe {
-        env::remove_var("SLURM_JOB_ID");
-        env::set_var(
-            "TORC_FAKE_SRUN",
-            fake_srun_path().to_string_lossy().to_string(),
-        );
-        env::set_var("TORC_SRUN_ARGS_LOG", args_log.to_string_lossy().to_string());
-    }
-
-    let rr = make_rr("compute", 4, "8g", 1);
-    let args = run_and_capture_srun_args(
-        &temp_dir,
-        &args_log,
-        Some(&rr),
-        true,                 // limit_resources
-        ExecutionMode::Slurm, // execution_mode
-        false,                // enable_cpu_bind
-        None,
-        None,
-    );
-
-    cleanup_srun_env();
-
-    // Without SLURM_JOB_ID, even with use_srun=true, it should fall back to shell
-    assert!(
-        args.is_none(),
-        "srun should not have been invoked without SLURM_JOB_ID, but got: {:?}",
-        args
-    );
-}
-
-#[test]
-#[serial]
 fn test_srun_limit_resources_false_with_cpu_bind_and_signal() {
     let temp_dir = TempDir::new().unwrap();
     let args_log = setup_srun_env(&temp_dir);
