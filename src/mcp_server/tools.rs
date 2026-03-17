@@ -2574,6 +2574,9 @@ pub fn list_mcp_resources(docs_dir: Option<&Path>, examples_dir: Option<&Path>) 
                 description: Some(description.to_string()),
                 mime_type: Some("text/markdown".to_string()),
                 size,
+                title: None,
+                icons: None,
+                meta: None,
             },
             None,
         ));
@@ -2598,6 +2601,9 @@ pub fn list_mcp_resources(docs_dir: Option<&Path>, examples_dir: Option<&Path>) 
                 description: Some(description.to_string()),
                 mime_type: Some("text/plain".to_string()),
                 size,
+                title: None,
+                icons: None,
+                meta: None,
             },
             None,
         ));
@@ -2635,6 +2641,7 @@ pub fn read_mcp_resource(
             uri: uri.to_string(),
             mime_type: Some("text/markdown".to_string()),
             text: content,
+            meta: None,
         })
     } else if let Some(name) = uri.strip_prefix("torc://examples/") {
         let (content, _) = read_example_content(examples_dir, name, "yaml")?;
@@ -2643,6 +2650,7 @@ pub fn read_mcp_resource(
             uri: uri.to_string(),
             mime_type: Some("text/plain".to_string()),
             text: content,
+            meta: None,
         })
     } else {
         Err(invalid_params(&format!(
