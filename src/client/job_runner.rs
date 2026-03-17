@@ -1522,6 +1522,16 @@ impl JobRunner {
                 // become ready. This gives dependent jobs time to be picked up before
                 // the runner exits due to no jobs being claimed.
                 self.last_job_claimed_time = Some(Instant::now());
+
+                // Delete stdio files on successful completion if configured
+                if final_result.return_code == 0
+                    && let Some(cmd) = self.running_jobs.get(&job_id)
+                {
+                    let job_name = &cmd.job.name;
+                    if self.execution_config.delete_stdio_on_success(job_name) {
+                        Self::cleanup_stdio_files(cmd);
+                    }
+                }
             }
             Err(e) => {
                 error!(
@@ -1533,6 +1543,11 @@ impl JobRunner {
         self.running_jobs.remove(&job_id);
         self.job_resources.remove(&job_id);
         self.release_gpu_devices(job_id);
+    }
+
+    /// Delete stdio files for a completed job.
+    fn cleanup_stdio_files(cmd: &AsyncCliCommand) {
+        cleanup_job_stdio_files(cmd.stdout_path.as_deref(), cmd.stderr_path.as_deref());
     }
 
     /// Run a recovery script with environment variables set.
@@ -1984,6 +1999,7 @@ impl JobRunner {
                     } else {
                         self.allocate_gpu_devices(job_id, job_rr.num_gpus)
                     };
+                    let stdio_config = self.execution_config.stdio_for_job(&async_job.job.name);
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -2000,6 +2016,7 @@ impl JobRunner {
                         self.execution_config.srun_termination_signal.as_deref(),
                         self.execution_config.sigkill_headroom_seconds(),
                         target_node,
+                        &stdio_config.mode,
                     ) {
                         Ok(()) => {
                             info!(
@@ -2123,6 +2140,7 @@ impl JobRunner {
                     } else {
                         self.allocate_gpu_devices(job_id, job_rr.num_gpus)
                     };
+                    let stdio_config = self.execution_config.stdio_for_job(&async_job.job.name);
                     match async_job.start(
                         &self.output_dir,
                         self.workflow_id,
@@ -2139,6 +2157,7 @@ impl JobRunner {
                         self.execution_config.srun_termination_signal.as_deref(),
                         self.execution_config.sigkill_headroom_seconds(),
                         None, // target_node: user-parallelism mode doesn't use per-node placement
+                        &stdio_config.mode,
                     ) {
                         Ok(()) => {
                             info!(
@@ -2635,6 +2654,23 @@ impl ComputeNodeRules {
     }
 }
 
+/// Delete stdio files for a completed job given optional stdout and stderr paths.
+///
+/// Silently ignores files that don't exist (e.g., when using `NoStdout` or `NoStderr` modes).
+pub fn cleanup_job_stdio_files(stdout_path: Option<&str>, stderr_path: Option<&str>) {
+    for path in [stdout_path, stderr_path].iter().copied().flatten() {
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                debug!("Deleted stdio file: {}", path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                warn!("Failed to delete stdio file {}: {}", path, e);
+            }
+        }
+    }
+}
+
 /// Backfill Slurm sacct accounting data into a [`ResultModel`] result.
 ///
 /// When a job runs through `srun`, torc's sysinfo-based resource monitor only sees the
@@ -2650,8 +2686,6 @@ impl ComputeNodeRules {
 ///
 /// `avg_memory_bytes` is left as-is: sacct does not provide an average RSS; that comes
 /// from the sstat time-series if TimeSeries monitoring was configured.
-/// Backfill sacct accounting data into a job result, preferring the max of sacct vs sstat peaks.
-///
 /// This ensures that even when sstat time-series monitoring missed a spike, the sacct
 /// post-mortem data fills in accurate resource usage.
 fn backfill_sacct_into_result(result: &mut ResultModel, stats: &SlurmStatsModel) {
