@@ -1,7 +1,7 @@
 //! Tool implementations for the Torc MCP server.
 
 use rmcp::{
-    Error as McpError,
+    ErrorData as McpError,
     model::{CallToolResult, RawResource, Resource, ResourceContents},
 };
 use std::fs;

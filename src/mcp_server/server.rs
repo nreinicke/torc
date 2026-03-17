@@ -1,7 +1,7 @@
 //! MCP server implementation for Torc.
 
 use rmcp::{
-    Error as McpError, RoleServer, ServerHandler,
+    ErrorData as McpError, RoleServer, ServerHandler,
     model::{
         CallToolResult, Implementation, PaginatedRequestParam, ProtocolVersion, ReadResourceResult,
         ServerCapabilities, ServerInfo,
