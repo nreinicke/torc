@@ -400,9 +400,9 @@ SEE ALSO:
         #[arg(short, long)]
         recover: bool,
 
-        /// Maximum number of recovery attempts
-        #[arg(short, long, default_value = "3")]
-        max_retries: u32,
+        /// Maximum number of recovery attempts (unlimited if not set)
+        #[arg(short, long)]
+        max_retries: Option<u32>,
 
         /// Memory multiplier for OOM failures (default: 1.5 = 50% increase)
         #[arg(long, default_value = "1.5")]
@@ -511,6 +511,23 @@ SEE ALSO:
         ///   claude - Claude Code CLI (default)
         #[arg(long, default_value = "claude", verbatim_doc_comment)]
         ai_agent: String,
+
+        /// Fixed Slurm partition for regenerated schedulers
+        ///
+        /// When set, all regenerated schedulers (from --auto-schedule or --recover)
+        /// use this partition instead of auto-detecting the best partition from job
+        /// resource requirements. The number of compute nodes is still calculated
+        /// dynamically based on pending jobs.
+        #[arg(long)]
+        partition: Option<String>,
+
+        /// Fixed Slurm walltime for regenerated schedulers (format: HH:MM:SS or D-HH:MM:SS)
+        ///
+        /// When set, all regenerated schedulers (from --auto-schedule or --recover)
+        /// use this walltime instead of calculating it from job runtimes. The number
+        /// of compute nodes is still calculated dynamically.
+        #[arg(long)]
+        walltime: Option<String>,
     },
     /// Recover a Slurm workflow from failures
     ///
