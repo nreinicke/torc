@@ -710,12 +710,16 @@ pub trait TransportApiCore<C: Send + Sync> {
         context: &C,
     ) -> Result<GetWorkflowStatusResponse, ApiError>;
 
+    /// Return the status of a background task.
+    async fn get_task(&self, id: i64, context: &C) -> Result<GetTaskResponse, ApiError>;
+
     /// Initialize job relationships based on file and user_data relationships.
     async fn initialize_jobs(
         &self,
         id: i64,
         only_uninitialized: Option<bool>,
         clear_ephemeral_user_data: Option<bool>,
+        async_: Option<bool>,
         context: &C,
     ) -> Result<InitializeJobsResponse, ApiError>;
 

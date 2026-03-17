@@ -6,7 +6,7 @@ use crate::server::api::{
 #[allow(clippy::too_many_arguments)]
 impl<C> Server<C>
 where
-    C: Has<XSpanIdString> + Has<Option<Authorization>> + Send + Sync,
+    C: Has<XSpanIdString> + Has<Option<Authorization>> + Send + Sync + 'static,
 {
     pub(super) async fn transport_create_event(
         &self,

@@ -917,8 +917,23 @@ pub enum GetWorkflowStatusResponse {
 pub enum InitializeJobsResponse {
     /// Successful response
     SuccessfulResponse(serde_json::Value),
+    /// Accepted - initialization task created
+    AcceptedResponse(models::TaskModel),
     /// Forbidden - user does not have access
     ForbiddenErrorResponse(models::ErrorResponse),
+    /// Not found error response
+    NotFoundErrorResponse(models::ErrorResponse),
+    /// Conflict error response
+    ConflictErrorResponse(models::ErrorResponse),
+    /// Default error response
+    DefaultErrorResponse(models::ErrorResponse),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[must_use]
+pub enum GetTaskResponse {
+    /// Successful response
+    SuccessfulResponse(models::TaskModel),
     /// Not found error response
     NotFoundErrorResponse(models::ErrorResponse),
     /// Default error response

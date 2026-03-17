@@ -111,6 +111,7 @@ pub fn app_router(state: LiveRouterState) -> Router {
             get(check_workflow_access),
         )
         .route("/torc-service/v1/ping", get(ping))
+        .route("/torc-service/v1/tasks/{id}", get(get_task))
         .route("/torc-service/v1/version", get(version))
         .route(
             "/torc-service/v1/compute_nodes",
@@ -419,6 +420,9 @@ pub struct InitializeJobsQuery {
     pub only_uninitialized: Option<bool>,
     #[param(nullable = true)]
     pub clear_ephemeral_user_data: Option<bool>,
+    #[serde(rename = "async")]
+    #[param(nullable = true)]
+    pub async_: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]
@@ -3277,12 +3281,42 @@ pub async fn cancel_workflow(
 }
 
 #[utoipa::path(
+    get,
+    tag = "tasks",
+    path = "/tasks/{id}",
+    operation_id = "get_task",
+    params(("id" = i64, Path, description = "Task ID")),
+    responses(
+        (status = 200, body = models::TaskModel),
+        (status = 404, body = models::ErrorResponse),
+        (status = 500, body = models::ErrorResponse)
+    )
+)]
+pub async fn get_task(
+    State(state): State<LiveRouterState>,
+    Path(id): Path<i64>,
+    Extension(context): Extension<EmptyContext>,
+) -> Response<Body> {
+    match state.server.get_task(id, &context).await {
+        Ok(response) => get_task_response(response),
+        Err(err) => error_response(StatusCode::INTERNAL_SERVER_ERROR, err.0),
+    }
+}
+
+#[utoipa::path(
     post,
     tag = "workflows",
     path = "/workflows/{id}/initialize_jobs",
     operation_id = "initialize_jobs",
     params(("id" = i64, Path, description = "Workflow ID"), InitializeJobsQuery),
-    responses((status = 200, body = Value))
+    responses(
+        (status = 200, body = Value),
+        (status = 202, body = models::TaskModel),
+        (status = 403, body = models::ErrorResponse),
+        (status = 404, body = models::ErrorResponse),
+        (status = 409, body = models::ErrorResponse),
+        (status = 500, body = models::ErrorResponse)
+    )
 )]
 pub async fn initialize_jobs(
     State(state): State<LiveRouterState>,
@@ -3296,6 +3330,7 @@ pub async fn initialize_jobs(
             id,
             query.only_uninitialized,
             query.clear_ephemeral_user_data,
+            query.async_,
             &context,
         )
         .await

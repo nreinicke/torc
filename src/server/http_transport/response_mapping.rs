@@ -20,12 +20,51 @@ macro_rules! map_response_std {
     };
 }
 
+macro_rules! map_response_not_found_only {
+    ($name:ident, $ty:path, $success:ident) => {
+        pub(crate) fn $name(response: $ty) -> Response<Body> {
+            use $ty::*;
+            match response {
+                $success(body) => json_response_with_status(&body, StatusCode::OK),
+                NotFoundErrorResponse(body) => {
+                    json_response_with_status(&body, StatusCode::NOT_FOUND)
+                }
+                DefaultErrorResponse(body) => {
+                    json_response_with_status(&body, StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            }
+        }
+    };
+}
+
 macro_rules! map_response_conflict {
     ($name:ident, $ty:path, $success:ident, $conflict:ident) => {
         pub(crate) fn $name(response: $ty) -> Response<Body> {
             use $ty::*;
             match response {
                 $success(body) => json_response_with_status(&body, StatusCode::OK),
+                ForbiddenErrorResponse(body) => {
+                    json_response_with_status(&body, StatusCode::FORBIDDEN)
+                }
+                NotFoundErrorResponse(body) => {
+                    json_response_with_status(&body, StatusCode::NOT_FOUND)
+                }
+                $conflict(body) => json_response_with_status(&body, StatusCode::CONFLICT),
+                DefaultErrorResponse(body) => {
+                    json_response_with_status(&body, StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            }
+        }
+    };
+}
+
+macro_rules! map_response_accepted_conflict {
+    ($name:ident, $ty:path, $success:ident, $accepted:ident, $conflict:ident) => {
+        pub(crate) fn $name(response: $ty) -> Response<Body> {
+            use $ty::*;
+            match response {
+                $success(body) => json_response_with_status(&body, StatusCode::OK),
+                $accepted(body) => json_response_with_status(&body, StatusCode::ACCEPTED),
                 ForbiddenErrorResponse(body) => {
                     json_response_with_status(&body, StatusCode::FORBIDDEN)
                 }
@@ -521,10 +560,13 @@ map_response_std!(
     ClaimNextJobsResponse,
     SuccessfulResponse
 );
-map_response_std!(
+map_response_not_found_only!(get_task_response, GetTaskResponse, SuccessfulResponse);
+map_response_accepted_conflict!(
     initialize_jobs_response,
     InitializeJobsResponse,
-    SuccessfulResponse
+    SuccessfulResponse,
+    AcceptedResponse,
+    ConflictErrorResponse
 );
 map_response_std!(
     is_workflow_complete_response,
