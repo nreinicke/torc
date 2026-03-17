@@ -2,11 +2,12 @@
 
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, Implementation, PaginatedRequestParam, ProtocolVersion, ReadResourceResult,
-        ServerCapabilities, ServerInfo,
+        CallToolResult, Implementation, PaginatedRequestParams, ProtocolVersion,
+        ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo,
     },
-    schemars, tool,
+    schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub struct TorcMcpServer {
     output_dir: PathBuf,
     docs_dir: Option<PathBuf>,
     examples_dir: Option<PathBuf>,
+    tool_router: ToolRouter<Self>,
 }
 
 impl TorcMcpServer {
@@ -40,6 +42,7 @@ impl TorcMcpServer {
             output_dir,
             docs_dir: None,
             examples_dir: None,
+            tool_router: Self::tool_router(),
         }
     }
 
@@ -79,6 +82,7 @@ impl TorcMcpServer {
             output_dir,
             docs_dir: None,
             examples_dir: None,
+            tool_router: Self::tool_router(),
         }
     }
 
@@ -380,10 +384,10 @@ pub struct RegroupJobResourcesParams {
     pub dry_run: bool,
 }
 
-// Tool implementations using #[tool(tool_box)]
+// Tool implementations using rmcp tool routing.
 // Tools are ordered by workflow lifecycle: create → plan → inspect → monitor → analyze → fix
 
-#[tool(tool_box)]
+#[tool_router(router = tool_router)]
 impl TorcMcpServer {
     /// Create a workflow from a specification.
     #[tool(description = r#"Create a workflow specification file or workflow.
@@ -470,7 +474,7 @@ EXAMPLE - Fan-out/Fan-in with files (3 groups, 10 workers each, aggregation):
 }"#)]
     async fn create_workflow(
         &self,
-        #[tool(aggr)] params: CreateWorkflowParams,
+        Parameters(params): Parameters<CreateWorkflowParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let spec_json = params.spec_json;
@@ -534,7 +538,7 @@ USE CASES:
     )]
     async fn get_execution_plan(
         &self,
-        #[tool(aggr)] params: GetExecutionPlanParams,
+        Parameters(params): Parameters<GetExecutionPlanParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let spec_or_id = params.spec_or_id;
@@ -549,7 +553,7 @@ USE CASES:
     )]
     async fn get_job_details(
         &self,
-        #[tool(aggr)] params: JobIdParam,
+        Parameters(params): Parameters<JobIdParam>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let job_id = params.job_id;
@@ -564,7 +568,7 @@ USE CASES:
     )]
     async fn list_jobs_by_status(
         &self,
-        #[tool(aggr)] params: ListJobsByStatusParams,
+        Parameters(params): Parameters<ListJobsByStatusParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -582,7 +586,7 @@ USE CASES:
     )]
     async fn get_workflow_status(
         &self,
-        #[tool(aggr)] params: WorkflowIdParam,
+        Parameters(params): Parameters<WorkflowIdParam>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -599,7 +603,7 @@ USE CASES:
     )]
     async fn get_workflow_summary(
         &self,
-        #[tool(aggr)] params: GetWorkflowSummaryParams,
+        Parameters(params): Parameters<GetWorkflowSummaryParams>,
     ) -> Result<CallToolResult, McpError> {
         let workflow_id = params.workflow_id;
         tokio::task::spawn_blocking(move || tools::get_workflow_summary(workflow_id))
@@ -617,7 +621,7 @@ USE CASES:
     )]
     async fn list_results(
         &self,
-        #[tool(aggr)] params: ListResultsParams,
+        Parameters(params): Parameters<ListResultsParams>,
     ) -> Result<CallToolResult, McpError> {
         let workflow_id = params.workflow_id;
         let job_id = params.job_id;
@@ -655,7 +659,7 @@ USE CASES:
     )]
     async fn analyze_workflow_logs(
         &self,
-        #[tool(aggr)] params: AnalyzeWorkflowLogsParams,
+        Parameters(params): Parameters<AnalyzeWorkflowLogsParams>,
     ) -> Result<CallToolResult, McpError> {
         let output_dir = self.output_dir.clone();
         let output_path = params
@@ -674,7 +678,7 @@ USE CASES:
     )]
     async fn get_job_logs(
         &self,
-        #[tool(aggr)] params: GetJobLogsParams,
+        Parameters(params): Parameters<GetJobLogsParams>,
     ) -> Result<CallToolResult, McpError> {
         let output_dir = self.output_dir.clone();
         let workflow_id = params.workflow_id;
@@ -704,7 +708,7 @@ USE CASES:
     )]
     async fn list_failed_jobs(
         &self,
-        #[tool(aggr)] params: WorkflowIdParam,
+        Parameters(params): Parameters<WorkflowIdParam>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -721,7 +725,7 @@ USE CASES:
     )]
     async fn check_resource_utilization(
         &self,
-        #[tool(aggr)] params: CheckResourceUtilizationParams,
+        Parameters(params): Parameters<CheckResourceUtilizationParams>,
     ) -> Result<CallToolResult, McpError> {
         let workflow_id = params.workflow_id;
         let include_failed = params.include_failed.unwrap_or(true);
@@ -741,7 +745,7 @@ USE CASES:
     )]
     async fn get_slurm_sacct(
         &self,
-        #[tool(aggr)] params: GetSlurmSacctParams,
+        Parameters(params): Parameters<GetSlurmSacctParams>,
     ) -> Result<CallToolResult, McpError> {
         let workflow_id = params.workflow_id;
         tokio::task::spawn_blocking(move || tools::get_slurm_sacct(workflow_id))
@@ -761,7 +765,7 @@ USE CASES:
     )]
     async fn update_job_resources(
         &self,
-        #[tool(aggr)] params: UpdateJobResourcesParams,
+        Parameters(params): Parameters<UpdateJobResourcesParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let job_id = params.job_id;
@@ -793,7 +797,7 @@ USE CASES:
     )]
     async fn recover_workflow(
         &self,
-        #[tool(aggr)] params: RecoverWorkflowParams,
+        Parameters(params): Parameters<RecoverWorkflowParams>,
     ) -> Result<CallToolResult, McpError> {
         let output_dir = self.output_dir.clone();
         let workflow_id = params.workflow_id;
@@ -837,7 +841,7 @@ Permanent errors (should fail):
     )]
     async fn list_pending_failed_jobs(
         &self,
-        #[tool(aggr)] params: ListPendingFailedJobsParams,
+        Parameters(params): Parameters<ListPendingFailedJobsParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let output_dir = self.output_dir.clone();
@@ -868,7 +872,7 @@ For each job, specify:
     )]
     async fn classify_and_resolve_failures(
         &self,
-        #[tool(aggr)] params: ClassifyAndResolveFailuresParams,
+        Parameters(params): Parameters<ClassifyAndResolveFailuresParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -912,7 +916,7 @@ WORKFLOW:
     )]
     async fn analyze_resource_usage(
         &self,
-        #[tool(aggr)] params: AnalyzeResourceUsageParams,
+        Parameters(params): Parameters<AnalyzeResourceUsageParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -946,7 +950,7 @@ NOTES:
     )]
     async fn regroup_job_resources(
         &self,
-        #[tool(aggr)] params: RegroupJobResourcesParams,
+        Parameters(params): Parameters<RegroupJobResourcesParams>,
     ) -> Result<CallToolResult, McpError> {
         let config = self.config.clone();
         let workflow_id = params.workflow_id;
@@ -996,7 +1000,7 @@ NOTES:
     )]
     async fn get_example(
         &self,
-        #[tool(aggr)] params: GetExampleParams,
+        Parameters(params): Parameters<GetExampleParams>,
     ) -> Result<CallToolResult, McpError> {
         let examples_dir = self.examples_dir.clone();
         let name = params.name;
@@ -1040,7 +1044,7 @@ WHEN TO USE:
 - When user asks about workflow patterns or long-running jobs: check "checkpointing""#)]
     async fn get_docs(
         &self,
-        #[tool(aggr)] params: GetDocsParams,
+        Parameters(params): Parameters<GetDocsParams>,
     ) -> Result<CallToolResult, McpError> {
         let docs_dir = self.docs_dir.clone();
         let topic = params.topic;
@@ -1050,18 +1054,19 @@ WHEN TO USE:
     }
 }
 
-#[tool(tool_box)]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for TorcMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "Torc MCP Server - Manage computational workflows.\n\n\
+        )
+        .with_protocol_version(ProtocolVersion::V_2024_11_05)
+        .with_server_info(Implementation::from_build_env())
+        .with_instructions(
+            "Torc MCP Server - Manage computational workflows.\n\n\
                  WORKFLOW CREATION - SAVE FILES BY DEFAULT:\n\
                  - When user asks to 'create a workflow', save a spec FILE (action=save_spec_file)\n\
                  - AI-generated specs have placeholder commands - users must customize before running\n\
@@ -1078,21 +1083,20 @@ impl ServerHandler for TorcMcpServer {
                  2. Add 'input_files' to jobs that read files (exact names)\n\
                  3. Add 'output_files' to jobs that write files (exact names)\n\
                  4. For FAN-IN (aggregating multiple files into one job), use 'input_file_regexes' with a regex pattern\n\
-                    Example: input_file_regexes: [\"^work_out_\\\\d+$\"] matches work_out_0, work_out_1, etc.\n\n\
+                 Example: input_file_regexes: [\"^work_out_\\\\d+$\"] matches work_out_0, work_out_1, etc.\n\n\
                  Tools: get_execution_plan (preview execution), get_workflow_status (check progress), \
                  list_failed_jobs, get_job_logs, analyze_workflow_logs (scan all logs for errors), \
                  check_resource_utilization, update_job_resources, \
                  analyze_resource_usage (per-job resource data for cluster analysis), \
                  regroup_job_resources (reassign jobs to new resource groups), \
                  get_docs (documentation), list_examples + get_example (example workflows)."
-                    .to_string(),
-            ),
-        }
+                .to_string(),
+        )
     }
 
     fn list_resources(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<rmcp::model::ListResourcesResult, McpError>> + Send + '_
     {
@@ -1105,16 +1109,13 @@ impl ServerHandler for TorcMcpServer {
             .await
             .map_err(|e| McpError::internal_error(format!("Task join error: {}", e), None))?;
 
-            Ok(rmcp::model::ListResourcesResult {
-                resources,
-                next_cursor: None,
-            })
+            Ok(rmcp::model::ListResourcesResult::with_all_items(resources))
         }
     }
 
     fn read_resource(
         &self,
-        request: rmcp::model::ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         _context: rmcp::service::RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let docs_dir = self.docs_dir.clone();
@@ -1127,9 +1128,7 @@ impl ServerHandler for TorcMcpServer {
             .await
             .map_err(|e| McpError::internal_error(format!("Task join error: {}", e), None))??;
 
-            Ok(ReadResourceResult {
-                contents: vec![contents],
-            })
+            Ok(ReadResourceResult::new(vec![contents]))
         }
     }
 }
