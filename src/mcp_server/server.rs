@@ -1120,7 +1120,7 @@ so they can make an informed decision."#
     )]
     async fn plan_allocations(
         &self,
-        #[tool(aggr)] params: PlanAllocationsParams,
+        Parameters(params): Parameters<PlanAllocationsParams>,
     ) -> Result<CallToolResult, McpError> {
         let spec_json = serde_json::to_string(&params.spec_json)
             .map_err(|e| McpError::invalid_params(format!("Invalid spec JSON: {}", e), None))?;
