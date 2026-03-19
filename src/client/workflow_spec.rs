@@ -701,23 +701,6 @@ pub struct ExecutionConfig {
     pub mode: ExecutionMode,
 
     // ========== Shared settings (both modes) ==========
-    /// When true (default), enforce memory/CPU limits.
-    /// - direct mode: monitor & kill if exceeded (OOM)
-    /// - slurm mode: pass --mem/--cpus to srun
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit_resources: Option<bool>,
-
-    // ========== Direct mode settings ==========
-    /// Signal to send before SIGKILL for graceful termination.
-    /// Default: "SIGTERM". Other common values: "SIGINT", "SIGUSR1".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub termination_signal: Option<String>,
-
-    /// Seconds before SIGKILL to send the termination signal.
-    /// Default: 30. This gives jobs time to handle the signal gracefully.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sigterm_lead_seconds: Option<i64>,
-
     /// Seconds before end_time to send SIGKILL (direct mode) or set srun --time (slurm mode).
     /// Default: 60.
     /// - Direct mode: After this time, any remaining jobs are force-killed with SIGKILL.
@@ -736,29 +719,49 @@ pub struct ExecutionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_exit_code: Option<i32>,
 
-    /// Exit code to use when a job is OOM-killed.
-    /// Default: 137 (128 + SIGKILL = 128 + 9).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub oom_exit_code: Option<i32>,
-
-    // ========== Slurm mode settings ==========
-    /// Signal specification for srun steps, passed as `srun --signal=<value>`.
-    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds
-    /// before the step time limit).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub srun_termination_signal: Option<String>,
-
-    /// When true, allow Slurm to bind tasks to specific CPU cores. By default
-    /// (false), srun passes `--cpu-bind=none` to disable binding.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enable_cpu_bind: Option<bool>,
-
-    // ========== HPC scheduling settings ==========
-    /// Enable staggered startup for Slurm job runners to mitigate thundering herd.
+    /// Enable staggered startup for job runners to mitigate thundering herd.
     /// When true (default), each runner sleeps a deterministic jitter before
     /// contacting the server, spreading load when many nodes start at once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub staggered_start: Option<bool>,
+
+    // ========== Direct mode only ==========
+    /// When true (default), monitor memory/CPU usage and kill jobs that exceed
+    /// their resource requirements (OOM enforcement). Only applies in direct mode.
+    /// Setting this to false with slurm mode is an error — use direct mode instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resources: Option<bool>,
+
+    /// Signal to send before SIGKILL for graceful termination (direct mode only).
+    /// Default: "SIGTERM". Other common values: "SIGINT", "SIGUSR1".
+    /// In slurm mode, use `srun_termination_signal` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub termination_signal: Option<String>,
+
+    /// Seconds before SIGKILL to send the termination signal (direct mode only).
+    /// Default: 30. This gives jobs time to handle the signal gracefully.
+    /// In slurm mode, termination timing is controlled by `srun_termination_signal`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sigterm_lead_seconds: Option<i64>,
+
+    /// Exit code to use when a job is OOM-killed (direct mode only).
+    /// Default: 137 (128 + SIGKILL = 128 + 9).
+    /// In slurm mode, Slurm manages OOM detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oom_exit_code: Option<i32>,
+
+    // ========== Slurm mode only ==========
+    /// Signal specification for srun steps, passed as `srun --signal=<value>` (slurm mode only).
+    /// Format: `<signal>@<seconds>` (e.g., `TERM@120` sends SIGTERM 120 seconds
+    /// before the step time limit).
+    /// In direct mode, use `termination_signal` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srun_termination_signal: Option<String>,
+
+    /// When true, allow Slurm to bind tasks to specific CPU cores (slurm mode only).
+    /// By default (false), srun passes `--cpu-bind=none` to disable binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_cpu_bind: Option<bool>,
 
     // ========== Stdio settings ==========
     /// Workflow-level default for stdout/stderr capture.
@@ -2090,6 +2093,79 @@ impl WorkflowSpec {
             }
         }
 
+        // Validate that execution_config fields match the effective mode.
+        // For mode=auto, infer from slurm_schedulers presence.
+        if let Some(ref ec) = spec.execution_config {
+            let will_use_slurm = match ec.mode {
+                ExecutionMode::Slurm => true,
+                ExecutionMode::Auto => spec
+                    .slurm_schedulers
+                    .as_ref()
+                    .is_some_and(|s| !s.is_empty()),
+                ExecutionMode::Direct => false,
+            };
+            let will_use_direct = match ec.mode {
+                ExecutionMode::Direct => true,
+                ExecutionMode::Auto => !will_use_slurm,
+                ExecutionMode::Slurm => false,
+            };
+
+            let mut errors = Vec::new();
+
+            if will_use_slurm {
+                if ec.limit_resources == Some(false) {
+                    errors.push(
+                        "limit_resources: false is only supported in direct mode. \
+                        Slurm mode requires resource limits for correct srun behavior."
+                            .to_string(),
+                    );
+                }
+                if ec.termination_signal.is_some() {
+                    errors.push(
+                        "termination_signal is only supported in direct mode. \
+                        In slurm mode, use srun_termination_signal instead."
+                            .to_string(),
+                    );
+                }
+                if ec.sigterm_lead_seconds.is_some() {
+                    errors.push(
+                        "sigterm_lead_seconds is only supported in direct mode. \
+                        In slurm mode, termination timing is controlled by \
+                        srun_termination_signal."
+                            .to_string(),
+                    );
+                }
+                if ec.oom_exit_code.is_some() {
+                    errors.push(
+                        "oom_exit_code is only supported in direct mode. \
+                        In slurm mode, Slurm manages OOM detection."
+                            .to_string(),
+                    );
+                }
+            }
+
+            if will_use_direct {
+                if ec.srun_termination_signal.is_some() {
+                    errors.push(
+                        "srun_termination_signal is only supported in slurm mode. \
+                        In direct mode, use termination_signal instead."
+                            .to_string(),
+                    );
+                }
+                if ec.enable_cpu_bind == Some(true) {
+                    errors.push(
+                        "enable_cpu_bind is only supported in slurm mode. \
+                        It has no effect in direct mode."
+                            .to_string(),
+                    );
+                }
+            }
+
+            if !errors.is_empty() {
+                return Err(errors.join(" ").into());
+            }
+        }
+
         if spec.actions.as_ref().is_some_and(|actions| {
             actions.iter().any(|action| {
                 action.action_type == "schedule_nodes"
@@ -2584,7 +2660,7 @@ impl WorkflowSpec {
         Ok(levels)
     }
 
-    /// Create JobModels with proper ID mapping using bulk API in batches of 10000
+    /// Create JobModels with proper ID mapping using bulk API in batches
     /// Jobs are created in dependency order with depends_on_job_ids set during initial creation
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn create_jobs(
@@ -2660,7 +2736,7 @@ impl WorkflowSpec {
         let levels = Self::topological_sort_jobs(&spec.jobs, &dependencies)?;
 
         // Step 4: Create jobs level by level
-        const BATCH_SIZE: usize = 10000;
+        let batch_size = crate::MAX_RECORD_TRANSFER_COUNT as usize;
 
         for level in levels {
             // Create job models for this level with depends_on_job_ids resolved
@@ -2796,8 +2872,8 @@ impl WorkflowSpec {
                 job_spec_mapping.push(job_spec);
             }
 
-            // Create this level's jobs in batches of 10000
-            for (batch_index, batch) in job_models.chunks(BATCH_SIZE).enumerate() {
+            // Create this level's jobs in batches
+            for (batch_index, batch) in job_models.chunks(batch_size).enumerate() {
                 let jobs_model = models::JobsModel::new(batch.to_vec());
 
                 let response = default_api::create_jobs(config, jobs_model).map_err(|e| {
@@ -2821,7 +2897,7 @@ impl WorkflowSpec {
                 }
 
                 // Update mappings
-                let batch_start = batch_index * BATCH_SIZE;
+                let batch_start = batch_index * batch_size;
                 for (i, created_job) in created_batch.iter().enumerate() {
                     let job_spec = job_spec_mapping[batch_start + i];
                     let job_id = created_job.id.ok_or("Created job missing ID")?;
