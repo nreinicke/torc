@@ -250,6 +250,12 @@ mod unix_main {
             config.basic_auth = Some((username, Some(password.clone())));
         }
 
+        // Set cookie header for authentication (e.g., from browser-based MFA)
+        if let Err(e) = config.apply_cookie_header_from_env() {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+
         // Stagger startup to avoid thundering herd when many compute nodes start
         // simultaneously. The delay window is set by the caller (sbatch script)
         // based on the number of concurrent allocations.

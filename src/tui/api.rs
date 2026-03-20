@@ -34,6 +34,10 @@ impl TorcClient {
         config.base_path = base_url;
         config.basic_auth = basic_auth;
 
+        config
+            .apply_cookie_header_from_env()
+            .map_err(|e| anyhow::anyhow!(e))?;
+
         Ok(Self { config })
     }
 
@@ -50,6 +54,10 @@ impl TorcClient {
         let mut config = Configuration::with_tls(tls);
         config.base_path = base_url;
         config.basic_auth = basic_auth;
+
+        config
+            .apply_cookie_header_from_env()
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         Ok(Self { config })
     }

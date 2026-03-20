@@ -36,6 +36,9 @@ impl TorcMcpServer {
     pub fn new_with_tls(api_url: String, output_dir: PathBuf, tls: TlsConfig) -> Self {
         let mut config = Configuration::with_tls(tls);
         config.base_path = api_url;
+        if let Err(e) = config.apply_cookie_header_from_env() {
+            log::error!("Failed to apply cookie header: {e}");
+        }
 
         Self {
             config,
@@ -75,6 +78,10 @@ impl TorcMcpServer {
 
         if let (Some(user), Some(pass)) = (username, password) {
             config.basic_auth = Some((user, Some(pass)));
+        }
+
+        if let Err(e) = config.apply_cookie_header_from_env() {
+            log::error!("Failed to apply cookie header: {e}");
         }
 
         Self {
