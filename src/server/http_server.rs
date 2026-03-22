@@ -4729,9 +4729,11 @@ where
                 supports_termination,
                 resource_requirements_id,
                 failure_handler_id,
-                attempt_id
+                attempt_id,
+                priority
             FROM job
             WHERE workflow_id = $1 AND status = $2
+            ORDER BY priority DESC
             LIMIT $3
             "#;
 
@@ -4783,6 +4785,7 @@ where
                 scheduler_id: None,
                 failure_handler_id: row.get("failure_handler_id"),
                 attempt_id: row.get("attempt_id"),
+                priority: Some(row.get("priority")),
             };
 
             selected_jobs.push(job);
@@ -5943,12 +5946,12 @@ where
 
         let ready_status = models::JobStatus::Ready.to_int();
         let order_by_clause = match actual_sort_method {
-            models::ClaimJobsSortMethod::None => "",
+            models::ClaimJobsSortMethod::None => "ORDER BY job.priority DESC",
             models::ClaimJobsSortMethod::GpusRuntimeMemory => {
-                "ORDER BY rr.num_gpus DESC, rr.runtime_s DESC, rr.memory_bytes DESC"
+                "ORDER BY job.priority DESC, rr.num_gpus DESC, rr.runtime_s DESC, rr.memory_bytes DESC"
             }
             models::ClaimJobsSortMethod::GpusMemoryRuntime => {
-                "ORDER BY rr.num_gpus DESC, rr.memory_bytes DESC, rr.runtime_s DESC"
+                "ORDER BY job.priority DESC, rr.num_gpus DESC, rr.memory_bytes DESC, rr.runtime_s DESC"
             }
         };
 
@@ -5966,6 +5969,7 @@ where
                 job.supports_termination,
                 job.failure_handler_id,
                 job.attempt_id,
+                job.priority,
                 rr.id AS resource_requirements_id,
                 rr.memory_bytes,
                 rr.num_cpus,
@@ -6027,6 +6031,7 @@ where
                     job.supports_termination,
                     job.failure_handler_id,
                     job.attempt_id,
+                    job.priority,
                     rr.id AS resource_requirements_id,
                     rr.memory_bytes,
                     rr.num_cpus,
@@ -6184,6 +6189,7 @@ where
                     scheduler_id: None,
                     failure_handler_id: row.get("failure_handler_id"),
                     attempt_id: row.get("attempt_id"),
+                    priority: Some(row.get("priority")),
                 };
 
                 selected_jobs.push(job);
