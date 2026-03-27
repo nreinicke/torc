@@ -18,8 +18,8 @@ mod unix_main {
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
     use std::thread;
+    use torc::client::apis;
     use torc::client::apis::configuration::{Configuration, TlsConfig};
-    use torc::client::apis::default_api;
     use torc::client::commands::slurm::{create_compute_node, create_node_resources};
     use torc::client::config::TorcConfig;
     use torc::client::hpc::hpc_interface::HpcInterface;
@@ -100,26 +100,33 @@ mod unix_main {
         workflow_id: i64,
         wait_for_healthy_database_minutes: u64,
     ) -> bool {
+        fn box_retry_error<T, E>(result: Result<T, E>) -> Result<T, Box<dyn std::error::Error>>
+        where
+            E: std::fmt::Display,
+        {
+            result.map_err(|err| err.to_string().into())
+        }
+
         let mut offset = 0i64;
         loop {
             let response = match utils::send_with_retries(
                 config,
                 || {
-                    default_api::list_resource_requirements(
+                    box_retry_error(apis::resource_requirements_api::list_resource_requirements(
                         config,
                         workflow_id,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                         None,
                         Some(offset),
                         Some(100),
                         None,
                         None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
+                    ))
                 },
                 wait_for_healthy_database_minutes,
             ) {
@@ -134,7 +141,7 @@ mod unix_main {
                 }
             };
 
-            let items = response.items.unwrap_or_default();
+            let items = response.items;
 
             if items.iter().any(|rr| rr.num_nodes > 1) {
                 return true;
@@ -279,7 +286,7 @@ mod unix_main {
         // First, ping the server to ensure we can connect
         match utils::send_with_retries(
             &config,
-            || default_api::ping(&config),
+            || apis::system_api::ping(&config),
             args.wait_for_healthy_database_minutes,
         ) {
             Ok(_) => {
@@ -293,7 +300,7 @@ mod unix_main {
 
         let workflow = match utils::send_with_retries(
             &config,
-            || default_api::get_workflow(&config, args.workflow_id),
+            || apis::workflows_api::get_workflow(&config, args.workflow_id),
             args.wait_for_healthy_database_minutes,
         ) {
             Ok(wf) => wf,
@@ -407,7 +414,7 @@ mod unix_main {
             create_compute_node(&config, args.workflow_id, &resources, &hostname, scheduler);
         let run_id = match utils::send_with_retries(
             &config,
-            || default_api::get_workflow_status(&config, args.workflow_id),
+            || apis::workflows_api::get_workflow_status(&config, args.workflow_id),
             args.wait_for_healthy_database_minutes,
         ) {
             Ok(status) => status.run_id,
@@ -523,7 +530,7 @@ mod unix_main {
             job_id
         );
 
-        let scheduled_nodes = match default_api::list_scheduled_compute_nodes(
+        let scheduled_nodes = match apis::scheduled_compute_nodes_api::list_scheduled_compute_nodes(
             config,
             workflow_id,
             None,          // offset
@@ -541,7 +548,7 @@ mod unix_main {
             }
         };
 
-        let items = scheduled_nodes.items.unwrap_or_default();
+        let items = scheduled_nodes.items;
         if items.len() != 1 {
             error!(
                 "Expected exactly 1 scheduled compute node for Slurm job ID {}, found {}",
@@ -567,7 +574,11 @@ mod unix_main {
 
         updated_node.status = status.to_string();
 
-        match default_api::update_scheduled_compute_node(config, node_id, updated_node) {
+        match apis::scheduled_compute_nodes_api::update_scheduled_compute_node(
+            config,
+            node_id,
+            updated_node,
+        ) {
             Ok(result) => {
                 info!(
                     "Successfully updated scheduled compute node {} to status: {}",

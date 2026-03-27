@@ -7,7 +7,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
-use torc::client::default_api;
+use torc::client::apis;
 use torc::client::workflow_manager::WorkflowManager;
 use torc::client::workflow_spec::WorkflowSpec;
 use torc::config::TorcConfig;
@@ -72,13 +72,14 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
     assert_eq!(&actions[0].trigger_type, "on_workflow_start");
 
     // Create a job runner to execute the action
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -100,7 +101,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
     let compute_node_id = created_node.id.unwrap();
 
@@ -141,7 +142,8 @@ actions:
     let action_executed = wait_for(
         || {
             let actions =
-                default_api::get_pending_actions(config, workflow_id, None).unwrap_or_default();
+                apis::workflow_actions_api::get_pending_actions(config, workflow_id, None)
+                    .unwrap_or_default();
             actions.is_empty() // Action should no longer be pending
         },
         10,
@@ -211,11 +213,12 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();
     let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow.clone());
     workflow_manager
@@ -235,7 +238,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
 
     let mut job_runner = torc::client::job_runner::JobRunner::new(
@@ -321,7 +324,8 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Get workflow and initialize using WorkflowManager
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();
     let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow.clone());
     workflow_manager
@@ -341,7 +345,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
 
     let mut job_runner = torc::client::job_runner::JobRunner::new(
@@ -430,15 +434,16 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with correct job_ids (should match 3 training jobs)
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
 
     let job_ids = actions[0].job_ids.as_ref().unwrap();
     assert_eq!(job_ids.len(), 3, "Should match 3 training jobs");
 
     // Get workflow and initialize using WorkflowManager
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();
     let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow.clone());
     workflow_manager
@@ -457,7 +462,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
 
     let mut job_runner = torc::client::job_runner::JobRunner::new(
@@ -546,11 +551,12 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify all 3 actions were created
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 3);
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();
     let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow.clone());
     workflow_manager
@@ -569,7 +575,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
 
     let mut job_runner = torc::client::job_runner::JobRunner::new(
@@ -665,7 +671,8 @@ actions:
         WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
             .expect("Failed to create workflow from spec");
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -689,7 +696,7 @@ actions:
             "local".to_string(),
             None,
         );
-        let created_node = default_api::create_compute_node(config, compute_node)
+        let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
             .expect("Failed to create compute node");
 
         let runner = torc::client::job_runner::JobRunner::new(
@@ -791,13 +798,14 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=true
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
     assert_eq!(&actions[0].trigger_type, "on_worker_start");
     assert!(actions[0].persistent, "Action should be persistent");
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -822,7 +830,7 @@ actions:
             "local".to_string(),
             None,
         );
-        let created_node = default_api::create_compute_node(config, compute_node)
+        let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
             .expect("Failed to create compute node");
 
         let runner = torc::client::job_runner::JobRunner::new(
@@ -930,13 +938,14 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=true
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
     assert_eq!(&actions[0].trigger_type, "on_worker_complete");
     assert!(actions[0].persistent, "Action should be persistent");
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -961,7 +970,7 @@ actions:
             "local".to_string(),
             None,
         );
-        let created_node = default_api::create_compute_node(config, compute_node)
+        let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
             .expect("Failed to create compute node");
 
         let runner = torc::client::job_runner::JobRunner::new(
@@ -1068,12 +1077,13 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=false (default)
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
     assert!(!actions[0].persistent, "Action should not be persistent");
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -1098,7 +1108,7 @@ actions:
             "local".to_string(),
             None,
         );
-        let created_node = default_api::create_compute_node(config, compute_node)
+        let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
             .expect("Failed to create compute node");
 
         let runner = torc::client::job_runner::JobRunner::new(
@@ -1208,13 +1218,14 @@ actions:
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
-    let actions =
-        default_api::get_workflow_actions(config, workflow_id).expect("Failed to get actions");
+    let actions = apis::workflow_actions_api::get_workflow_actions(config, workflow_id)
+        .expect("Failed to get actions");
     assert_eq!(actions.len(), 1);
     assert_eq!(&actions[0].trigger_type, "on_workflow_complete");
 
     // Get workflow and initialize using WorkflowManager
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();
     let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow.clone());
     workflow_manager
@@ -1234,7 +1245,7 @@ actions:
         "local".to_string(),
         None,
     );
-    let created_node = default_api::create_compute_node(config, compute_node)
+    let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
         .expect("Failed to create compute node");
 
     let mut job_runner = torc::client::job_runner::JobRunner::new(
@@ -1316,7 +1327,8 @@ actions:
         WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
             .expect("Failed to create workflow from spec");
 
-    let workflow = default_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
+    let workflow =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to get workflow");
 
     // Initialize workflow using WorkflowManager
     let torc_config = TorcConfig::load().unwrap_or_default();
@@ -1340,7 +1352,7 @@ actions:
             "local".to_string(),
             None,
         );
-        let created_node = default_api::create_compute_node(config, compute_node)
+        let created_node = apis::compute_nodes_api::create_compute_node(config, compute_node)
             .expect("Failed to create compute node");
 
         let runner = torc::client::job_runner::JobRunner::new(

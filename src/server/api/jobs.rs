@@ -4,15 +4,15 @@
 
 use std::collections::HashMap;
 
+use crate::server::transport_types::context_types::{ApiError, Has, XSpanIdString};
 use async_trait::async_trait;
 use chrono::Utc;
 use log::{debug, error, info};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use swagger::{ApiError, Has, XSpanIdString};
 use tracing::instrument;
 
-use crate::server::api_types::{
+use crate::server::api_responses::{
     ClaimNextJobsResponse, CreateJobResponse, CreateJobsResponse, DeleteJobResponse,
     DeleteJobsResponse, GetJobResponse, GetReadyJobRequirementsResponse, ListJobIdsResponse,
     ListJobsResponse, ProcessChangedJobInputsResponse, ResetJobStatusResponse, RetryJobResponse,
@@ -44,7 +44,6 @@ pub trait JobsApi<C> {
     async fn delete_jobs(
         &self,
         workflow_id: i64,
-        body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteJobsResponse, ApiError>;
 
@@ -114,25 +113,18 @@ pub trait JobsApi<C> {
     async fn process_changed_job_inputs(
         &self,
         id: i64,
-        body: Option<serde_json::Value>,
         dry_run: bool,
         context: &C,
     ) -> Result<ProcessChangedJobInputsResponse, ApiError>;
 
     /// Delete a job.
-    async fn delete_job(
-        &self,
-        id: i64,
-        body: Option<serde_json::Value>,
-        context: &C,
-    ) -> Result<DeleteJobResponse, ApiError>;
+    async fn delete_job(&self, id: i64, context: &C) -> Result<DeleteJobResponse, ApiError>;
 
     /// Reset status for jobs to uninitialized.
     async fn reset_job_status(
         &self,
         id: i64,
         failed_only: bool,
-        body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<ResetJobStatusResponse, ApiError>;
 
@@ -1155,7 +1147,7 @@ where
             }
         };
 
-        let job_result = match sqlx::query!(
+        let job_result = match sqlx::query(
             r#"
             INSERT INTO job
             (
@@ -1171,22 +1163,22 @@ where
                 failure_handler_id,
                 priority
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING rowid
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             "#,
-            job.workflow_id,
-            job.name,
-            job.command,
-            cancel_on_blocking_job_failure,
-            supports_termination,
-            job.resource_requirements_id,
-            invocation_script,
-            status_int,
-            job.scheduler_id,
-            job.failure_handler_id,
-            priority,
         )
-        .fetch_all(&mut *tx)
+        .bind(job.workflow_id)
+        .bind(&job.name)
+        .bind(&job.command)
+        .bind(cancel_on_blocking_job_failure)
+        .bind(supports_termination)
+        .bind(job.resource_requirements_id)
+        .bind(&invocation_script)
+        .bind(status_int)
+        .bind(job.scheduler_id)
+        .bind(job.failure_handler_id)
+        .bind(priority)
+        .fetch_one(&mut *tx)
         .await
         {
             Ok(job_result) => job_result,
@@ -1196,18 +1188,14 @@ where
             }
         };
 
-        job.id = Some(job_result[0].id);
+        let job_id: i64 = job_result.get("id");
+        job.id = Some(job_id);
 
         // Handle job dependencies
         if let Some(depends_on_job_ids) = &job.depends_on_job_ids {
             for blocking_id in depends_on_job_ids {
                 if let Err(e) = self
-                    .add_depends_on_association(
-                        &mut *tx,
-                        job_result[0].id,
-                        *blocking_id,
-                        job.workflow_id,
-                    )
+                    .add_depends_on_association(&mut *tx, job_id, *blocking_id, job.workflow_id)
                     .await
                 {
                     let _ = tx.rollback().await;
@@ -1222,7 +1210,7 @@ where
                 if let Err(e) = self
                     .add_job_file_association(
                         &mut *tx,
-                        job_result[0].id,
+                        job_id,
                         *file_id,
                         job.workflow_id,
                         "job_input_file",
@@ -1241,7 +1229,7 @@ where
                 if let Err(e) = self
                     .add_job_file_association(
                         &mut *tx,
-                        job_result[0].id,
+                        job_id,
                         *file_id,
                         job.workflow_id,
                         "job_output_file",
@@ -1260,7 +1248,7 @@ where
                 if let Err(e) = self
                     .add_job_user_data_association(
                         &mut *tx,
-                        job_result[0].id,
+                        job_id,
                         *user_data_id,
                         "job_input_user_data",
                     )
@@ -1278,7 +1266,7 @@ where
                 if let Err(e) = self
                     .add_job_user_data_association(
                         &mut *tx,
-                        job_result[0].id,
+                        job_id,
                         *user_data_id,
                         "job_output_user_data",
                     )
@@ -1295,7 +1283,7 @@ where
             return Err(database_error_with_msg(e, "Failed to commit transaction"));
         }
 
-        debug!("Created job with id: {:?}", job_result[0].id);
+        debug!("Created job with id: {:?}", job_id);
         let response = CreateJobResponse::SuccessfulResponse(job);
         Ok(response)
     }
@@ -1361,7 +1349,7 @@ where
             job.status = Some(status);
 
             // Insert the job
-            let job_result = match sqlx::query!(
+            let job_result = match sqlx::query(
                 r#"
                 INSERT INTO job
                 (
@@ -1377,21 +1365,21 @@ where
                     failure_handler_id,
                     priority
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                RETURNING rowid
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 "#,
-                job.workflow_id,
-                job.name,
-                job.command,
-                cancel_on_blocking_job_failure,
-                supports_termination,
-                job.resource_requirements_id,
-                invocation_script,
-                status_int,
-                job.scheduler_id,
-                job.failure_handler_id,
-                priority,
             )
+            .bind(job.workflow_id)
+            .bind(&job.name)
+            .bind(&job.command)
+            .bind(cancel_on_blocking_job_failure)
+            .bind(supports_termination)
+            .bind(job.resource_requirements_id)
+            .bind(&invocation_script)
+            .bind(status_int)
+            .bind(job.scheduler_id)
+            .bind(job.failure_handler_id)
+            .bind(priority)
             .fetch_one(&mut *transaction)
             .await
             {
@@ -1405,7 +1393,7 @@ where
                 }
             };
 
-            let job_id = job_result.id;
+            let job_id: i64 = job_result.get("id");
             job.id = Some(job_id);
 
             // Handle job dependencies
@@ -1551,13 +1539,11 @@ where
     async fn delete_jobs(
         &self,
         workflow_id: i64,
-        body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<DeleteJobsResponse, ApiError> {
         debug!(
-            "delete_jobs({}, {:?}) - X-Span-ID: {:?}",
+            "delete_jobs({}) - X-Span-ID: {:?}",
             workflow_id,
-            body,
             context.get().0.clone()
         );
 
@@ -1868,7 +1854,7 @@ where
 
         Ok(ListJobsResponse::SuccessfulResponse(
             models::ListJobsResponse {
-                items: Some(items),
+                items,
                 offset: offset_val,
                 max_limit: MAX_RECORD_TRANSFER_COUNT,
                 count: current_count,
@@ -1898,9 +1884,8 @@ where
         context: &C,
     ) -> Result<UpdateJobResponse, ApiError> {
         debug!(
-            "update_job({}, {:?}) - X-Span-ID: {:?}",
+            "update_job({}) - X-Span-ID: {:?}",
             id,
-            body,
             context.get().0.clone()
         );
 
@@ -2128,32 +2113,32 @@ where
             ));
         }
 
-        let result = match sqlx::query!(
+        let result = match sqlx::query(
             r#"
             UPDATE job
             SET
-                name = COALESCE($1, name)
-                ,status = COALESCE($2, status)
-                ,command = COALESCE($3, command)
-                ,invocation_script = COALESCE($4, invocation_script)
-                ,cancel_on_blocking_job_failure = COALESCE($5, cancel_on_blocking_job_failure)
-                ,supports_termination = COALESCE($6, supports_termination)
-                ,resource_requirements_id = COALESCE($7, resource_requirements_id)
-                ,scheduler_id = COALESCE($8, scheduler_id)
-                ,priority = COALESCE($9, priority)
-            WHERE id = $10
+                name = COALESCE(?, name)
+                ,status = COALESCE(?, status)
+                ,command = COALESCE(?, command)
+                ,invocation_script = COALESCE(?, invocation_script)
+                ,cancel_on_blocking_job_failure = COALESCE(?, cancel_on_blocking_job_failure)
+                ,supports_termination = COALESCE(?, supports_termination)
+                ,resource_requirements_id = COALESCE(?, resource_requirements_id)
+                ,scheduler_id = COALESCE(?, scheduler_id)
+                ,priority = COALESCE(?, priority)
+            WHERE id = ?
         "#,
-            body.name,
-            status_int,
-            body.command,
-            body.invocation_script,
-            body.cancel_on_blocking_job_failure,
-            body.supports_termination,
-            body.resource_requirements_id,
-            body.scheduler_id,
-            body.priority,
-            id,
         )
+        .bind(body.name)
+        .bind(status_int)
+        .bind(body.command)
+        .bind(body.invocation_script)
+        .bind(body.cancel_on_blocking_job_failure)
+        .bind(body.supports_termination)
+        .bind(body.resource_requirements_id)
+        .bind(body.scheduler_id)
+        .bind(body.priority)
+        .bind(id)
         .execute(self.context.pool.as_ref())
         .await
         {
@@ -2287,8 +2272,211 @@ where
             requested_job_count,
             context.get().0.clone()
         );
-        error!("claim_next_jobs operation is not implemented");
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut conn = self.context.pool.acquire().await.map_err(|e| {
+            error!("Failed to acquire database connection: {}", e);
+            ApiError("Database connection error".to_string())
+        })?;
+
+        let workflow_is_canceled =
+            match sqlx::query("SELECT is_canceled FROM workflow_status WHERE workflow_id = $1")
+                .bind(id)
+                .fetch_optional(&mut *conn)
+                .await
+            {
+                Ok(Some(row)) => row.get::<bool, _>("is_canceled"),
+                Ok(None) => false,
+                Err(e) => {
+                    error!("Failed to query workflow cancellation status: {}", e);
+                    return Err(ApiError("Database error".to_string()));
+                }
+            };
+
+        if workflow_is_canceled {
+            return Ok(ClaimNextJobsResponse::SuccessfulResponse(
+                models::ClaimNextJobsResponse { jobs: Some(vec![]) },
+            ));
+        }
+
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to begin immediate transaction: {}", e);
+                ApiError("Database lock error".to_string())
+            })?;
+
+        let ready_status = models::JobStatus::Ready.to_int();
+        let query = r#"
+            SELECT
+                id as job_id,
+                workflow_id,
+                name,
+                command,
+                invocation_script,
+                status,
+                cancel_on_blocking_job_failure,
+                supports_termination,
+                resource_requirements_id,
+                failure_handler_id,
+                attempt_id,
+                priority
+            FROM job
+            WHERE workflow_id = $1 AND status = $2
+            LIMIT $3
+            "#;
+
+        let rows = match sqlx::query(query)
+            .bind(id)
+            .bind(ready_status)
+            .bind(requested_job_count)
+            .fetch_all(&mut *conn)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                error!("Database error in claim_next_jobs: {}", e);
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database error".to_string()));
+            }
+        };
+
+        debug!(
+            "claim_next_jobs: Found {} jobs for workflow {}",
+            rows.len(),
+            id
+        );
+
+        let mut selected_jobs = Vec::new();
+        let mut job_ids_to_update = Vec::new();
+
+        for row in rows {
+            let job_id: i64 = row.get("job_id");
+            job_ids_to_update.push(job_id);
+
+            let job = models::JobModel {
+                id: Some(job_id),
+                workflow_id: row.get("workflow_id"),
+                name: row.get("name"),
+                command: row.get("command"),
+                invocation_script: row.get("invocation_script"),
+                status: Some(models::JobStatus::Pending),
+                schedule_compute_nodes: None,
+                cancel_on_blocking_job_failure: Some(row.get("cancel_on_blocking_job_failure")),
+                supports_termination: Some(row.get("supports_termination")),
+                depends_on_job_ids: None,
+                input_file_ids: None,
+                output_file_ids: None,
+                input_user_data_ids: None,
+                output_user_data_ids: None,
+                resource_requirements_id: Some(row.get("resource_requirements_id")),
+                scheduler_id: None,
+                failure_handler_id: row.get("failure_handler_id"),
+                attempt_id: row.get("attempt_id"),
+                priority: row.try_get("priority").ok(),
+            };
+
+            selected_jobs.push(job);
+        }
+
+        let mut output_files_map: HashMap<i64, Vec<i64>> = HashMap::new();
+        let mut output_user_data_map: HashMap<i64, Vec<i64>> = HashMap::new();
+
+        if !job_ids_to_update.is_empty() {
+            let output_files = match sqlx::query(
+                "SELECT job_id, file_id FROM job_output_file WHERE workflow_id = $1",
+            )
+            .bind(id)
+            .fetch_all(&mut *conn)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    error!("Failed to query output files: {}", e);
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
+
+            for row in output_files {
+                let job_id: i64 = row.get("job_id");
+                let file_id: i64 = row.get("file_id");
+                if job_ids_to_update.contains(&job_id) {
+                    output_files_map.entry(job_id).or_default().push(file_id);
+                }
+            }
+
+            let output_user_data = match sqlx::query(
+                "SELECT job_id, user_data_id FROM job_output_user_data WHERE job_id IN (SELECT id FROM job WHERE workflow_id = $1)",
+            )
+            .bind(id)
+            .fetch_all(&mut *conn)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    error!("Failed to query output user_data: {}", e);
+                    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                    return Err(ApiError("Database query error".to_string()));
+                }
+            };
+
+            for row in output_user_data {
+                let job_id: i64 = row.get("job_id");
+                let user_data_id: i64 = row.get("user_data_id");
+                if job_ids_to_update.contains(&job_id) {
+                    output_user_data_map
+                        .entry(job_id)
+                        .or_default()
+                        .push(user_data_id);
+                }
+            }
+        }
+
+        for job in &mut selected_jobs {
+            if let Some(job_id) = job.id {
+                job.output_file_ids = output_files_map.get(&job_id).cloned();
+                job.output_user_data_ids = output_user_data_map.get(&job_id).cloned();
+            }
+        }
+
+        if !job_ids_to_update.is_empty() {
+            let pending = models::JobStatus::Pending.to_int();
+            let job_ids_str = job_ids_to_update
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "UPDATE job SET status = {} WHERE id IN ({})",
+                pending, job_ids_str
+            );
+            if let Err(e) = sqlx::query(&sql).execute(&mut *conn).await {
+                error!("Failed to update job status: {}", e);
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                return Err(ApiError("Database update error".to_string()));
+            }
+
+            debug!(
+                "Updated {} jobs to pending status for workflow {}",
+                job_ids_to_update.len(),
+                id
+            );
+        }
+
+        if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
+            error!("Failed to commit transaction: {}", e);
+            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+                error!("Failed to rollback after commit failure: {}", rollback_err);
+            }
+            return Err(ApiError("Database commit error".to_string()));
+        }
+
+        Ok(ClaimNextJobsResponse::SuccessfulResponse(
+            models::ClaimNextJobsResponse {
+                jobs: Some(selected_jobs),
+            },
+        ))
     }
 
     /// Check for changed job inputs and update status accordingly.
@@ -2297,7 +2485,6 @@ where
     async fn process_changed_job_inputs(
         &self,
         id: i64,
-        _body: Option<serde_json::Value>,
         dry_run: bool,
         context: &C,
     ) -> Result<ProcessChangedJobInputsResponse, ApiError> {
@@ -2438,9 +2625,7 @@ where
             if dry_run { "would be" } else { "were" }
         );
 
-        let response = models::ProcessChangedJobInputsResponse {
-            reinitialized_jobs: Some(reinitialized_jobs),
-        };
+        let response = models::ProcessChangedJobInputsResponse { reinitialized_jobs };
 
         Ok(ProcessChangedJobInputsResponse::SuccessfulResponse(
             response,
@@ -2448,16 +2633,10 @@ where
     }
 
     /// Delete a job.
-    async fn delete_job(
-        &self,
-        id: i64,
-        body: Option<serde_json::Value>,
-        context: &C,
-    ) -> Result<DeleteJobResponse, ApiError> {
+    async fn delete_job(&self, id: i64, context: &C) -> Result<DeleteJobResponse, ApiError> {
         debug!(
-            "delete_job({}, {:?}) - X-Span-ID: {:?}",
+            "delete_job({}) - X-Span-ID: {:?}",
             id,
-            body,
             context.get().0.clone()
         );
 
@@ -2510,14 +2689,12 @@ where
         &self,
         id: i64,
         failed_only: bool,
-        body: Option<serde_json::Value>,
         context: &C,
     ) -> Result<ResetJobStatusResponse, ApiError> {
         debug!(
-            "reset_job_status({}, {}, {:?}) - X-Span-ID: {:?}",
+            "reset_job_status({}, {}) - X-Span-ID: {:?}",
             id,
             failed_only,
-            body,
             context.get().0.clone()
         );
 

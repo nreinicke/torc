@@ -12,7 +12,7 @@
 //! // Retry API calls with automatic network error handling
 //! let response = send_with_retries(
 //!     config,
-//!     || default_api::ping(config),
+//!     || apis::system_api::ping(config),
 //!     5, // Wait up to 5 minutes for server recovery
 //! )?;
 //! # Ok(())
@@ -28,8 +28,9 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::client::apis;
 use crate::client::apis::configuration::Configuration;
-use crate::client::apis::default_api;
+use crate::models;
 
 const PING_INTERVAL_SECONDS: u64 = 30;
 
@@ -123,7 +124,7 @@ where
                 thread::sleep(Duration::from_secs(PING_INTERVAL_SECONDS));
 
                 // Try to ping the server
-                match default_api::ping(config) {
+                match apis::system_api::ping(config) {
                     Ok(_) => {
                         info!("Server is back online. Retrying original API call.");
                         // Server is back, retry the original call
@@ -168,19 +169,10 @@ pub fn claim_action(
     let claimed = send_with_retries(
         config,
         || -> Result<bool, Box<dyn std::error::Error>> {
-            let body = match compute_node_id {
-                Some(id) => serde_json::json!({ "compute_node_id": id }),
-                None => serde_json::json!({}),
-            };
+            let body = models::ClaimActionRequest { compute_node_id };
 
-            match default_api::claim_action(config, workflow_id, action_id, body) {
-                Ok(result) => {
-                    let claimed = result
-                        .get("claimed")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    Ok(claimed)
-                }
+            match apis::workflow_actions_api::claim_action(config, workflow_id, action_id, body) {
+                Ok(result) => Ok(result.success),
                 Err(err) => {
                     // Check if it's a Conflict (already claimed by another compute node)
                     if let crate::client::apis::Error::ResponseError(ref response_content) = err

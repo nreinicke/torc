@@ -37,6 +37,7 @@
   - [Set Up Authentication](./core/how-to/set-up-authentication.md)
   - [Check Resource Utilization](./core/how-to/check-resource-utilization.md)
   - [View Resource Plots](./core/how-to/view-resource-plots.md)
+  - [Prioritize Jobs](./core/how-to/prioritize-jobs.md)
   - [Parameterize Jobs with Files](./core/how-to/parameterize-with-files.md)
   - [Use Invocation Scripts](./core/how-to/use-invocation-script.md)
   - [Add RO-Crate Metadata](./core/how-to/ro-crate-metadata.md)
@@ -120,6 +121,7 @@
   - [AI-Assisted Recovery Design](./specialized/design/ai-assisted-recovery.md)
   - [Workflow Graph](./specialized/design/workflow-graph.md)
   - [Interface Architecture](./specialized/design/interfaces.md)
+  - [API Generation Architecture](./specialized/design/api-generation.md)
   - [Slurm Job Step Monitoring](./specialized/design/srun-monitoring.md)
 
 ---

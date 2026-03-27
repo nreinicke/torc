@@ -143,10 +143,10 @@ export TORC_API_URL="http://localhost:8080/torc-service/v1"
 ./target/release/torc jobs list <workflow_id>          # View job status
 
 # Run tests
-cargo test  -- --test-threads 1
+cargo nextest run
 
 # Run specific test
-cargo test test_get_ready_jobs -- --nocapture
+cargo nextest run -E 'test(test_get_ready_jobs)'
 ```
 
 ### Feature-Gated Binaries
@@ -221,7 +221,7 @@ enable log parsing tools.
 - Integration tests in `tests/`
 - Use `serial_test` attribute for tests that modify shared state
 - Test utilities in `tests/common/`
-- Run with: `cargo test` from rust-client directory
+- Run with: `cargo nextest run` from rust-client directory
 
 ## Important Notes
 
@@ -325,26 +325,44 @@ cascade-delete the entire database contents.
 
 ### OpenAPI Code Generation
 
-- Server and client originally used OpenAPI-generated code for base types and routing but we are now
-  manually updating the code.
+- `api/openapi.codegen.yaml` is emitted from the code-first Rust scaffold via
+  `cargo run --no-default-features --features openapi-codegen --bin torc-openapi`.
+- `api/openapi.yaml` is now a checked-in artifact that should be refreshed from Rust with
+  `cd api && bash sync_openapi.sh all --promote`.
+- `api/sync_openapi.sh` is the preferred developer entrypoint for emit/check/promote/client sync.
+- The retired wrappers `make_api_clients.sh` and `regenerate_openapi_artifacts.sh` should not be
+  reintroduced.
+- `api/check_openapi_codegen_parity.sh` validates the Rust-emitted spec against `api/openapi.yaml`.
+- Generated Rust surfaces should not be hand-edited. Keep deterministic post-processing under the
+  Rust-owned OpenAPI workflow under `api/sync_openapi.sh`.
 - Implement business logic in non-generated modules (e.g., `server/src/bin/server/api/*.rs`)
+
+### Documentation Build
+
+- User docs live under `docs/src/` and are built from `docs/` with `mdbook build`.
+- If source docs change, refresh the generated site in `docs/book/`.
 
 ## Common Tasks
 
 ### Adding a New API Endpoint
 
-1. Update OpenAPI spec (api/openapi.yaml)
-2. Regenerate API code (`cd api && bash make_api_clients.sh`)
-3. Add implementation in appropriate `src/server/api/*.rs` module
-4. Update client API in `src/client/apis/`
-5. Add CLI command handler if needed in `src/client/commands/`
+1. Add the endpoint to the live Rust-owned API surface and model layer (`src/openapi_spec.rs`,
+   `src/server/live_router.rs`, `src/models.rs`)
+2. Refresh and verify the emitted spec
+   (`cd api && bash sync_openapi.sh emit && bash sync_openapi.sh check`)
+3. Regenerate API clients from the emitted spec
+   (`cd api && bash sync_openapi.sh clients --use-rust-spec`)
+4. Promote the Rust spec when the change is ready to become the checked-in contract
+   (`cd api && bash sync_openapi.sh all --promote`)
+5. Add implementation in the appropriate live server module
+6. Add CLI command handler if needed in `src/client/commands/`
 
 **API Implementation Checklist:**
 
 - [ ] **Authorization**: Use `authorize_workflow!` or `authorize_resource!` macros in
       `http_server.rs`
 - [ ] **Error responses**: Return 404 for not found, 422 for validation errors, 403 for forbidden
-- [ ] **OpenAPI spec**: Validate with `npx @redocly/cli lint api/openapi.yaml` - fix all errors
+- [ ] **OpenAPI spec**: Validate emitted/checked-in OpenAPI as needed - fix all errors
   - Use `type: [integer, "null"]` instead of `nullable: true` (OpenAPI 3.1)
   - Use direct `$ref:` without `schema:` wrapper
   - Ensure examples match schema (use `error: {}` not `error: "{}"`)

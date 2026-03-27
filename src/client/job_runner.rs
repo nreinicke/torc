@@ -15,7 +15,8 @@
 //!
 //! 2. **Graceful Shutdown**: When the flag is set, the main loop detects it and calls
 //!    [`JobRunner::terminate_jobs()`], which sends SIGTERM to all running jobs, waits for
-//!    them to exit, and sets job status to `JobStatus::Terminated`.
+//!    them to exit, and sets job status to `JobStatus::Completed` (if exit code is 0) or
+//!    `JobStatus::Terminated` (if exit code is non-zero).
 //!
 //! # Per-Step Timeout via srun
 //!
@@ -34,8 +35,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::client::apis;
 use crate::client::apis::configuration::Configuration;
-use crate::client::apis::default_api;
 use crate::client::async_cli_command::AsyncCliCommand;
 use crate::client::resource_correction::format_duration_iso8601;
 use crate::client::resource_monitor::{ResourceMonitor, ResourceMonitorConfig};
@@ -44,8 +45,8 @@ use crate::client::workflow_spec::{ExecutionConfig, ExecutionMode};
 use crate::config::TorcConfig;
 use crate::memory_utils::memory_string_to_gb;
 use crate::models::{
-    ClaimJobsSortMethod, ComputeNodesResources, JobStatus, ResourceRequirementsModel, ResultModel,
-    SlurmStatsModel, WorkflowModel,
+    ComputeNodesResources, JobStatus, ResourceRequirementsModel, ResultModel, SlurmStatsModel,
+    WorkflowModel,
 };
 
 /// Rule definition for failure handler (parsed from JSON stored in database)
@@ -203,6 +204,17 @@ pub enum RecoveryOutcome {
     Error(String),
 }
 
+#[derive(Debug)]
+struct JobRunnerApiError(String);
+
+impl std::fmt::Display for JobRunnerApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for JobRunnerApiError {}
+
 /// Manages parallel job execution on a compute node.
 ///
 /// The JobRunner claims jobs from the server, executes them locally, and reports results.
@@ -218,7 +230,8 @@ pub enum RecoveryOutcome {
 /// When termination is requested:
 /// - Jobs with `supports_termination = true` receive SIGTERM (graceful shutdown)
 /// - Jobs with `supports_termination = false` receive SIGKILL (immediate kill)
-/// - All jobs are set to `JobStatus::Terminated`
+/// - Jobs that exit cleanly (exit code 0) are set to `JobStatus::Completed`
+/// - Jobs that crash or are force-killed are set to `JobStatus::Terminated`
 #[allow(dead_code)]
 pub struct JobRunner {
     config: Configuration,
@@ -428,7 +441,6 @@ impl JobRunner {
             workflow.compute_node_ignore_workflow_completion,
             workflow.compute_node_wait_for_healthy_database_minutes,
             workflow.compute_node_min_time_for_new_jobs_seconds,
-            workflow.jobs_sort_method,
         );
         let execution_config = ExecutionConfig::from_workflow_model(&workflow);
         if execution_config.effective_mode() == ExecutionMode::Slurm
@@ -527,16 +539,29 @@ impl JobRunner {
     ///
     /// This is a convenience method that wraps [`utils::send_with_retries`] with
     /// the JobRunner's configuration and retry settings.
-    fn send_with_retries<T, E, F>(&self, api_call: F) -> Result<T, E>
+    fn send_with_retries<T, E, F>(&self, mut api_call: F) -> Result<T, Box<dyn std::error::Error>>
     where
         F: FnMut() -> Result<T, E>,
         E: std::fmt::Display,
     {
         utils::send_with_retries(
             &self.config,
-            api_call,
+            || {
+                api_call().map_err(|err| {
+                    Box::new(JobRunnerApiError(err.to_string())) as Box<dyn std::error::Error>
+                })
+            },
             self.rules.compute_node_wait_for_healthy_database_minutes,
         )
+    }
+
+    fn box_retry_error<T, E>(result: Result<T, E>) -> Result<T, Box<dyn std::error::Error>>
+    where
+        E: std::fmt::Display,
+    {
+        result.map_err(|err| {
+            Box::new(JobRunnerApiError(err.to_string())) as Box<dyn std::error::Error>
+        })
     }
 
     /// Atomically claim a workflow action for execution.
@@ -655,7 +680,10 @@ impl JobRunner {
 
         loop {
             match self.send_with_retries(|| {
-                default_api::is_workflow_complete(&self.config, self.workflow_id)
+                Self::box_retry_error(apis::workflows_api::is_workflow_complete(
+                    &self.config,
+                    self.workflow_id,
+                ))
             }) {
                 Ok(response) => {
                     if response.is_canceled {
@@ -822,7 +850,7 @@ impl JobRunner {
 
         // Fetch the existing compute node first to preserve all fields
         let mut update_model =
-            match default_api::get_compute_node(&self.config, self.compute_node_id) {
+            match apis::compute_nodes_api::get_compute_node(&self.config, self.compute_node_id) {
                 Ok(node) => node,
                 Err(e) => {
                     error!(
@@ -837,9 +865,11 @@ impl JobRunner {
         update_model.is_active = Some(false);
         update_model.duration_seconds = Some(duration_seconds);
 
-        if let Err(e) =
-            default_api::update_compute_node(&self.config, self.compute_node_id, update_model)
-        {
+        if let Err(e) = apis::compute_nodes_api::update_compute_node(
+            &self.config,
+            self.compute_node_id,
+            update_model,
+        ) {
             error!(
                 "Failed to deactivate compute node {}: {}",
                 self.compute_node_id, e
@@ -907,7 +937,8 @@ impl JobRunner {
     ///    - Exit codes are captured, including negative values for signal-terminated processes
     ///
     /// 3. **Completion Phase**: Report results to the server
-    ///    - All terminated jobs are set to `JobStatus::Terminated`
+    ///    - Jobs that exited cleanly (exit code 0) are set to `JobStatus::Completed`
+    ///    - Jobs that crashed or were force-killed are set to `JobStatus::Terminated`
     ///    - Results include execution time and resource metrics (if monitoring is enabled)
     ///
     /// Terminates all running jobs with a graceful shutdown timeline.
@@ -1041,10 +1072,16 @@ impl JobRunner {
                 self.compute_node_id,
                 self.resource_monitor.as_ref(),
             );
-            result.status = JobStatus::Terminated;
             if force_killed.contains(job_id) {
                 result.return_code = timeout_exit_code as i64;
             }
+            // Jobs that exited cleanly (rc=0) handled termination gracefully - mark as Completed.
+            // Jobs that crashed or were force-killed get Terminated status.
+            result.status = if result.return_code == 0 {
+                JobStatus::Completed
+            } else {
+                JobStatus::Terminated
+            };
             results.push((*job_id, result));
         }
 
@@ -1220,16 +1257,17 @@ impl JobRunner {
 
         // Fetch file models and check existence
         for file_id in output_file_ids {
-            let file_model =
-                match self.send_with_retries(|| default_api::get_file(&self.config, *file_id)) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        return Err(format!(
-                            "Failed to fetch file model for file_id {}: {}",
-                            file_id, e
-                        ));
-                    }
-                };
+            let file_model = match self.send_with_retries(|| {
+                Self::box_retry_error(apis::files_api::get_file(&self.config, *file_id))
+            }) {
+                Ok(file) => file,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to fetch file model for file_id {}: {}",
+                        file_id, e
+                    ));
+                }
+            };
 
             let file_path = Path::new(&file_model.path);
 
@@ -1281,21 +1319,26 @@ impl JobRunner {
         let mut updated_file_models: Vec<crate::models::FileModel> = Vec::new();
 
         for (file_id, st_mtime) in files_to_update {
-            let mut file_model =
-                match self.send_with_retries(|| default_api::get_file(&self.config, file_id)) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        error!(
-                            "Failed to re-fetch file model for file_id {}: {}",
-                            file_id, e
-                        );
-                        continue;
-                    }
-                };
+            let mut file_model = match self.send_with_retries(|| {
+                Self::box_retry_error(apis::files_api::get_file(&self.config, file_id))
+            }) {
+                Ok(file) => file,
+                Err(e) => {
+                    error!(
+                        "Failed to re-fetch file model for file_id {}: {}",
+                        file_id, e
+                    );
+                    continue;
+                }
+            };
 
             file_model.st_mtime = Some(st_mtime);
             match self.send_with_retries(|| {
-                default_api::update_file(&self.config, file_id, file_model.clone())
+                Self::box_retry_error(apis::files_api::update_file(
+                    &self.config,
+                    file_id,
+                    file_model.clone(),
+                ))
             }) {
                 Ok(_) => {
                     debug!("Updated st_mtime for file_id {} to {}", file_id, st_mtime);
@@ -1345,7 +1388,9 @@ impl JobRunner {
         );
 
         // Fetch the job model to get job name for CreateAction
-        let job = match self.send_with_retries(|| default_api::get_job(&self.config, job_id)) {
+        let job = match self.send_with_retries(|| {
+            Self::box_retry_error(apis::jobs_api::get_job(&self.config, job_id))
+        }) {
             Ok(job) => job,
             Err(e) => {
                 warn!(
@@ -1482,13 +1527,13 @@ impl JobRunner {
 
         let status_str = format!("{:?}", final_result.status).to_lowercase();
         match self.send_with_retries(|| {
-            default_api::complete_job(
+            Self::box_retry_error(apis::jobs_api::complete_job(
                 &self.config,
                 job_id,
                 final_result.status,
                 final_result.run_id,
                 final_result.clone(),
-            )
+            ))
         }) {
             Ok(_) => {
                 info!(
@@ -1499,7 +1544,7 @@ impl JobRunner {
                 // slurm_stats was taken at the top of handle_job_completion so we could backfill
                 // resource fields into the result before reporting to the server.
                 if let Some(stats) = slurm_stats {
-                    match default_api::create_slurm_stats(&self.config, stats) {
+                    match apis::slurm_stats_api::create_slurm_stats(&self.config, stats) {
                         Ok(_) => {
                             info!(
                                 "Stored slurm_stats workflow_id={} job_id={}",
@@ -1617,9 +1662,12 @@ impl JobRunner {
             None => return RecoveryOutcome::NoHandler,
         };
 
-        let handler = match self
-            .send_with_retries(|| default_api::get_failure_handler(&self.config, fh_id))
-        {
+        let handler = match self.send_with_retries(|| {
+            Self::box_retry_error(apis::failure_handlers_api::get_failure_handler(
+                &self.config,
+                fh_id,
+            ))
+        }) {
             Ok(h) => h,
             Err(e) => {
                 warn!(
@@ -1676,7 +1724,12 @@ impl JobRunner {
         // This ensures we don't run recovery scripts for retries that won't happen.
         // Pass max_retries for server-side validation.
         match self.send_with_retries(|| {
-            default_api::retry_job(&self.config, job_id, self.run_id, rule.max_retries)
+            Self::box_retry_error(apis::jobs_api::retry_job(
+                &self.config,
+                job_id,
+                self.run_id,
+                rule.max_retries,
+            ))
         }) {
             Ok(_) => {
                 info!(
@@ -1923,14 +1976,13 @@ impl JobRunner {
         let limit = per_node.num_cpus;
         let strict_scheduler_match = self.torc_config.client.slurm.strict_scheduler_match;
         match self.send_with_retries(|| {
-            default_api::claim_jobs_based_on_resources(
+            Self::box_retry_error(apis::workflows_api::claim_jobs_based_on_resources(
                 &self.config,
                 self.workflow_id,
-                &per_node,
                 limit,
-                Some(self.rules.jobs_sort_method),
+                per_node.clone(),
                 Some(strict_scheduler_match),
-            )
+            ))
         }) {
             Ok(response) => {
                 let jobs = response.jobs.unwrap_or_default();
@@ -1960,7 +2012,12 @@ impl JobRunner {
                     let mut async_job = AsyncCliCommand::new(job);
 
                     let job_rr = match self.send_with_retries(|| {
-                        default_api::get_resource_requirements(&self.config, rr_id)
+                        Self::box_retry_error(
+                            apis::resource_requirements_api::get_resource_requirements(
+                                &self.config,
+                                rr_id,
+                            ),
+                        )
                     }) {
                         Ok(rr) => rr,
                         Err(e) => {
@@ -1973,13 +2030,12 @@ impl JobRunner {
                     };
 
                     match self.send_with_retries(|| {
-                        default_api::start_job(
+                        Self::box_retry_error(apis::jobs_api::start_job(
                             &self.config,
                             job_id,
                             self.run_id,
                             self.compute_node_id,
-                            None,
-                        )
+                        ))
                     }) {
                         Ok(_) => {
                             debug!("Successfully marked job {} as started in database", job_id);
@@ -2070,7 +2126,11 @@ impl JobRunner {
             .expect("max_parallel_jobs must be set")
             - self.running_jobs.len() as i64;
         match self.send_with_retries(|| {
-            default_api::claim_next_jobs(&self.config, self.workflow_id, Some(limit), None)
+            Self::box_retry_error(apis::workflows_api::claim_next_jobs(
+                &self.config,
+                self.workflow_id,
+                Some(limit),
+            ))
         }) {
             Ok(response) => {
                 let jobs = response.jobs.unwrap_or_default();
@@ -2098,7 +2158,12 @@ impl JobRunner {
                     let mut async_job = AsyncCliCommand::new(job);
 
                     let job_rr = match self.send_with_retries(|| {
-                        default_api::get_resource_requirements(&self.config, rr_id)
+                        Self::box_retry_error(
+                            apis::resource_requirements_api::get_resource_requirements(
+                                &self.config,
+                                rr_id,
+                            ),
+                        )
                     }) {
                         Ok(rr) => rr,
                         Err(e) => {
@@ -2112,13 +2177,12 @@ impl JobRunner {
 
                     // Mark job as started in the database before actually starting it
                     match self.send_with_retries(|| {
-                        default_api::start_job(
+                        Self::box_retry_error(apis::jobs_api::start_job(
                             &self.config,
                             job_id,
                             self.run_id,
                             self.compute_node_id,
-                            None,
-                        )
+                        ))
                     }) {
                         Ok(_) => {
                             debug!("Successfully marked job {} as started in database", job_id);
@@ -2197,13 +2261,12 @@ impl JobRunner {
     /// GPU devices that were reserved for the job.
     fn revert_job_to_ready(&mut self, job_id: i64) {
         match self.send_with_retries(|| {
-            default_api::manage_status_change(
+            Self::box_retry_error(apis::jobs_api::manage_status_change(
                 &self.config,
                 job_id,
                 JobStatus::Ready,
                 self.run_id,
-                None,
-            )
+            ))
         }) {
             Ok(_) => {
                 info!(
@@ -2236,7 +2299,7 @@ impl JobRunner {
         let trigger_type_owned = trigger_type.to_string();
         let pending_actions = match self.send_with_retries(
             || -> Result<Vec<crate::models::WorkflowActionModel>, Box<dyn std::error::Error>> {
-                let actions = default_api::get_pending_actions(
+                let actions = apis::workflow_actions_api::get_pending_actions(
                     &self.config,
                     self.workflow_id,
                     Some(vec![trigger_type_owned.clone()]),
@@ -2337,7 +2400,7 @@ impl JobRunner {
         // Get pending on_jobs_ready and on_jobs_complete actions
         let pending_actions = match self.send_with_retries(
             || -> Result<Vec<crate::models::WorkflowActionModel>, Box<dyn std::error::Error>> {
-                let actions = default_api::get_pending_actions(
+                let actions = apis::workflow_actions_api::get_pending_actions(
                     &self.config,
                     self.workflow_id,
                     Some(vec![
@@ -2426,7 +2489,10 @@ impl JobRunner {
         // Get ALL actions for this workflow (not just pending ones)
         match self.send_with_retries(
             || -> Result<Vec<crate::models::WorkflowActionModel>, Box<dyn std::error::Error>> {
-                let actions = default_api::get_workflow_actions(&self.config, self.workflow_id)?;
+                let actions = apis::workflow_actions_api::get_workflow_actions(
+                    &self.config,
+                    self.workflow_id,
+                )?;
                 Ok(actions)
             },
         ) {
@@ -2629,7 +2695,6 @@ struct ComputeNodeRules {
     /// If the remaining time is less than this value, the compute node will stop requesting
     /// new jobs and wait for running jobs to complete. Default is 300 seconds (5 minutes).
     pub compute_node_min_time_for_new_jobs_seconds: u64,
-    pub jobs_sort_method: ClaimJobsSortMethod,
 }
 
 impl ComputeNodeRules {
@@ -2638,7 +2703,6 @@ impl ComputeNodeRules {
         compute_node_ignore_workflow_completion: Option<bool>,
         compute_node_wait_for_healthy_database_minutes: Option<i64>,
         compute_node_min_time_for_new_jobs_seconds: Option<i64>,
-        jobs_sort_method: Option<ClaimJobsSortMethod>,
     ) -> Self {
         ComputeNodeRules {
             compute_node_wait_for_new_jobs_seconds: compute_node_wait_for_new_jobs_seconds
@@ -2649,7 +2713,6 @@ impl ComputeNodeRules {
                 compute_node_wait_for_healthy_database_minutes.unwrap_or(20) as u64,
             compute_node_min_time_for_new_jobs_seconds: compute_node_min_time_for_new_jobs_seconds
                 .unwrap_or(300) as u64,
-            jobs_sort_method: jobs_sort_method.unwrap_or(ClaimJobsSortMethod::GpusRuntimeMemory),
         }
     }
 }

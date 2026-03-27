@@ -3,8 +3,8 @@
 //! This module provides helper functions for creating RO-Crate entities for workflow files
 //! when `enable_ro_crate` is set on a workflow.
 
+use crate::client::apis;
 use crate::client::apis::configuration::Configuration;
-use crate::client::apis::default_api;
 use crate::client::version_check;
 use crate::models::{FileModel, JobModel, RoCrateEntityModel};
 use chrono::{DateTime, Utc};
@@ -223,14 +223,18 @@ pub fn find_entity_for_file(
     workflow_id: i64,
     file_id: i64,
 ) -> Option<RoCrateEntityModel> {
-    match default_api::list_ro_crate_entities(config, workflow_id, None, None) {
-        Ok(response) => {
-            if let Some(entities) = response.items {
-                entities.into_iter().find(|e| e.file_id == Some(file_id))
-            } else {
-                None
-            }
-        }
+    match apis::ro_crate_entities_api::list_ro_crate_entities(
+        config,
+        workflow_id,
+        None,
+        None,
+        None,
+        None,
+    ) {
+        Ok(response) => response
+            .items
+            .into_iter()
+            .find(|e| e.file_id == Some(file_id)),
         Err(e) => {
             warn!("Failed to check for existing RO-Crate entities: {}", e);
             None
@@ -288,7 +292,8 @@ pub fn create_ro_crate_entity_for_file(
             ..entity
         };
 
-        match default_api::update_ro_crate_entity(config, entity_id, updated_entity) {
+        match apis::ro_crate_entities_api::update_ro_crate_entity(config, entity_id, updated_entity)
+        {
             Ok(_) => {
                 debug!(
                     "Updated RO-Crate entity for file '{}' (entity_id={})",
@@ -305,7 +310,7 @@ pub fn create_ro_crate_entity_for_file(
         return;
     }
 
-    match default_api::create_ro_crate_entity(config, entity) {
+    match apis::ro_crate_entities_api::create_ro_crate_entity(config, entity) {
         Ok(created) => {
             debug!(
                 "Created RO-Crate entity for file '{}' (entity_id={})",
@@ -376,7 +381,8 @@ pub fn create_ro_crate_entity_for_output_file(
             ..entity
         };
 
-        match default_api::update_ro_crate_entity(config, entity_id, updated_entity) {
+        match apis::ro_crate_entities_api::update_ro_crate_entity(config, entity_id, updated_entity)
+        {
             Ok(_) => {
                 debug!(
                     "Updated RO-Crate entity for output file '{}' with provenance (entity_id={})",
@@ -395,7 +401,7 @@ pub fn create_ro_crate_entity_for_output_file(
 
     // No existing entity - create a new one
 
-    match default_api::create_ro_crate_entity(config, entity) {
+    match apis::ro_crate_entities_api::create_ro_crate_entity(config, entity) {
         Ok(created) => {
             debug!(
                 "Created RO-Crate entity for output file '{}' (entity_id={})",
@@ -427,7 +433,7 @@ pub fn create_create_action_entity(
     let entity =
         build_create_action_entity(workflow_id, run_id, job, attempt_id, output_file_paths);
 
-    match default_api::create_ro_crate_entity(config, entity) {
+    match apis::ro_crate_entities_api::create_ro_crate_entity(config, entity) {
         Ok(created) => {
             debug!(
                 "Created RO-Crate CreateAction entity for job '{}' (entity_id={})",
@@ -542,13 +548,15 @@ pub fn create_software_entities(config: &Configuration, workflow_id: i64, run_id
 
     // Check existing entities to avoid duplicates
     let existing_ids: std::collections::HashSet<String> =
-        match default_api::list_ro_crate_entities(config, workflow_id, None, None) {
-            Ok(response) => response
-                .items
-                .unwrap_or_default()
-                .into_iter()
-                .map(|e| e.entity_id)
-                .collect(),
+        match apis::ro_crate_entities_api::list_ro_crate_entities(
+            config,
+            workflow_id,
+            None,
+            None,
+            None,
+            None,
+        ) {
+            Ok(response) => response.items.into_iter().map(|e| e.entity_id).collect(),
             Err(e) => {
                 warn!(
                     "Failed to list existing RO-Crate entities for workflow {}: {}",
@@ -578,7 +586,7 @@ pub fn create_software_entities(config: &Configuration, workflow_id: i64, run_id
         };
 
         let entity = build_software_entity(workflow_id, run_id, name, &binary_path);
-        match default_api::create_ro_crate_entity(config, entity) {
+        match apis::ro_crate_entities_api::create_ro_crate_entity(config, entity) {
             Ok(created) => {
                 debug!(
                     "Created SoftwareApplication entity for '{}' version='{}' (entity_id={})",
