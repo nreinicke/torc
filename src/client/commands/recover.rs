@@ -12,13 +12,28 @@ use std::process::Command;
 
 use crate::client::apis;
 use crate::client::apis::configuration::Configuration;
+use crate::client::commands::reports::{build_resource_utilization_report, build_results_report};
 use crate::client::commands::slurm::RegenerateDryRunResult;
 use crate::client::report_models::{ResourceUtilizationReport, ResultsReport};
 use crate::client::resource_correction::{
     ResourceAdjustmentReport, ResourceCorrectionContext, ResourceCorrectionOptions,
     apply_resource_corrections,
 };
+use crate::client::workflow_manager::WorkflowManager;
+use crate::config::TorcConfig;
 use crate::models::JobStatus;
+
+fn torc_command() -> Result<Command, String> {
+    if let Ok(path) = std::env::var("TORC_BIN")
+        && !path.trim().is_empty()
+    {
+        return Ok(Command::new(path));
+    }
+
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to determine current torc executable: {}", e))?;
+    Ok(Command::new(current_exe))
+}
 
 /// Arguments for workflow recovery
 pub struct RecoverArgs {
@@ -29,6 +44,8 @@ pub struct RecoverArgs {
     pub retry_unknown: bool,
     pub recovery_hook: Option<String>,
     pub dry_run: bool,
+    /// Enable interactive recovery wizard
+    pub interactive: bool,
     /// [EXPERIMENTAL] Enable AI-assisted recovery for pending_failed jobs
     pub ai_recovery: bool,
     /// AI agent CLI to use for --ai-recovery (e.g., "claude")
@@ -86,6 +103,15 @@ pub fn recover_workflow(
     config: &Configuration,
     args: &RecoverArgs,
 ) -> Result<RecoveryResult, String> {
+    // Interactive mode is not yet implemented
+    if args.interactive {
+        return Err(
+            "Interactive recovery mode (--interactive) is not yet implemented. \
+             For now, use --dry-run to preview changes, then run without --dry-run to apply them."
+                .to_string(),
+        );
+    }
+
     if args.dry_run {
         info!("Recovery dry_run workflow_id={}", args.workflow_id);
     }
@@ -188,7 +214,7 @@ pub fn recover_workflow(
 
     // Step 2: Diagnose failures
     info!("Diagnosing failures...");
-    let diagnosis = diagnose_failures(args.workflow_id, &args.output_dir)?;
+    let diagnosis = diagnose_failures(config, args.workflow_id)?;
 
     // Step 3: Apply recovery heuristics (in dry_run mode, this shows changes without applying them)
     if args.dry_run {
@@ -365,7 +391,7 @@ pub fn recover_workflow(
     // reset_workflow_status rejects requests when there are pending scheduled compute nodes,
     // so we must reinitialize before creating new allocations.
     info!("Workflow reinitializing workflow_id={}", args.workflow_id);
-    reinitialize_workflow(args.workflow_id)?;
+    reinitialize_workflow(config, args.workflow_id)?;
 
     // Step 7: Regenerate Slurm schedulers and submit
     info!("Schedulers regenerating workflow_id={}", args.workflow_id);
@@ -640,54 +666,19 @@ fn count_pending_failed_jobs(config: &Configuration, workflow_id: i64) -> Result
 
 /// Diagnose failures and return resource utilization report
 pub fn diagnose_failures(
+    config: &Configuration,
     workflow_id: i64,
-    _output_dir: &Path,
 ) -> Result<ResourceUtilizationReport, String> {
-    let output = Command::new("torc")
-        .args([
-            "-f",
-            "json",
-            "reports",
-            "check-resource-utilization",
-            &workflow_id.to_string(),
-            "--include-failed",
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run check-resource-utilization: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("check-resource-utilization failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse resource utilization output: {}", e))
+    build_resource_utilization_report(config, Some(workflow_id), None, true, 1.0)
 }
 
 /// Get Slurm log information for failed jobs
-fn get_slurm_log_info(workflow_id: i64, output_dir: &Path) -> Result<ResultsReport, String> {
-    let output = Command::new("torc")
-        .args([
-            "-f",
-            "json",
-            "reports",
-            "results",
-            &workflow_id.to_string(),
-            "-o",
-            output_dir.to_str().unwrap_or("torc_output"),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run reports results: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("reports results failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse reports results output: {}", e))
+fn get_slurm_log_info(
+    config: &Configuration,
+    workflow_id: i64,
+    output_dir: &Path,
+) -> Result<ResultsReport, String> {
+    build_results_report(config, Some(workflow_id), output_dir, false, &[])
 }
 
 /// Correlate failed jobs with their Slurm allocation logs
@@ -740,7 +731,7 @@ pub fn apply_recovery_heuristics(
     dry_run: bool,
 ) -> Result<RecoveryResult, String> {
     // Try to get Slurm log info for correlation and logging
-    let slurm_log_map = match get_slurm_log_info(workflow_id, output_dir) {
+    let slurm_log_map = match get_slurm_log_info(config, workflow_id, output_dir) {
         Ok(slurm_info) => {
             let log_map = correlate_slurm_logs(diagnosis, &slurm_info);
             if !log_map.is_empty() {
@@ -822,7 +813,7 @@ pub fn apply_recovery_heuristics(
 
 /// Reset specific failed jobs for retry (without reinitializing)
 pub fn reset_failed_jobs(
-    _config: &Configuration,
+    config: &Configuration,
     workflow_id: i64,
     job_ids: &[i64],
 ) -> Result<usize, String> {
@@ -832,47 +823,26 @@ pub fn reset_failed_jobs(
 
     let job_count = job_ids.len();
 
-    // Reset failed jobs WITHOUT --reinitialize (we'll reinitialize separately)
-    let output = Command::new("torc")
-        .args([
-            "workflows",
-            "reset-status",
-            &workflow_id.to_string(),
-            "--failed-only",
-            "--no-prompts",
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run workflow reset-status: {}", e))?;
+    apis::workflows_api::reset_workflow_status(config, workflow_id, None)
+        .map_err(|e| format!("Failed to reset workflow status: {}", e))?;
+    info!("  Reset workflow status for workflow {}", workflow_id);
 
-    // Print stdout so user sees what was reset
-    if !output.stdout.is_empty() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            info!("  {}", line);
-        }
-    }
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("workflow reset-status failed: {}", stderr));
-    }
+    apis::workflows_api::reset_job_status(config, workflow_id, Some(true))
+        .map_err(|e| format!("Failed to reset failed job status: {}", e))?;
+    info!("  Reset failed job status for workflow {}", workflow_id);
 
     Ok(job_count)
 }
 
 /// Reinitialize the workflow (set up dependencies and fire on_workflow_start actions)
-pub fn reinitialize_workflow(workflow_id: i64) -> Result<(), String> {
-    let output = Command::new("torc")
-        .args(["workflows", "reinitialize", &workflow_id.to_string()])
-        .output()
-        .map_err(|e| format!("Failed to run workflow reinitialize: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("workflow reinitialize failed: {}", stderr));
-    }
-
-    Ok(())
+pub fn reinitialize_workflow(config: &Configuration, workflow_id: i64) -> Result<(), String> {
+    let workflow = apis::workflows_api::get_workflow(config, workflow_id)
+        .map_err(|e| format!("Failed to fetch workflow for reinitialize: {}", e))?;
+    let torc_config = TorcConfig::load().unwrap_or_default();
+    let workflow_manager = WorkflowManager::new(config.clone(), torc_config, workflow);
+    workflow_manager
+        .reinitialize(false, false)
+        .map_err(|e| format!("workflow reinitialize failed: {}", e))
 }
 
 /// Run the user's custom recovery hook command
@@ -962,7 +932,8 @@ pub fn regenerate_and_submit(
         args.push("--walltime".to_string());
         args.push(w.to_string());
     }
-    let output = Command::new("torc")
+    let mut cmd = torc_command()?;
+    let output = cmd
         .args(&args)
         .output()
         .map_err(|e| format!("Failed to run slurm regenerate: {}", e))?;
@@ -996,7 +967,8 @@ fn get_scheduler_dry_run(
         .collect::<Vec<_>>()
         .join(",");
 
-    let output = Command::new("torc")
+    let mut cmd = torc_command()?;
+    let output = cmd
         .args([
             "-f",
             "json",

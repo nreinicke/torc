@@ -7,7 +7,7 @@ This document contains the help content for the `torc` command-line program.
 - [`torc`](#torc)
 - [`torc run`](#torc-run)
 - [`torc submit`](#torc-submit)
-- [`torc submit-slurm`](#torc-submit-slurm)
+- [`torc slurm generate` + `torc submit`](#torc-submit-slurm)
 - [`torc watch`](#torc-watch)
 - [`torc recover`](#torc-recover)
 - [`torc workflows`](#torc-workflows)
@@ -40,7 +40,7 @@ Torc workflow orchestration system
 - `run` — Run a workflow locally (create from spec file or run existing workflow by ID)
 - `submit` — Submit a workflow to scheduler (create from spec file or submit existing workflow by
   ID)
-- `submit-slurm` — Submit a workflow to Slurm with auto-generated schedulers
+- `slurm generate` + `submit` — Submit a workflow to Slurm with auto-generated schedulers
 - `watch` — Watch a workflow and automatically recover from failures
 - `recover` — Recover a Slurm workflow from failures (one-shot)
 - `workflows` — Workflow management commands
@@ -97,7 +97,7 @@ Run a workflow locally (create from spec file or run existing workflow by ID)
 Submit a workflow to scheduler (create from spec file or submit existing workflow by ID)
 
 Requires workflow to have an on_workflow_start action with schedule_nodes. For Slurm workflows
-without pre-configured schedulers, use `submit-slurm` instead.
+without pre-configured schedulers, use `slurm generate` + `submit` instead.
 
 **Usage:** `torc submit [OPTIONS] <WORKFLOW_SPEC_OR_ID>`
 
@@ -111,7 +111,7 @@ without pre-configured schedulers, use `submit-slurm` instead.
 - `--skip-checks` — Skip validation checks (e.g., scheduler node requirements). Use with caution.
   Default: `false`
 
-## `torc submit-slurm`
+## `torc slurm generate` + `torc submit`
 
 Submit a workflow to Slurm with auto-generated schedulers
 
@@ -135,24 +135,14 @@ torc slurm generate --account <account> -o workflow_with_schedulers.yaml workflo
 torc submit workflow_with_schedulers.yaml
 ```
 
-**Usage:** `torc submit-slurm [OPTIONS] --account <ACCOUNT> <WORKFLOW_SPEC>`
+**Usage:**
 
-###### **Arguments:**
+```bash
+torc slurm generate [OPTIONS] --account <ACCOUNT> <WORKFLOW_FILE>
+torc submit <OUTPUT_FILE>
+```
 
-- `<WORKFLOW_SPEC>` — Path to workflow spec file (JSON/JSON5/YAML/KDL)
-
-###### **Options:**
-
-- `--account <ACCOUNT>` — Slurm account to use for allocations
-- `--hpc-profile <HPC_PROFILE>` — HPC profile to use (auto-detected if not specified)
-- `--single-allocation` — Bundle all nodes into a single Slurm allocation per scheduler. By default,
-  creates one Slurm allocation per node (N×1 mode), which allows jobs to start as nodes become
-  available and provides better fault tolerance. With this flag, creates one large allocation with
-  all nodes (1×N mode), which requires all nodes to be available simultaneously but uses a single
-  sbatch.
-- `-i`, `--ignore-missing-data` — Ignore missing data. Default: `false`
-- `--skip-checks` — Skip validation checks (e.g., scheduler node requirements). Use with caution.
-  Default: `false`
+See [`torc slurm generate`](#torc-slurm-generate) for full options.
 
 ## `torc watch`
 
@@ -380,11 +370,11 @@ Workflow management commands
 - `sync-status` — Synchronize job statuses with Slurm (detect and fail orphaned jobs)
 - `correct-resources` — Correct resource requirements based on actual job usage
 
-## `torc workflows create`
+## `torc create`
 
 Create a workflow from a specification file (supports JSON, JSON5, YAML, and KDL formats)
 
-**Usage:** `torc workflows create [OPTIONS] --user <USER> <FILE>`
+**Usage:** `torc create [OPTIONS] --user <USER> <FILE>`
 
 ###### **Arguments:**
 
@@ -401,14 +391,14 @@ Create a workflow from a specification file (supports JSON, JSON5, YAML, and KDL
 - `--dry-run` — Validate the workflow specification without creating it (dry-run mode). Returns a
   summary of what would be created including job count after parameter expansion.
 
-## `torc workflows create-slurm`
+## `torc create-slurm`
 
 Create a workflow with auto-generated Slurm schedulers
 
 Automatically generates Slurm schedulers based on job resource requirements and HPC profile. For
 Slurm workflows without pre-configured schedulers.
 
-**Usage:** `torc workflows create-slurm [OPTIONS] --account <ACCOUNT> --user <USER> <FILE>`
+**Usage:** `torc create-slurm [OPTIONS] --account <ACCOUNT> --user <USER> <FILE>`
 
 ###### **Arguments:**
 
@@ -487,21 +477,21 @@ Update an existing workflow
 - `-d`, `--description <DESCRIPTION>` — Description of the workflow
 - `--owner-user <OWNER_USER>` — User that owns the workflow
 
-## `torc workflows cancel`
+## `torc cancel`
 
 Cancel a workflow and all associated Slurm jobs
 
-**Usage:** `torc workflows cancel [WORKFLOW_ID]`
+**Usage:** `torc cancel [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
 - `<WORKFLOW_ID>` — ID of the workflow to cancel (optional - will prompt if not provided)
 
-## `torc workflows delete`
+## `torc delete`
 
 Delete one or more workflows
 
-**Usage:** `torc workflows delete [OPTIONS] [IDS]...`
+**Usage:** `torc delete [OPTIONS] [IDS]...`
 
 ###### **Arguments:**
 
@@ -523,44 +513,11 @@ Archive or unarchive one or more workflows
 - `<IS_ARCHIVED>` — Set to true to archive, false to unarchive
 - `<WORKFLOW_IDS>` — IDs of workflows to archive/unarchive (if empty, will prompt for selection)
 
-## `torc workflows submit`
-
-Submit a workflow: initialize if needed and schedule nodes for on_workflow_start actions. This
-command requires the workflow to have an on_workflow_start action with schedule_nodes.
-
-**Usage:** `torc workflows submit [OPTIONS] [WORKFLOW_ID]`
-
-###### **Arguments:**
-
-- `<WORKFLOW_ID>` — ID of the workflow to submit (optional - will prompt if not provided)
-
-###### **Options:**
-
-- `--force` — If false, fail the operation if missing data is present. Default: `false`
-
-## `torc workflows run`
-
-Run a workflow locally on the current node
-
-**Usage:** `torc workflows run [OPTIONS] [WORKFLOW_ID]`
-
-###### **Arguments:**
-
-- `<WORKFLOW_ID>` — ID of the workflow to run (optional - will prompt if not provided)
-
-###### **Options:**
-
-- `-p`, `--poll-interval <POLL_INTERVAL>` — Poll interval in seconds for checking job completion.
-  Default: `5.0`
-- `--max-parallel-jobs <MAX_PARALLEL_JOBS>` — Maximum number of parallel jobs to run (defaults to
-  available CPUs)
-- `--output-dir <OUTPUT_DIR>` — Output directory for job logs and results. Default: `output`
-
-## `torc workflows initialize`
+## `torc workflows init`
 
 Initialize a workflow, including all job statuses
 
-**Usage:** `torc workflows initialize [OPTIONS] [WORKFLOW_ID]`
+**Usage:** `torc workflows init [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
@@ -572,13 +529,13 @@ Initialize a workflow, including all job statuses
 - `--no-prompts` — Skip confirmation prompt
 - `--dry-run` — Perform a dry run without making changes
 
-## `torc workflows reinitialize`
+## `torc workflows reinit`
 
 Reinitialize a workflow. This will reinitialize all jobs with a status of canceled, submitting,
 pending, or terminated. Jobs with a status of done will also be reinitialized if an input_file or
 user_data record has changed.
 
-**Usage:** `torc workflows reinitialize [OPTIONS] [WORKFLOW_ID]`
+**Usage:** `torc workflows reinit [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
@@ -589,11 +546,11 @@ user_data record has changed.
 - `--force` — If false, fail the operation if missing data is present. Default: `false`
 - `--dry-run` — Perform a dry run without making changes
 
-## `torc workflows status`
+## `torc status`
 
 Get workflow status
 
-**Usage:** `torc workflows status [OPTIONS] [WORKFLOW_ID]`
+**Usage:** `torc status [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
@@ -2045,11 +2002,11 @@ Generate reports and analytics
 - `results` — Generate a comprehensive JSON report of job results including all log file paths
 - `summary` — Generate a summary of workflow results (requires workflow to be complete)
 
-## `torc reports check-resource-utilization`
+## `torc workflows check-resources`
 
 Check resource utilization and report jobs that exceeded their specified requirements
 
-**Usage:** `torc reports check-resource-utilization [OPTIONS] [WORKFLOW_ID]`
+**Usage:** `torc workflows check-resources [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
@@ -2063,11 +2020,11 @@ Check resource utilization and report jobs that exceeded their specified require
 - `--min-over-utilization <MIN_OVER_UTILIZATION>` — Minimum over-utilization percentage to flag as
   violation (default: 1.0%)
 
-## `torc reports results`
+## `torc results list --include-logs`
 
 Generate a comprehensive JSON report of job results including all log file paths
 
-**Usage:** `torc reports results [OPTIONS] [WORKFLOW_ID]`
+**Usage:** `torc results list --include-logs [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
 
@@ -2079,11 +2036,11 @@ Generate a comprehensive JSON report of job results including all log file paths
   `torc run` and `torc submit`). Default: `output`
 - `--all-runs` — Include all runs for each job (default: only latest run)
 
-## `torc reports summary`
+## `torc status`
 
 Generate a summary of workflow results (requires workflow to be complete)
 
-**Usage:** `torc reports summary [WORKFLOW_ID]`
+**Usage:** `torc status [WORKFLOW_ID]`
 
 ###### **Arguments:**
 

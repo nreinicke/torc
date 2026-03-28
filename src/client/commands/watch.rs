@@ -822,7 +822,7 @@ pub fn run_watch(config: &Configuration, args: &WatchArgs) {
 
         // Step 1: Diagnose failures
         info!("\nDiagnosing failures...");
-        let diagnosis = match diagnose_failures(args.workflow_id, &args.output_dir) {
+        let diagnosis = match diagnose_failures(config, args.workflow_id) {
             Ok(d) => d,
             Err(e) => {
                 warn!("Warning: Could not diagnose failures: {}", e);
@@ -833,6 +833,7 @@ pub fn run_watch(config: &Configuration, args: &WatchArgs) {
                     total_results: 0,
                     over_utilization_count: 0,
                     violations: Vec::new(),
+                    within_limits: Vec::new(),
                     resource_violations_count: 0,
                     resource_violations: Vec::new(),
                 }
@@ -941,7 +942,7 @@ pub fn run_watch(config: &Configuration, args: &WatchArgs) {
         // Must happen before regenerate_and_submit because reset_workflow_status
         // rejects requests when there are pending scheduled compute nodes.
         info!("Reinitializing workflow...");
-        if let Err(e) = reinitialize_workflow(args.workflow_id) {
+        if let Err(e) = reinitialize_workflow(config, args.workflow_id) {
             warn!("Error reinitializing workflow: {}", e);
             std::process::exit(1);
         }

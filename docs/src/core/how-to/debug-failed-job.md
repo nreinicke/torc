@@ -32,7 +32,7 @@ Common exit codes:
 
 ```bash
 # Get log paths
-torc reports results <workflow_id> --job-id <job_id>
+torc results list --include-logs <workflow_id> --job-id <job_id>
 
 # View stderr (usually contains error messages)
 cat output/job_stdio/job_wf43_j15_r1_a1.e
@@ -52,7 +52,7 @@ cat output/job_stdio/job_wf43_j15_r1_a1.log
 Did the job exceed its resource limits?
 
 ```bash
-torc reports check-resource-utilization <workflow_id>
+torc workflows check-resources <workflow_id>
 ```
 
 Look for:
@@ -92,9 +92,10 @@ After fixing the issue:
 # Reinitialize to reset failed jobs
 torc workflows reset-status --failed --reinitialize <workflow_id>
 
-# Run again
-torc workflows run <workflow_id>
-torc submit-slurm <workflow_id>
+# Run again locally
+torc run <workflow_id>
+# Or re-submit to Slurm
+torc submit <workflow_id>
 ```
 
 ## See Also

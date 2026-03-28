@@ -625,7 +625,7 @@ fn test_auto_ro_crate_second_run_replaces_entities(start_server: &ServerProcess)
 
     // Reinitialize the workflow via CLI (bumps run_id, detects changed file, resets job)
     run_cli_command(
-        &["workflows", "reinitialize", &workflow_id_str],
+        &["workflows", "reinit", &workflow_id_str],
         start_server,
         None,
     )

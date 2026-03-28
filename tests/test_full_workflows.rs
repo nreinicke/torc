@@ -1025,7 +1025,7 @@ resource_requirements:
 
     // Run reinitialize command
     run_cli_command(
-        &["workflows", "reinitialize", &workflow_id.to_string()],
+        &["workflows", "reinit", &workflow_id.to_string()],
         start_server,
         None,
     )
