@@ -4,7 +4,7 @@
 //! - Config parsing and serialization (YAML, JSON)
 //! - Mode detection (direct, slurm, auto)
 //! - Backward compatibility with legacy SlurmConfig
-//! - Validation of srun_termination_signal vs sigkill_headroom_seconds
+//! - Validation
 //! - Default values and helper methods
 
 mod common;
@@ -252,90 +252,6 @@ fn test_effective_mode_auto_with_slurm_env() {
             std::env::remove_var("SLURM_JOB_ID");
         }
     }
-}
-
-// =============================================================================
-// Validation tests
-// =============================================================================
-
-#[test]
-fn test_validation_signal_time_less_than_headroom() {
-    // Valid: signal at 60s, headroom at 120s - signal will be sent before kill
-    let config = ExecutionConfig {
-        srun_termination_signal: Some("TERM@60".to_string()),
-        sigkill_headroom_seconds: Some(120),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert!(
-        warnings.is_empty(),
-        "Expected no warnings, got: {:?}",
-        warnings
-    );
-}
-
-#[test]
-fn test_validation_signal_time_equals_headroom() {
-    // Invalid: signal at 60s, headroom at 60s - signal won't be sent in time
-    let config = ExecutionConfig {
-        srun_termination_signal: Some("TERM@60".to_string()),
-        sigkill_headroom_seconds: Some(60),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("TERM@60"));
-    assert!(warnings[0].contains("60s"));
-    assert!(warnings[0].contains("sigkill_headroom_seconds"));
-}
-
-#[test]
-fn test_validation_signal_time_exceeds_headroom() {
-    // Invalid: signal at 120s, headroom at 60s - signal would be sent after kill
-    let config = ExecutionConfig {
-        srun_termination_signal: Some("TERM@120".to_string()),
-        sigkill_headroom_seconds: Some(60),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("TERM@120"));
-    assert!(warnings[0].contains("120s"));
-}
-
-#[test]
-fn test_validation_signal_without_time() {
-    // No time specified in signal - no validation needed
-    let config = ExecutionConfig {
-        srun_termination_signal: Some("TERM".to_string()),
-        sigkill_headroom_seconds: Some(60),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert!(warnings.is_empty());
-}
-
-#[test]
-fn test_validation_no_signal_configured() {
-    // No srun_termination_signal - no validation needed
-    let config = ExecutionConfig {
-        sigkill_headroom_seconds: Some(60),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert!(warnings.is_empty());
-}
-
-#[test]
-fn test_validation_signal_with_default_headroom() {
-    // Signal at 90s, default headroom is 60s - should warn
-    let config = ExecutionConfig {
-        srun_termination_signal: Some("TERM@90".to_string()),
-        ..Default::default()
-    };
-    let warnings = config.validate();
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("TERM@90"));
 }
 
 // =============================================================================
@@ -830,7 +746,6 @@ fn test_create_workflow_with_execution_config(start_server: &ServerProcess) {
         temp_file.path(),
         "test_user",
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -872,7 +787,6 @@ fn test_create_workflow_with_slurm_execution_config(start_server: &ServerProcess
         temp_file.path(),
         "test_user",
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -910,7 +824,6 @@ fn test_create_workflow_without_execution_config(start_server: &ServerProcess) {
         temp_file.path(),
         "test_user",
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -941,7 +854,6 @@ fn test_create_workflow_with_auto_mode(start_server: &ServerProcess) {
         &start_server.config,
         temp_file.path(),
         "test_user",
-        false,
         false,
     )
     .expect("Failed to create workflow from spec file");
@@ -1105,57 +1017,6 @@ fn test_execution_config_custom_exit_codes() {
     assert_eq!(config.oom_exit_code(), 125);
 }
 
-#[test]
-fn test_validation_with_various_signal_formats() {
-    // Test various srun signal formats
-    let test_cases = vec![
-        ("TERM@30", Some(30)),
-        ("INT@60", Some(60)),
-        ("USR1@120", Some(120)),
-        ("TERM", None),     // No time
-        ("KILL", None),     // No time
-        ("@60", Some(60)),  // Just time (unusual but parseable)
-        ("TERM@abc", None), // Invalid time
-        ("TERM@", None),    // Empty time
-    ];
-
-    for (signal_spec, expected_seconds) in test_cases {
-        let config = ExecutionConfig {
-            srun_termination_signal: Some(signal_spec.to_string()),
-            sigkill_headroom_seconds: Some(90),
-            ..Default::default()
-        };
-        let warnings = config.validate();
-
-        match expected_seconds {
-            Some(secs) if secs >= 90 => {
-                assert!(
-                    !warnings.is_empty(),
-                    "Expected warning for {} >= 90s headroom",
-                    signal_spec
-                );
-            }
-            Some(secs) if secs < 90 => {
-                assert!(
-                    warnings.is_empty(),
-                    "Expected no warning for {} < 90s headroom, got: {:?}",
-                    signal_spec,
-                    warnings
-                );
-            }
-            None => {
-                assert!(
-                    warnings.is_empty(),
-                    "Expected no warning for {} without time, got: {:?}",
-                    signal_spec,
-                    warnings
-                );
-            }
-            _ => {}
-        }
-    }
-}
-
 // =============================================================================
 // Direct mode job execution integration tests
 // (merged from test_direct_mode_execution.rs)
@@ -1181,7 +1042,6 @@ fn test_direct_mode_simple_job_execution(start_server: &ServerProcess) {
         &start_server.config,
         temp_file.path(),
         "test_user",
-        false,
         false,
     )
     .expect("Failed to create workflow");
@@ -1227,7 +1087,6 @@ fn test_direct_mode_with_resource_limits(start_server: &ServerProcess) {
         temp_file.path(),
         "test_user",
         false,
-        false,
     )
     .expect("Failed to create workflow");
 
@@ -1263,7 +1122,6 @@ fn test_direct_mode_disabled_resource_limits(start_server: &ServerProcess) {
         temp_file.path(),
         "test_user",
         false,
-        false,
     )
     .expect("Failed to create workflow");
 
@@ -1297,7 +1155,6 @@ fn test_limit_resources_false_rejected_with_slurm_mode(start_server: &ServerProc
         &start_server.config,
         temp_file.path(),
         "test_user",
-        false,
         false,
     );
 
@@ -1350,7 +1207,6 @@ fn test_limit_resources_false_rejected_with_auto_mode_and_slurm_schedulers(
         temp_file.path(),
         "test_user",
         false,
-        false,
     );
 
     assert!(
@@ -1374,13 +1230,8 @@ fn assert_spec_rejected(
     let temp_file = NamedTempFile::new().expect("Failed to create temp file");
     fs::write(temp_file.path(), yaml).expect("Failed to write workflow file");
 
-    let result = WorkflowSpec::create_workflow_from_spec(
-        config,
-        temp_file.path(),
-        "test_user",
-        false,
-        false,
-    );
+    let result =
+        WorkflowSpec::create_workflow_from_spec(config, temp_file.path(), "test_user", false);
 
     assert!(
         result.is_err(),
@@ -1505,7 +1356,6 @@ fn test_enable_cpu_bind_false_allowed_with_direct_mode(start_server: &ServerProc
         temp_file.path(),
         "test_user",
         false,
-        false,
     );
 
     assert!(
@@ -1588,7 +1438,6 @@ fn test_multiple_incompatible_fields_reported_together(start_server: &ServerProc
         temp_file.path(),
         "test_user",
         false,
-        false,
     );
 
     assert!(result.is_err(), "Should reject all incompatible fields");
@@ -1629,7 +1478,6 @@ fn test_direct_mode_custom_exit_codes(start_server: &ServerProcess) {
         &start_server.config,
         temp_file.path(),
         "test_user",
-        false,
         false,
     )
     .expect("Failed to create workflow");

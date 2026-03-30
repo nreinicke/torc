@@ -7,6 +7,7 @@
 use log::{debug, info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -44,7 +45,7 @@ pub struct RecoverArgs {
     pub retry_unknown: bool,
     pub recovery_hook: Option<String>,
     pub dry_run: bool,
-    /// Enable interactive recovery wizard
+    /// Run the interactive recovery wizard (default when stdin is a TTY)
     pub interactive: bool,
     /// [EXPERIMENTAL] Enable AI-assisted recovery for pending_failed jobs
     pub ai_recovery: bool,
@@ -103,15 +104,6 @@ pub fn recover_workflow(
     config: &Configuration,
     args: &RecoverArgs,
 ) -> Result<RecoveryResult, String> {
-    // Interactive mode is not yet implemented
-    if args.interactive {
-        return Err(
-            "Interactive recovery mode (--interactive) is not yet implemented. \
-             For now, use --dry-run to preview changes, then run without --dry-run to apply them."
-                .to_string(),
-        );
-    }
-
     if args.dry_run {
         info!("Recovery dry_run workflow_id={}", args.workflow_id);
     }
@@ -211,6 +203,11 @@ pub fn recover_workflow(
 
     // Step 1: Check preconditions
     check_recovery_preconditions(config, args.workflow_id)?;
+
+    // Interactive mode: hand off to the interactive wizard
+    if args.interactive {
+        return recover_workflow_interactive(config, args);
+    }
 
     // Step 2: Diagnose failures
     info!("Diagnosing failures...");
@@ -992,4 +989,712 @@ fn get_scheduler_dry_run(
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(&stdout)
         .map_err(|e| format!("Failed to parse slurm regenerate dry-run output: {}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Interactive recovery wizard
+// ---------------------------------------------------------------------------
+
+/// Read a line from stdin, trimmed. Returns the default if the user presses Enter.
+fn prompt_line(prompt: &str) -> Result<String, String> {
+    eprint!("{}", prompt);
+    io::stderr().flush().ok();
+    let mut buf = String::new();
+    io::stdin()
+        .read_line(&mut buf)
+        .map_err(|e| format!("Failed to read input: {}", e))?;
+    Ok(buf.trim().to_string())
+}
+
+/// Prompt the user for a choice. `valid` lists accepted single-char answers (lowercase).
+/// Returns the default if the user presses Enter.
+fn prompt_choice(prompt: &str, valid: &[&str], default: &str) -> Result<String, String> {
+    loop {
+        let input = prompt_line(prompt)?;
+        let answer = if input.is_empty() {
+            default.to_string()
+        } else {
+            input.to_lowercase()
+        };
+        if valid.contains(&answer.as_str()) {
+            return Ok(answer);
+        }
+        eprintln!(
+            "  Invalid choice '{}'. Valid options: {}",
+            answer,
+            valid.join(", ")
+        );
+    }
+}
+
+/// Prompt for a floating-point multiplier with a default value.
+fn prompt_multiplier(label: &str, default: f64) -> Result<f64, String> {
+    loop {
+        let input = prompt_line(&format!(
+            "  Enter {} multiplier [default: {}]: ",
+            label, default
+        ))?;
+        if input.is_empty() {
+            return Ok(default);
+        }
+        match input.parse::<f64>() {
+            Ok(v) if v > 0.0 => return Ok(v),
+            _ => eprintln!("  Please enter a positive number."),
+        }
+    }
+}
+
+/// Interactive recovery wizard (default when stdin is a TTY). Guides the user
+/// through failure diagnosis, resource adjustment, and scheduler selection.
+fn recover_workflow_interactive(
+    config: &Configuration,
+    args: &RecoverArgs,
+) -> Result<RecoveryResult, String> {
+    // --- Diagnose failures ---------------------------------------------------
+    eprintln!("\n=== Recovery Wizard ===\n");
+    eprintln!("Diagnosing failures for workflow {}...\n", args.workflow_id);
+
+    let diagnosis = diagnose_failures(config, args.workflow_id)?;
+
+    // Categorize violations
+    let mut oom_jobs: Vec<&crate::client::report_models::ResourceViolationInfo> = Vec::new();
+    let mut timeout_jobs: Vec<&crate::client::report_models::ResourceViolationInfo> = Vec::new();
+    let mut unknown_jobs: Vec<&crate::client::report_models::ResourceViolationInfo> = Vec::new();
+
+    for v in &diagnosis.resource_violations {
+        if v.memory_violation {
+            oom_jobs.push(v);
+        } else if v.likely_timeout {
+            timeout_jobs.push(v);
+        } else {
+            unknown_jobs.push(v);
+        }
+    }
+
+    if oom_jobs.is_empty() && timeout_jobs.is_empty() && unknown_jobs.is_empty() {
+        eprintln!("No failed jobs with resource violations found.");
+        return Ok(RecoveryResult {
+            oom_fixed: 0,
+            timeout_fixed: 0,
+            unknown_retried: 0,
+            other_failures: 0,
+            jobs_to_retry: vec![],
+            adjustments: vec![],
+            slurm_dry_run: None,
+        });
+    }
+
+    // --- Display summary table -----------------------------------------------
+    if !oom_jobs.is_empty() {
+        eprintln!(
+            "OOM Failures ({} job{}):",
+            oom_jobs.len(),
+            plural(oom_jobs.len())
+        );
+        eprintln!(
+            "  {:<8} {:<30} {:<6} {:<10} {:<14} Reason",
+            "ID", "Name", "RC", "Memory", "Peak Memory"
+        );
+        eprintln!(
+            "  {:<8} {:<30} {:<6} {:<10} {:<14} ------",
+            "---", "----", "---", "------", "-----------"
+        );
+        for v in &oom_jobs {
+            eprintln!(
+                "  {:<8} {:<30} {:<6} {:<10} {:<14} {}",
+                v.job_id,
+                truncate(&v.job_name, 30),
+                v.return_code,
+                &v.configured_memory,
+                v.peak_memory_formatted.as_deref().unwrap_or("-"),
+                v.oom_reason.as_deref().unwrap_or("-"),
+            );
+        }
+        eprintln!();
+    }
+
+    if !timeout_jobs.is_empty() {
+        eprintln!(
+            "Timeout Failures ({} job{}):",
+            timeout_jobs.len(),
+            plural(timeout_jobs.len())
+        );
+        eprintln!(
+            "  {:<8} {:<30} {:<6} {:<12} {:<12} Reason",
+            "ID", "Name", "RC", "Runtime", "Exec (min)"
+        );
+        eprintln!(
+            "  {:<8} {:<30} {:<6} {:<12} {:<12} ------",
+            "---", "----", "---", "-------", "----------"
+        );
+        for v in &timeout_jobs {
+            eprintln!(
+                "  {:<8} {:<30} {:<6} {:<12} {:<12.1} {}",
+                v.job_id,
+                truncate(&v.job_name, 30),
+                v.return_code,
+                &v.configured_runtime,
+                v.exec_time_minutes,
+                v.timeout_reason.as_deref().unwrap_or("-"),
+            );
+        }
+        eprintln!();
+    }
+
+    if !unknown_jobs.is_empty() {
+        eprintln!(
+            "Unknown Failures ({} job{}):",
+            unknown_jobs.len(),
+            plural(unknown_jobs.len())
+        );
+        eprintln!("  {:<8} {:<30} {:<6} {:<10}", "ID", "Name", "RC", "Memory");
+        eprintln!(
+            "  {:<8} {:<30} {:<6} {:<10}",
+            "---", "----", "---", "------"
+        );
+        for v in &unknown_jobs {
+            eprintln!(
+                "  {:<8} {:<30} {:<6} {:<10}",
+                v.job_id,
+                truncate(&v.job_name, 30),
+                v.return_code,
+                &v.configured_memory,
+            );
+        }
+        eprintln!();
+    }
+
+    // --- Per-category decisions -----------------------------------------------
+    let mut memory_multiplier = args.memory_multiplier;
+    let mut runtime_multiplier = args.runtime_multiplier;
+    let mut include_oom = false;
+    let mut include_timeout = false;
+    let mut include_unknown = false;
+
+    if !oom_jobs.is_empty() {
+        let choice = prompt_choice(
+            &format!(
+                "OOM failures ({} job{}): [R]etry with {}x memory / [A]djust multiplier / [S]kip (default: R): ",
+                oom_jobs.len(),
+                plural(oom_jobs.len()),
+                args.memory_multiplier,
+            ),
+            &["r", "a", "s"],
+            "r",
+        )?;
+        match choice.as_str() {
+            "r" => include_oom = true,
+            "a" => {
+                memory_multiplier = prompt_multiplier("memory", args.memory_multiplier)?;
+                include_oom = true;
+            }
+            _ => eprintln!("  Skipping OOM jobs."),
+        }
+    }
+
+    if !timeout_jobs.is_empty() {
+        let choice = prompt_choice(
+            &format!(
+                "Timeout failures ({} job{}): [R]etry with {}x runtime / [A]djust multiplier / [S]kip (default: R): ",
+                timeout_jobs.len(),
+                plural(timeout_jobs.len()),
+                args.runtime_multiplier,
+            ),
+            &["r", "a", "s"],
+            "r",
+        )?;
+        match choice.as_str() {
+            "r" => include_timeout = true,
+            "a" => {
+                runtime_multiplier = prompt_multiplier("runtime", args.runtime_multiplier)?;
+                include_timeout = true;
+            }
+            _ => eprintln!("  Skipping timeout jobs."),
+        }
+    }
+
+    if !unknown_jobs.is_empty() {
+        let choice = prompt_choice(
+            &format!(
+                "Unknown failures ({} job{}): [R]etry as-is / [S]kip (default: S): ",
+                unknown_jobs.len(),
+                plural(unknown_jobs.len()),
+            ),
+            &["r", "s"],
+            "s",
+        )?;
+        if choice == "r" {
+            include_unknown = true;
+        } else {
+            eprintln!("  Skipping unknown failures.");
+        }
+    }
+
+    // Build the list of job IDs to include in resource corrections
+    let mut correction_job_ids: Vec<i64> = Vec::new();
+    if include_oom {
+        correction_job_ids.extend(oom_jobs.iter().map(|v| v.job_id));
+    }
+    if include_timeout {
+        correction_job_ids.extend(timeout_jobs.iter().map(|v| v.job_id));
+    }
+    // Unknown jobs get retried without resource adjustment
+    let unknown_job_ids: Vec<i64> = if include_unknown {
+        unknown_jobs.iter().map(|v| v.job_id).collect()
+    } else {
+        vec![]
+    };
+
+    if correction_job_ids.is_empty() && unknown_job_ids.is_empty() {
+        eprintln!("\nNo jobs selected for recovery.");
+        return Ok(RecoveryResult {
+            oom_fixed: 0,
+            timeout_fixed: 0,
+            unknown_retried: 0,
+            other_failures: unknown_jobs.len(),
+            jobs_to_retry: vec![],
+            adjustments: vec![],
+            slurm_dry_run: None,
+        });
+    }
+
+    // --- Apply resource corrections ------------------------------------------
+    let correction_ctx = ResourceCorrectionContext {
+        config,
+        workflow_id: args.workflow_id,
+        diagnosis: &diagnosis,
+        all_results: &[],
+        all_jobs: &[],
+        all_resource_requirements: &[],
+    };
+    let correction_opts = ResourceCorrectionOptions {
+        memory_multiplier,
+        cpu_multiplier: memory_multiplier,
+        runtime_multiplier,
+        include_jobs: correction_job_ids,
+        dry_run: true, // always preview first in interactive mode
+        no_downsize: true,
+    };
+    let correction_result = apply_resource_corrections(&correction_ctx, &correction_opts)?;
+
+    // --- Show proposed changes and confirm ------------------------------------
+    eprintln!("\n--- Recovery Plan ---\n");
+
+    if !correction_result.adjustments.is_empty() {
+        for adj in &correction_result.adjustments {
+            if adj.memory_adjusted {
+                eprintln!(
+                    "  Memory: {} -> {} ({}x) for {} job{}: {}",
+                    adj.original_memory.as_deref().unwrap_or("?"),
+                    adj.new_memory.as_deref().unwrap_or("?"),
+                    memory_multiplier,
+                    adj.job_names.len(),
+                    plural(adj.job_names.len()),
+                    adj.job_names.join(", "),
+                );
+            }
+            if adj.runtime_adjusted {
+                eprintln!(
+                    "  Runtime: {} -> {} ({}x) for {} job{}: {}",
+                    adj.original_runtime.as_deref().unwrap_or("?"),
+                    adj.new_runtime.as_deref().unwrap_or("?"),
+                    runtime_multiplier,
+                    adj.job_names.len(),
+                    plural(adj.job_names.len()),
+                    adj.job_names.join(", "),
+                );
+            }
+        }
+    }
+
+    if !unknown_job_ids.is_empty() {
+        let unknown_names: Vec<&str> = unknown_jobs
+            .iter()
+            .filter(|v| unknown_job_ids.contains(&v.job_id))
+            .map(|v| v.job_name.as_str())
+            .collect();
+        eprintln!(
+            "  Retry as-is: {} job{}: {}",
+            unknown_job_ids.len(),
+            plural(unknown_job_ids.len()),
+            unknown_names.join(", "),
+        );
+    }
+
+    let mut all_jobs_to_retry: Vec<i64> = Vec::new();
+    for adj in &correction_result.adjustments {
+        all_jobs_to_retry.extend(&adj.job_ids);
+    }
+    all_jobs_to_retry.extend(&unknown_job_ids);
+    // Deduplicate
+    all_jobs_to_retry.sort_unstable();
+    all_jobs_to_retry.dedup();
+
+    eprintln!(
+        "\n  Total: {} job{} to retry",
+        all_jobs_to_retry.len(),
+        plural(all_jobs_to_retry.len()),
+    );
+
+    if args.dry_run {
+        eprintln!("\n[DRY RUN] No changes applied.");
+        let slurm_dry_run =
+            match get_scheduler_dry_run(args.workflow_id, &args.output_dir, &all_jobs_to_retry) {
+                Ok(mut dr) => {
+                    dr.would_submit = true;
+                    for sched in &dr.planned_schedulers {
+                        let deps = if sched.has_dependencies {
+                            " (deferred)"
+                        } else {
+                            ""
+                        };
+                        eprintln!(
+                            "  {} - {} job(s), {} allocation(s){}",
+                            sched.name, sched.job_count, sched.num_allocations, deps
+                        );
+                    }
+                    Some(dr)
+                }
+                Err(e) => {
+                    warn!("Could not get scheduler preview: {}", e);
+                    None
+                }
+            };
+
+        return Ok(RecoveryResult {
+            oom_fixed: correction_result.memory_corrections,
+            timeout_fixed: correction_result.runtime_corrections,
+            unknown_retried: unknown_job_ids.len(),
+            other_failures: unknown_jobs.len(),
+            jobs_to_retry: all_jobs_to_retry,
+            adjustments: correction_result.adjustments,
+            slurm_dry_run,
+        });
+    }
+
+    // --- Scheduler selection ----------------------------------------------------
+    eprintln!("\n--- Slurm Scheduler ---\n");
+
+    let scheduler_choice = prompt_scheduler_choice(config, args)?;
+
+    // Confirm before executing
+    match &scheduler_choice {
+        SchedulerChoice::Regenerate {
+            partition,
+            walltime,
+        } => {
+            eprintln!("\n  Scheduler: auto-generate new schedulers");
+            if let Some(p) = partition {
+                eprintln!("  Partition: {}", p);
+            }
+            if let Some(w) = walltime {
+                eprintln!("  Walltime: {}", w);
+            }
+        }
+        SchedulerChoice::Existing {
+            scheduler_id,
+            scheduler_name,
+            num_allocations,
+        } => {
+            eprintln!(
+                "\n  Scheduler: {} (ID {}), {} allocation(s)",
+                scheduler_name, scheduler_id, num_allocations
+            );
+        }
+    }
+
+    let confirm = prompt_choice("\nProceed with recovery? (y/N): ", &["y", "n"], "n")?;
+    if confirm != "y" {
+        return Err("Recovery cancelled.".to_string());
+    }
+
+    // --- Execute recovery (apply for real) ------------------------------------
+    eprintln!();
+
+    // Re-apply corrections with dry_run=false
+    let real_opts = ResourceCorrectionOptions {
+        memory_multiplier,
+        cpu_multiplier: memory_multiplier,
+        runtime_multiplier,
+        include_jobs: correction_opts.include_jobs.clone(),
+        dry_run: false,
+        no_downsize: true,
+    };
+    let real_result = apply_resource_corrections(&correction_ctx, &real_opts)?;
+
+    // Run recovery hook if applicable
+    if !unknown_job_ids.is_empty()
+        && let Some(ref hook_cmd) = args.recovery_hook
+    {
+        info!("Running recovery hook...");
+        run_recovery_hook(args.workflow_id, hook_cmd)?;
+    }
+
+    // Reset failed jobs
+    info!("Resetting {} job(s) for retry...", all_jobs_to_retry.len());
+    reset_failed_jobs(config, args.workflow_id, &all_jobs_to_retry)?;
+
+    // Reinitialize workflow
+    info!("Reinitializing workflow...");
+    reinitialize_workflow(config, args.workflow_id)?;
+
+    // Submit Slurm schedulers
+    match &scheduler_choice {
+        SchedulerChoice::Regenerate {
+            partition,
+            walltime,
+        } => {
+            info!("Regenerating and submitting Slurm schedulers...");
+            regenerate_and_submit(
+                args.workflow_id,
+                &args.output_dir,
+                partition.as_deref(),
+                walltime.as_deref(),
+            )?;
+        }
+        SchedulerChoice::Existing {
+            scheduler_id,
+            num_allocations,
+            ..
+        } => {
+            info!(
+                "Submitting {} allocation(s) with scheduler ID {}...",
+                num_allocations, scheduler_id
+            );
+            submit_existing_scheduler(
+                args.workflow_id,
+                *scheduler_id,
+                *num_allocations,
+                &args.output_dir,
+            )?;
+        }
+    }
+
+    eprintln!(
+        "\nRecovery complete. {} job(s) reset for retry.",
+        all_jobs_to_retry.len()
+    );
+
+    Ok(RecoveryResult {
+        oom_fixed: real_result.memory_corrections,
+        timeout_fixed: real_result.runtime_corrections,
+        unknown_retried: unknown_job_ids.len(),
+        other_failures: unknown_jobs.len(),
+        jobs_to_retry: all_jobs_to_retry,
+        adjustments: real_result.adjustments,
+        slurm_dry_run: None,
+    })
+}
+
+/// User's choice for how to handle Slurm scheduler submission.
+enum SchedulerChoice {
+    /// Auto-generate new schedulers via `torc slurm regenerate --submit`
+    Regenerate {
+        partition: Option<String>,
+        walltime: Option<String>,
+    },
+    /// Reuse an existing scheduler config
+    Existing {
+        scheduler_id: i64,
+        scheduler_name: String,
+        num_allocations: i32,
+    },
+}
+
+/// Prompt the user to choose between auto-generating schedulers or reusing an existing one.
+fn prompt_scheduler_choice(
+    config: &Configuration,
+    args: &RecoverArgs,
+) -> Result<SchedulerChoice, String> {
+    // List existing schedulers for the workflow
+    let schedulers = apis::slurm_schedulers_api::list_slurm_schedulers(
+        config,
+        args.workflow_id,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(|e| format!("Failed to list schedulers: {}", e))?;
+
+    if schedulers.items.is_empty() {
+        eprintln!("No existing schedulers found. Will auto-generate new ones.");
+        return Ok(SchedulerChoice::Regenerate {
+            partition: None,
+            walltime: None,
+        });
+    }
+
+    // Display existing schedulers
+    eprintln!("Existing schedulers for this workflow:\n");
+    eprintln!(
+        "  {:<6} {:<25} {:<14} {:<14} {:<12} {:<6}",
+        "ID", "Name", "Account", "Partition", "Walltime", "Nodes"
+    );
+    eprintln!(
+        "  {:<6} {:<25} {:<14} {:<14} {:<12} {:<6}",
+        "---", "----", "-------", "---------", "--------", "-----"
+    );
+    for s in &schedulers.items {
+        eprintln!(
+            "  {:<6} {:<25} {:<14} {:<14} {:<12} {:<6}",
+            s.id.unwrap_or(0),
+            truncate(s.name.as_deref().unwrap_or("-"), 25),
+            truncate(&s.account, 14),
+            s.partition.as_deref().unwrap_or("-"),
+            &s.walltime,
+            s.nodes,
+        );
+    }
+
+    eprintln!();
+    let choice = prompt_choice(
+        "Scheduler: [A]uto-generate new / [E]xisting (enter ID) (default: A): ",
+        &["a", "e"],
+        "a",
+    )?;
+
+    if choice == "a" {
+        // Optionally let user specify partition/walltime overrides
+        let partition = {
+            let input = prompt_line("  Partition override (press Enter to auto-detect): ")?;
+            if input.is_empty() { None } else { Some(input) }
+        };
+        let walltime = {
+            let input = prompt_line(
+                "  Walltime override (e.g., 04:00:00, press Enter to auto-calculate): ",
+            )?;
+            if input.is_empty() { None } else { Some(input) }
+        };
+        return Ok(SchedulerChoice::Regenerate {
+            partition,
+            walltime,
+        });
+    }
+
+    // User chose existing scheduler — prompt for ID
+    loop {
+        let id_input = prompt_line("  Enter scheduler ID: ")?;
+        let id = match id_input.parse::<i64>() {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("  Invalid ID. Please enter a number.");
+                continue;
+            }
+        };
+
+        let scheduler = match schedulers.items.iter().find(|s| s.id == Some(id)) {
+            Some(s) => s,
+            None => {
+                eprintln!(
+                    "  Scheduler ID {} not found. Choose from the list above.",
+                    id
+                );
+                continue;
+            }
+        };
+
+        // Prompt for walltime override
+        let walltime_input = prompt_line(&format!(
+            "  Walltime [default: {}] (press Enter to keep): ",
+            &scheduler.walltime
+        ))?;
+
+        let (final_id, final_name) = if walltime_input.is_empty() {
+            (id, scheduler.name.clone().unwrap_or_default())
+        } else {
+            // Create a new scheduler cloned from the selected one with the new walltime
+            eprintln!(
+                "  Creating new scheduler with walltime {}...",
+                &walltime_input
+            );
+            let mut new_sched = scheduler.clone();
+            new_sched.id = None;
+            new_sched.walltime = walltime_input;
+            let base_name = scheduler.name.as_deref().unwrap_or("scheduler");
+            new_sched.name = Some(format!("{}_recovery", base_name));
+            let created = apis::slurm_schedulers_api::create_slurm_scheduler(config, new_sched)
+                .map_err(|e| format!("Failed to create scheduler: {}", e))?;
+            let new_id = created.id.ok_or("Created scheduler missing ID")?;
+            let new_name = created.name.unwrap_or_default();
+            eprintln!(
+                "  Created scheduler '{}' (ID {}) with walltime {}",
+                &new_name, new_id, &created.walltime
+            );
+            (new_id, new_name)
+        };
+
+        // Prompt for number of allocations
+        let default_allocs = 1;
+        let num_allocations = loop {
+            let input = prompt_line(&format!(
+                "  Number of allocations [default: {}]: ",
+                default_allocs
+            ))?;
+            if input.is_empty() {
+                break default_allocs;
+            }
+            match input.parse::<i32>() {
+                Ok(n) if n > 0 => break n,
+                _ => eprintln!("  Please enter a positive integer."),
+            }
+        };
+
+        return Ok(SchedulerChoice::Existing {
+            scheduler_id: final_id,
+            scheduler_name: final_name,
+            num_allocations,
+        });
+    }
+}
+
+/// Submit allocations using an existing scheduler config via `torc slurm schedule-nodes`.
+fn submit_existing_scheduler(
+    workflow_id: i64,
+    scheduler_id: i64,
+    num_allocations: i32,
+    output_dir: &Path,
+) -> Result<(), String> {
+    let mut cmd = torc_command()?;
+    let output = cmd
+        .args([
+            "slurm",
+            "schedule-nodes",
+            &workflow_id.to_string(),
+            "--scheduler-config-id",
+            &scheduler_id.to_string(),
+            "--num-hpc-jobs",
+            &num_allocations.to_string(),
+            "-o",
+            output_dir.to_str().unwrap_or("torc_output"),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run slurm schedule-nodes: {}", e))?;
+
+    if !output.stdout.is_empty() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            info!("  {}", line);
+        }
+    }
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("slurm schedule-nodes failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let prefix: String = s.chars().take(max - 3).collect();
+        format!("{}...", prefix)
+    }
 }

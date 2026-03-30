@@ -395,9 +395,13 @@ impl AsyncCliCommand {
                 }
             } else {
                 // In direct mode with limit_resources, enforce memory limits via OOM detection
+                // Skip memory limit enforcement for the "default" resource
+                // requirement — it's a placeholder with no real limits, matching
+                // srun mode which omits --mem for default RRs.
                 let memory_limit_bytes =
                     if limit_resources && execution_mode == ExecutionMode::Direct {
                         resource_requirements
+                            .filter(|rr| rr.name != "default")
                             .and_then(|rr| memory_string_to_bytes(&rr.memory).ok())
                             .map(|b| b as u64)
                             .filter(|&b| b > 0)
@@ -622,10 +626,6 @@ impl AsyncCliCommand {
     ///
     /// **Warning**: Using "SIGKILL" bypasses graceful shutdown entirely. Jobs will not
     /// have a chance to checkpoint or clean up. Prefer "SIGTERM" for graceful termination.
-    ///
-    /// **Note**: This parses signal names for process signaling. This is distinct from
-    /// `ExecutionConfig::parse_srun_signal_seconds()` which parses srun `--signal` specs
-    /// like "TERM@120" to extract timing information.
     ///
     /// **Note**: This method does not wait for the process to exit. Call
     /// [`wait_for_completion()`] afterwards to wait for the process and capture its exit code.

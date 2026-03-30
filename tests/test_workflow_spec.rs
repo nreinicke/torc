@@ -487,7 +487,6 @@ fn test_create_workflow_from_json_file_minimal(start_server: &ServerProcess) {
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -554,7 +553,6 @@ fn test_create_workflow_from_json_file_with_files(start_server: &ServerProcess) 
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -615,7 +613,6 @@ fn test_create_workflow_from_json_file_with_dependencies(start_server: &ServerPr
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
         false,
-        false,
     )
     .expect("Failed to create workflow from spec file");
 
@@ -671,7 +668,6 @@ fn test_create_workflow_from_json_file_duplicate_file_names(start_server: &Serve
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
         false,
-        false,
     );
 
     assert!(result.is_err());
@@ -722,7 +718,6 @@ fn test_create_workflow_from_json_file_missing_file_reference(start_server: &Ser
         &start_server.config,
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
-        false,
         false,
     );
 
@@ -775,7 +770,6 @@ fn test_create_workflow_from_json_file_missing_job_dependency(start_server: &Ser
         temp_file.path(),
         workflow_data["user"].as_str().unwrap(),
         false,
-        false,
     );
 
     assert!(result.is_err());
@@ -824,7 +818,6 @@ fn test_create_workflow_from_json5_file(start_server: &ServerProcess) {
         temp_file.path(),
         "json5_user",
         false,
-        false,
     )
     .expect("Failed to create workflow from JSON5 file");
 
@@ -865,7 +858,6 @@ slurm_schedulers: null
         temp_file.path(),
         "yaml_user",
         false,
-        false,
     )
     .expect("Failed to create workflow from YAML file");
 
@@ -905,7 +897,6 @@ slurm_schedulers: null
         &start_server.config,
         temp_file.path(),
         "yaml_user",
-        false,
         false,
     )
     .expect("Failed to create workflow from YAML file");
@@ -953,7 +944,6 @@ fn test_create_workflow_from_spec_auto_detect_json(start_server: &ServerProcess)
         &start_server.config,
         temp_file.path(),
         "auto_user",
-        false,
         false,
     )
     .expect("Failed to create workflow from spec file with auto-detection");
@@ -1412,7 +1402,6 @@ fn test_create_workflow_rollback_on_error(start_server: &ServerProcess) {
         temp_file.path(),
         "rollback_user",
         false,
-        false,
     );
 
     // Should fail due to missing resource requirements
@@ -1497,7 +1486,6 @@ fn test_create_workflow_with_regex_job_dependencies(start_server: &ServerProcess
         &start_server.config,
         temp_file.path(),
         "regex_user",
-        false,
         false,
     )
     .expect("Failed to create workflow with regex job dependencies");
@@ -1592,7 +1580,6 @@ fn test_create_workflow_with_regex_file_dependencies(start_server: &ServerProces
         temp_file.path(),
         "regex_user",
         false,
-        false,
     )
     .expect("Failed to create workflow with regex file dependencies");
 
@@ -1678,7 +1665,6 @@ fn test_create_workflow_with_regex_user_data_dependencies(start_server: &ServerP
         &start_server.config,
         temp_file.path(),
         "regex_user",
-        false,
         false,
     )
     .expect("Failed to create workflow with regex user data dependencies");
@@ -1768,7 +1754,6 @@ fn test_create_workflow_with_mixed_exact_and_regex_dependencies(start_server: &S
         &start_server.config,
         temp_file.path(),
         "regex_user",
-        false,
         false,
     )
     .expect("Failed to create workflow with mixed dependencies");
@@ -1875,15 +1860,13 @@ fn test_create_workflows_from_all_example_files(start_server: &ServerProcess) {
 
         let user = spec.user.unwrap_or_else(|| "test_user".to_string());
 
-        // Create the workflow
-        let workflow_id = WorkflowSpec::create_workflow_from_spec(
-            &start_server.config,
-            &spec_file,
-            &user,
-            false,
-            false,
-        )
-        .unwrap_or_else(|e| panic!("Failed to create workflow from {:?}: {}", spec_file, e));
+        // Create the workflow (skip all checks since example files may have
+        // intentional resource mismatches or missing node requirements)
+        let workflow_id =
+            WorkflowSpec::create_workflow_from_spec(&start_server.config, &spec_file, &user, false)
+                .unwrap_or_else(|e| {
+                    panic!("Failed to create workflow from {:?}: {}", spec_file, e)
+                });
 
         assert!(workflow_id > 0, "Invalid workflow ID for {:?}", spec_file);
 
@@ -1921,8 +1904,8 @@ fn test_create_workflows_from_all_example_files(start_server: &ServerProcess) {
 
 /// Test that validation fails when a job requests a different multi-node count
 /// than the scheduler provides (e.g., job wants 3 nodes, scheduler allocates 2)
-#[rstest]
-fn test_scheduler_node_validation_fails_with_mismatched_nodes(start_server: &ServerProcess) {
+#[test]
+fn test_scheduler_node_validation_fails_with_mismatched_nodes() {
     let workflow_data = serde_json::json!({
         "name": "multi_node_mismatch_workflow",
         "description": "Workflow with mismatched scheduler nodes",
@@ -1970,13 +1953,8 @@ fn test_scheduler_node_validation_fails_with_mismatched_nodes(start_server: &Ser
     )
     .expect("Failed to write temp file");
 
-    let result = WorkflowSpec::create_workflow_from_spec(
-        &start_server.config,
-        temp_file.path(),
-        "test_user",
-        false,
-        false, // skip_checks = false
-    );
+    // Validation is now done before create_workflow_from_spec — test via validate_for_creation
+    let result = WorkflowSpec::validate_for_creation(temp_file.path());
 
     // Should fail: job requests 3 nodes but scheduler only allocates 2
     assert!(result.is_err());
@@ -2049,7 +2027,6 @@ fn test_scheduler_node_validation_passes_single_node_jobs_in_multi_node_allocati
         &start_server.config,
         temp_file.path(),
         "test_user",
-        false,
         false,
     );
 
@@ -2125,7 +2102,6 @@ fn test_scheduler_node_validation_passes_with_start_one_worker_per_node(
         temp_file.path(),
         "test_user",
         false,
-        false, // skip_checks = false
     );
 
     // Should succeed for direct mode workflows.
@@ -2199,7 +2175,6 @@ fn test_scheduler_node_validation_fails_with_start_one_worker_per_node_in_slurm_
         temp_file.path(),
         "test_user",
         false,
-        false,
     );
 
     assert!(result.is_err(), "Expected workflow creation to fail");
@@ -2270,7 +2245,6 @@ fn test_scheduler_node_validation_fails_with_start_one_worker_per_node_in_auto_m
         temp_file.path(),
         "test_user",
         false,
-        false,
     );
 
     assert!(result.is_err(), "Expected workflow creation to fail");
@@ -2337,7 +2311,6 @@ fn test_scheduler_node_validation_passes_with_matching_nodes(start_server: &Serv
         temp_file.path(),
         "test_user",
         false,
-        false, // skip_checks = false
     );
 
     // Should succeed because job num_nodes matches scheduler nodes
@@ -2353,12 +2326,13 @@ fn test_scheduler_node_validation_passes_with_matching_nodes(start_server: &Serv
     }
 }
 
-/// Test that skip_checks=true bypasses the validation
+/// Test that validate_for_creation catches node mismatches but create_workflow_from_spec
+/// (which no longer validates) still succeeds for the same spec.
 #[rstest]
-fn test_scheduler_node_validation_skipped_with_skip_checks(start_server: &ServerProcess) {
+fn test_validation_separate_from_creation(start_server: &ServerProcess) {
     let workflow_data = serde_json::json!({
         "name": "skip_checks_workflow",
-        "description": "Workflow that would fail validation but uses skip_checks",
+        "description": "Workflow that fails validation but can be created",
         "jobs": [
             {
                 "name": "job1",
@@ -2403,18 +2377,20 @@ fn test_scheduler_node_validation_skipped_with_skip_checks(start_server: &Server
     )
     .expect("Failed to write temp file");
 
+    // validate_for_creation should catch the node mismatch
+    let validation = WorkflowSpec::validate_for_creation(temp_file.path());
+    assert!(validation.is_err(), "Expected validation to fail");
+
+    // create_workflow_from_spec succeeds because it doesn't validate
     let result = WorkflowSpec::create_workflow_from_spec(
         &start_server.config,
         temp_file.path(),
         "test_user",
         false,
-        true, // skip_checks = true
     );
-
-    // Should succeed because skip_checks is true
     assert!(
         result.is_ok(),
-        "Expected success with skip_checks=true, got: {:?}",
+        "Expected creation to succeed, got: {:?}",
         result.err()
     );
 
@@ -2470,7 +2446,6 @@ fn test_scheduler_node_validation_passes_with_single_node_scheduler(start_server
         temp_file.path(),
         "test_user",
         false,
-        false, // skip_checks = false
     );
 
     // Should succeed because scheduler only has 1 node
@@ -2728,7 +2703,7 @@ fn test_validate_spec_complete_workflow() {
             {"name": "small", "num_cpus": 1, "num_nodes": 1, "memory": "1g"}
         ],
         "slurm_schedulers": [
-            {"name": "test_scheduler", "account": "test", "nodes": 1, "walltime": "00:30:00"}
+            {"name": "test_scheduler", "account": "test", "nodes": 1, "walltime": "02:00:00"}
         ],
         "actions": [
             {
@@ -3616,7 +3591,6 @@ fn test_create_subgraph_workflows_from_examples(start_server: &ServerProcess) {
             &spec_file,
             "test_user",
             false,
-            true, // skip_checks - we don't have a real Slurm environment
         )
         .unwrap_or_else(|e| panic!("Failed to create workflow from {}: {}", filename, e));
 
@@ -3787,7 +3761,6 @@ fn test_subgraph_workflow_execution_plan_from_database() {
         &spec_file,
         "test_user",
         false,
-        true, // skip_checks
     )
     .expect("Failed to create workflow");
 
@@ -3955,7 +3928,6 @@ fn test_subgraph_workflow_execution_plan_spec_vs_database() {
         &spec_file,
         "test_user",
         false,
-        true, // skip_checks
     )
     .expect("Failed to create workflow");
 

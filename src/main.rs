@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use clap::{CommandFactory, Parser};
 
 use torc::cli::{Cli, Commands};
@@ -207,6 +209,10 @@ fn main() {
             skip_checks,
         } => {
             let workflow_id = if is_spec_file(workflow_spec_or_id) {
+                if !*skip_checks {
+                    WorkflowSpec::prevalidate_or_exit(workflow_spec_or_id);
+                }
+
                 // Create workflow from spec file
                 let user = torc::get_username();
                 match WorkflowSpec::create_workflow_from_spec(
@@ -214,7 +220,6 @@ fn main() {
                     workflow_spec_or_id,
                     &user,
                     true,
-                    *skip_checks,
                 ) {
                     Ok(id) => {
                         print_workflow_message(&format, id, &format!("Created workflow {}", id));
@@ -315,6 +320,10 @@ fn main() {
                     std::process::exit(1);
                 }
 
+                if !*skip_checks {
+                    WorkflowSpec::prevalidate_or_exit(workflow_spec_or_id);
+                }
+
                 // Create workflow from spec
                 let user = torc::get_username();
 
@@ -323,7 +332,6 @@ fn main() {
                     workflow_spec_or_id,
                     &user,
                     true,
-                    *skip_checks,
                 ) {
                     Ok(id) => {
                         print_workflow_message(&format, id, &format!("Created workflow {}", id));
@@ -461,10 +469,11 @@ fn main() {
             retry_unknown,
             recovery_hook,
             dry_run,
-            interactive,
+            no_prompts,
             ai_recovery,
             ai_agent,
         } => {
+            let interactive = !no_prompts && std::io::stdin().is_terminal();
             let args = RecoverArgs {
                 workflow_id: *workflow_id,
                 output_dir: output_dir.clone(),
@@ -473,7 +482,7 @@ fn main() {
                 retry_unknown: *retry_unknown,
                 recovery_hook: recovery_hook.clone(),
                 dry_run: *dry_run,
-                interactive: *interactive,
+                interactive,
                 ai_recovery: *ai_recovery,
                 ai_agent: ai_agent.clone(),
             };

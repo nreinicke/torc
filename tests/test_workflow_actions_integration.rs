@@ -68,7 +68,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
@@ -209,7 +209,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
@@ -320,7 +320,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Get workflow and initialize using WorkflowManager
@@ -430,7 +430,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with correct job_ids (should match 3 training jobs)
@@ -547,7 +547,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify all 3 actions were created
@@ -668,7 +668,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     let workflow =
@@ -794,7 +794,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=true
@@ -934,7 +934,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=true
@@ -1073,7 +1073,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created with persistent=false (default)
@@ -1214,7 +1214,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     // Verify action was created
@@ -1324,7 +1324,7 @@ actions:
 
     // Create workflow from spec
     let workflow_id =
-        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false, false)
+        WorkflowSpec::create_workflow_from_spec(config, &spec_path, "test_user", false)
             .expect("Failed to create workflow from spec");
 
     let workflow =

@@ -873,43 +873,6 @@ impl ExecutionConfig {
     }
 
     /// Validate the configuration, returning any warnings.
-    ///
-    /// Returns a list of warning messages for potential issues:
-    /// - If `srun_termination_signal` time value is >= `sigkill_headroom_seconds`,
-    ///   the signal won't be sent before Slurm kills the step.
-    pub fn validate(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
-
-        // Check srun_termination_signal vs sigkill_headroom_seconds
-        if let Some(ref signal_spec) = self.srun_termination_signal
-            && let Some(signal_seconds) = Self::parse_srun_signal_seconds(signal_spec)
-        {
-            let headroom = self.sigkill_headroom_seconds();
-            if signal_seconds >= headroom {
-                warnings.push(format!(
-                    "srun_termination_signal '{}' specifies {}s, which is >= sigkill_headroom_seconds ({}s). \
-                     The signal will not be sent before Slurm kills the step. \
-                     Consider increasing sigkill_headroom_seconds or reducing the signal time.",
-                    signal_spec, signal_seconds, headroom
-                ));
-            }
-        }
-
-        warnings
-    }
-
-    /// Parse the seconds value from an srun --signal spec like "TERM@120".
-    /// Returns None if the spec doesn't contain a valid time value.
-    fn parse_srun_signal_seconds(signal_spec: &str) -> Option<i64> {
-        // Format: "<signal>@<seconds>" or just "<signal>"
-        if let Some(at_pos) = signal_spec.find('@') {
-            let seconds_str = &signal_spec[at_pos + 1..];
-            seconds_str.parse::<i64>().ok()
-        } else {
-            None
-        }
-    }
-
     /// Build from a WorkflowModel's execution_config or legacy slurm_config JSON blob.
     ///
     /// Checks execution_config first; falls back to slurm_config for old workflows.
@@ -1357,6 +1320,331 @@ impl WorkflowSpec {
         }
     }
 
+    /// Validate that job resource requirements (runtime, memory, GPUs) are compatible
+    /// with the slurm schedulers in the workflow. Returns a list of warning messages.
+    ///
+    /// For jobs with an explicit scheduler, each resource dimension is checked against
+    /// that scheduler. For jobs without a scheduler, at least one scheduler must be
+    /// suitable across all dimensions (since any scheduler can pick up unassigned jobs).
+    ///
+    /// Scheduler fields that are not set (e.g., `mem: None`, `gres: None`) are skipped
+    /// for that dimension.
+    pub fn validate_scheduler_resources(&self) -> Vec<String> {
+        let resource_req_map: HashMap<&str, &ResourceRequirementsSpec> = self
+            .resource_requirements
+            .as_ref()
+            .map(|reqs| reqs.iter().map(|r| (r.name.as_str(), r)).collect())
+            .unwrap_or_default();
+
+        let schedulers: Vec<&SlurmSchedulerSpec> = self
+            .slurm_schedulers
+            .as_ref()
+            .map(|s| s.iter().collect())
+            .unwrap_or_default();
+
+        if resource_req_map.is_empty() || schedulers.is_empty() {
+            return Vec::new();
+        }
+
+        // Pre-parse scheduler resources into a structured form
+        struct ParsedScheduler<'a> {
+            name: &'a str,
+            sched: &'a SlurmSchedulerSpec,
+            walltime_secs: Option<u64>,
+            memory_bytes: Option<i64>,
+            gpu_count: Option<u32>,
+        }
+
+        let mut warnings: Vec<String> = Vec::new();
+
+        let mut parsed_schedulers: Vec<ParsedScheduler> = Vec::new();
+        for sched in &schedulers {
+            let Some(name) = sched.name.as_deref() else {
+                continue;
+            };
+            let walltime_secs =
+                match crate::client::commands::slurm::parse_walltime_secs(&sched.walltime) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        warnings.push(format!(
+                            "Scheduler '{}': invalid walltime '{}': {}",
+                            name, sched.walltime, e,
+                        ));
+                        None
+                    }
+                };
+            let memory_bytes = match sched.mem.as_ref() {
+                Some(m) => match crate::memory_utils::memory_string_to_bytes(m) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        warnings.push(format!(
+                            "Scheduler '{}': invalid memory '{}': {}",
+                            name, m, e,
+                        ));
+                        None
+                    }
+                },
+                None => None,
+            };
+            let gpu_count = if sched.gres.as_ref().is_some_and(|g| !g.trim().is_empty()) {
+                let (parsed, _) = crate::client::hpc::slurm::parse_gres(&sched.gres);
+                // Non-empty but unparseable gres → treat as 0 GPUs so validation
+                // isn't silently bypassed
+                Some(parsed.unwrap_or(0))
+            } else {
+                None
+            };
+            parsed_schedulers.push(ParsedScheduler {
+                name,
+                sched,
+                walltime_secs,
+                memory_bytes,
+                gpu_count,
+            });
+        }
+
+        if parsed_schedulers.is_empty() {
+            return warnings;
+        }
+
+        for job in &self.jobs {
+            let rr_name = match &job.resource_requirements {
+                Some(name) => name,
+                None => continue,
+            };
+            let rr = match resource_req_map.get(rr_name.as_str()) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            // Parse job resource values
+            let job_runtime_secs = match crate::time_utils::duration_string_to_seconds(&rr.runtime)
+            {
+                Ok(secs) => Some(secs as u64),
+                Err(e) => {
+                    warnings.push(format!(
+                        "Job '{}': invalid runtime '{}': {}",
+                        job.name, rr.runtime, e,
+                    ));
+                    None
+                }
+            };
+            let job_memory_bytes = match crate::memory_utils::memory_string_to_bytes(&rr.memory) {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    warnings.push(format!(
+                        "Job '{}': invalid memory '{}': {}",
+                        job.name, rr.memory, e,
+                    ));
+                    None
+                }
+            };
+            let job_gpus = rr.num_gpus;
+
+            if job_gpus < 0 {
+                warnings.push(format!(
+                    "Job '{}': invalid negative num_gpus {}",
+                    job.name, job_gpus,
+                ));
+                continue;
+            }
+
+            if let Some(ref scheduler_name) = job.scheduler {
+                // Job has an explicit scheduler — check each dimension against it
+                let Some(ps) = parsed_schedulers
+                    .iter()
+                    .find(|ps| ps.name == scheduler_name.as_str())
+                else {
+                    continue; // Missing scheduler validated elsewhere
+                };
+
+                if let (Some(rt), Some(wt)) = (job_runtime_secs, ps.walltime_secs)
+                    && rt > wt
+                {
+                    warnings.push(format!(
+                        "Job '{}': runtime '{}' ({} s) exceeds scheduler '{}' \
+                         walltime '{}' ({} s)",
+                        job.name, rr.runtime, rt, scheduler_name, ps.sched.walltime, wt,
+                    ));
+                }
+                if let (Some(jm), Some(sm)) = (job_memory_bytes, ps.memory_bytes)
+                    && jm > sm
+                {
+                    warnings.push(format!(
+                        "Job '{}': memory '{}' exceeds scheduler '{}' mem '{}'",
+                        job.name,
+                        rr.memory,
+                        scheduler_name,
+                        ps.sched.mem.as_deref().unwrap_or("?"),
+                    ));
+                }
+                if let Some(sg) = ps.gpu_count
+                    && job_gpus > sg as i64
+                {
+                    warnings.push(format!(
+                        "Job '{}': num_gpus {} exceeds scheduler '{}' gres '{}'",
+                        job.name,
+                        job_gpus,
+                        scheduler_name,
+                        ps.sched.gres.as_deref().unwrap_or("?"),
+                    ));
+                }
+            } else {
+                // Job has no explicit scheduler — at least one must be suitable
+                // across ALL dimensions simultaneously
+                let suitable = parsed_schedulers.iter().any(|ps| {
+                    let runtime_ok = match (job_runtime_secs, ps.walltime_secs) {
+                        (Some(rt), Some(wt)) => rt <= wt,
+                        _ => true, // Can't check, assume ok
+                    };
+                    let memory_ok = match (job_memory_bytes, ps.memory_bytes) {
+                        (Some(jm), Some(sm)) => jm <= sm,
+                        _ => true,
+                    };
+                    let gpu_ok = match ps.gpu_count {
+                        Some(sg) => job_gpus <= sg as i64,
+                        None => true,
+                    };
+                    runtime_ok && memory_ok && gpu_ok
+                });
+
+                if !suitable {
+                    let mut reasons: Vec<String> = Vec::new();
+                    for ps in &parsed_schedulers {
+                        let mut mismatches: Vec<String> = Vec::new();
+                        if let (Some(rt), Some(wt)) = (job_runtime_secs, ps.walltime_secs)
+                            && rt > wt
+                        {
+                            mismatches.push(format!("runtime {} s > walltime {} s", rt, wt));
+                        }
+                        if let (Some(jm), Some(sm)) = (job_memory_bytes, ps.memory_bytes)
+                            && jm > sm
+                        {
+                            mismatches.push(format!(
+                                "memory '{}' > mem '{}'",
+                                rr.memory,
+                                ps.sched.mem.as_deref().unwrap_or("?"),
+                            ));
+                        }
+                        if let Some(sg) = ps.gpu_count
+                            && job_gpus > sg as i64
+                        {
+                            mismatches.push(format!(
+                                "num_gpus {} > gres '{}'",
+                                job_gpus,
+                                ps.sched.gres.as_deref().unwrap_or("?"),
+                            ));
+                        }
+                        if !mismatches.is_empty() {
+                            reasons.push(format!("'{}': {}", ps.name, mismatches.join(", ")));
+                        }
+                    }
+                    warnings.push(format!(
+                        "Job '{}' has no explicit scheduler and no scheduler can \
+                         accommodate its resource requirements. Mismatches: [{}]",
+                        job.name,
+                        reasons.join("; "),
+                    ));
+                }
+            }
+        }
+
+        warnings
+    }
+
+    /// Validate a spec file for creation by non-interactive callers (MCP server, TUI).
+    ///
+    /// Runs parameter expansion, scheduler node requirement checks, and scheduler
+    /// resource checks (memory, runtime, GPUs). Returns the parsed spec on success
+    /// so callers can pass it to [`create_from_validated_spec`] without re-reading
+    /// the file.
+    ///
+    /// **Note:** This is a partial validation step. Action validation and variable
+    /// substitution are performed later by [`create_from_validated_spec`]. A spec
+    /// that passes this function can still fail during creation if it has invalid
+    /// actions or unresolvable variable references.
+    pub fn validate_for_creation<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<WorkflowSpec, Box<dyn std::error::Error>> {
+        let mut spec = Self::from_spec_file(path)?;
+        spec.expand_parameters()?;
+
+        spec.validate_scheduler_node_requirements()?;
+
+        let resource_warnings = spec.validate_scheduler_resources();
+        if !resource_warnings.is_empty() {
+            return Err(format!(
+                "Resource validation failed:\n  - {}",
+                resource_warnings.join("\n  - ")
+            )
+            .into());
+        }
+        Ok(spec)
+    }
+
+    /// Pre-validate a spec file for interactive CLI callers.
+    /// Node requirement failures are hard errors. Resource mismatches prompt the user.
+    /// Exits the process if validation fails or the user declines.
+    /// Note: CLI-only. Calls `process::exit` on failure — use `validate_for_creation`
+    /// for non-interactive/library contexts.
+    pub fn prevalidate_or_exit<P: AsRef<Path>>(path: P) {
+        let mut spec = match Self::from_spec_file(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading spec: {}", e);
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = spec.expand_parameters() {
+            eprintln!("Error expanding parameters: {}", e);
+            std::process::exit(1);
+        }
+
+        // Node requirements are hard errors (no prompt)
+        if let Err(e) = spec.validate_scheduler_node_requirements() {
+            eprintln!("Validation error: {}", e);
+            std::process::exit(1);
+        }
+
+        // Resource checks are interactive warnings
+        let warnings = spec.validate_scheduler_resources();
+        if !warnings.is_empty() && !Self::prompt_scheduler_warnings(&warnings) {
+            std::process::exit(1);
+        }
+    }
+
+    /// Display scheduler resource warnings and prompt the user for confirmation.
+    /// Returns true if the user confirms (or if there are no warnings).
+    /// In non-interactive contexts (stdin is not a TTY), prints a message and returns false.
+    fn prompt_scheduler_warnings(warnings: &[String]) -> bool {
+        use std::io::{IsTerminal, Write};
+
+        if warnings.is_empty() {
+            return true;
+        }
+
+        eprintln!("Resource validation warnings:");
+        for w in warnings {
+            eprintln!("  - {}", w);
+        }
+        eprintln!();
+
+        if std::io::stdin().is_terminal() {
+            eprint!("Proceed anyway? [y/N] ");
+            if std::io::stderr().flush().is_err() {
+                return false;
+            }
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_ok() {
+                return input.trim().eq_ignore_ascii_case("y");
+            }
+            false
+        } else {
+            eprintln!("Use --skip-checks to bypass resource validation.");
+            false
+        }
+    }
+
     /// Check if the workflow spec has an on_workflow_start action with schedule_nodes
     /// Returns true if such an action exists, false otherwise
     pub fn has_schedule_nodes_action(&self) -> bool {
@@ -1429,10 +1717,13 @@ impl WorkflowSpec {
         }
 
         // Step 4: Validate scheduler node requirements
-        // This is an error by default (same as create_workflow_from_spec with skip_checks=false)
         if let Err(e) = spec.validate_scheduler_node_requirements() {
             errors.push(format!("{}", e));
         }
+
+        // Step 4.5: Validate scheduler resources (runtime, memory, GPUs)
+        let resource_warnings = spec.validate_scheduler_resources();
+        errors.extend(resource_warnings);
 
         // Step 5: Validate variable substitution
         if let Err(e) = spec.substitute_variables() {
@@ -1809,24 +2100,38 @@ impl WorkflowSpec {
     /// This function will create the workflow and all associated models (files, user data, etc.)
     /// If any errors occur, the workflow will be deleted (which cascades to all other objects)
     ///
+    /// **Note:** This function does not run scheduler resource validation
+    /// (node requirements, memory/runtime limits). The CLI performs those checks
+    /// interactively before calling this. Non-interactive callers (MCP, TUI)
+    /// should use [`validate_for_creation`] followed by [`create_from_validated_spec`].
+    ///
     /// # Arguments
     /// * `config` - Server configuration
     /// * `path` - Path to the workflow specification file
     /// * `user` - User that owns the workflow
     /// * `enable_resource_monitoring` - Whether to enable resource monitoring by default
-    /// * `skip_checks` - Skip validation checks (use with caution)
     pub fn create_workflow_from_spec<P: AsRef<Path>>(
         config: &Configuration,
         path: P,
         user: &str,
         enable_resource_monitoring: bool,
-        skip_checks: bool,
     ) -> Result<i64, Box<dyn std::error::Error>> {
-        // Step 1: Deserialize the WorkflowSpecification from spec file
         let mut spec = Self::from_spec_file(path)?;
-        spec.user = Some(user.to_string());
+        Self::prepare_spec_for_creation(&mut spec, user, enable_resource_monitoring)?;
+        Self::create_from_prepared_spec(config, spec)
+    }
 
-        // Apply default resource monitoring if enabled and not already configured
+    /// Create a workflow from a pre-parsed and validated spec.
+    /// Use this after `validate_for_creation` to avoid re-reading the file.
+    pub fn create_from_validated_spec(
+        config: &Configuration,
+        mut spec: WorkflowSpec,
+        user: &str,
+        enable_resource_monitoring: bool,
+    ) -> Result<i64, Box<dyn std::error::Error>> {
+        // validate_for_creation already expanded parameters, but we still need
+        // the remaining preparation steps (user, monitoring, actions, variables).
+        spec.user = Some(user.to_string());
         if enable_resource_monitoring && spec.resource_monitor.is_none() {
             spec.resource_monitor = Some(crate::client::resource_monitor::ResourceMonitorConfig {
                 enabled: true,
@@ -1835,21 +2140,38 @@ impl WorkflowSpec {
                 generate_plots: false,
             });
         }
-
-        // Step 1.25: Expand parameterized jobs and files
-        spec.expand_parameters()?;
-
-        // Step 1.4: Validate workflow actions
         spec.validate_actions()?;
-
-        // Step 1.45: Validate scheduler node requirements
-        if !skip_checks {
-            spec.validate_scheduler_node_requirements()?;
-        }
-
-        // Step 1.5: Perform variable substitution in commands
         spec.substitute_variables()?;
+        Self::create_from_prepared_spec(config, spec)
+    }
 
+    /// Prepare a spec for creation: set user, expand parameters, validate, substitute.
+    fn prepare_spec_for_creation(
+        spec: &mut WorkflowSpec,
+        user: &str,
+        enable_resource_monitoring: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        spec.user = Some(user.to_string());
+        if enable_resource_monitoring && spec.resource_monitor.is_none() {
+            spec.resource_monitor = Some(crate::client::resource_monitor::ResourceMonitorConfig {
+                enabled: true,
+                granularity: crate::client::resource_monitor::MonitorGranularity::Summary,
+                sample_interval_seconds: 10,
+                generate_plots: false,
+            });
+        }
+        spec.expand_parameters()?;
+        spec.validate_actions()?;
+        spec.substitute_variables()?;
+        Ok(())
+    }
+
+    /// Create a workflow from a spec that has already been prepared (user set,
+    /// parameters expanded, actions validated, variables substituted).
+    fn create_from_prepared_spec(
+        config: &Configuration,
+        mut spec: WorkflowSpec,
+    ) -> Result<i64, Box<dyn std::error::Error>> {
         // Step 1.6: Collect per-job stdio overrides into execution_config
         {
             let overrides: HashMap<String, StdioConfig> = spec
@@ -2008,17 +2330,12 @@ impl WorkflowSpec {
         }
 
         // Store execution_config as JSON if any non-default settings are configured
-        if let Some(ref execution_config) = spec.execution_config {
-            // Validate and warn about potential issues
-            for warning in execution_config.validate() {
-                log::warn!("{}", warning);
-            }
-
-            if *execution_config != ExecutionConfig::default() {
-                let execution_config_json = serde_json::to_string(execution_config)
-                    .map_err(|e| format!("Failed to serialize execution_config: {}", e))?;
-                workflow_model.execution_config = Some(execution_config_json);
-            }
+        if let Some(ref execution_config) = spec.execution_config
+            && *execution_config != ExecutionConfig::default()
+        {
+            let execution_config_json = serde_json::to_string(execution_config)
+                .map_err(|e| format!("Failed to serialize execution_config: {}", e))?;
+            workflow_model.execution_config = Some(execution_config_json);
         }
 
         // Validate that execution_config fields match the effective mode.
@@ -5975,5 +6292,305 @@ execution_config:
         assert_eq!(config.mode, ExecutionMode::Slurm);
         assert_eq!(config.srun_termination_signal, Some("TERM@120".to_string()));
         assert_eq!(config.enable_cpu_bind, Some(true));
+    }
+
+    // --- validate_scheduler_resources tests ---
+
+    #[test]
+    fn test_validate_scheduler_resources_runtime_within_walltime() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: small
+    scheduler: my_scheduler
+resource_requirements:
+  - name: small
+    num_cpus: 1
+    memory: "1g"
+    runtime: "PT30M"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_runtime_equals_walltime() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: small
+    scheduler: my_scheduler
+resource_requirements:
+  - name: small
+    num_cpus: 1
+    memory: "1g"
+    runtime: "PT1H"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_runtime_exceeds_walltime() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+    scheduler: my_scheduler
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    memory: "1g"
+    runtime: "PT2H"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let warnings = spec.validate_scheduler_resources();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("test_job"));
+        assert!(warnings[0].contains("runtime"));
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_memory_exceeds_scheduler_mem() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+    scheduler: my_scheduler
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    memory: "16g"
+    runtime: "PT30M"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+    mem: "8g"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let warnings = spec.validate_scheduler_resources();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("test_job"));
+        assert!(warnings[0].contains("memory"));
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_gpus_exceed_scheduler_gres() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: gpu_heavy
+    scheduler: my_scheduler
+resource_requirements:
+  - name: gpu_heavy
+    num_cpus: 1
+    num_gpus: 4
+    memory: "1g"
+    runtime: "PT30M"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+    gres: "gpu:2"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let warnings = spec.validate_scheduler_resources();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("test_job"));
+        assert!(warnings[0].contains("num_gpus"));
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_skips_when_scheduler_mem_not_set() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+    scheduler: my_scheduler
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    memory: "999g"
+    runtime: "PT30M"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        // No mem set on scheduler, so memory check is skipped
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_skips_when_scheduler_gres_not_set() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: gpu_heavy
+    scheduler: my_scheduler
+resource_requirements:
+  - name: gpu_heavy
+    num_cpus: 1
+    num_gpus: 100
+    memory: "1g"
+    runtime: "PT30M"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        // No gres set on scheduler, so GPU check is skipped
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_multiple_warnings() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+    scheduler: my_scheduler
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    num_gpus: 4
+    memory: "16g"
+    runtime: "PT2H"
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "01:00:00"
+    mem: "8g"
+    gres: "gpu:2"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let warnings = spec.validate_scheduler_resources();
+        assert_eq!(warnings.len(), 3); // runtime + memory + GPUs
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_skips_jobs_without_resource_requirements() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+slurm_schedulers:
+  - name: my_scheduler
+    account: test
+    walltime: "00:30:00"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_unassigned_job_passes_if_any_scheduler_fits() {
+        // Job has no explicit scheduler, one scheduler can handle it
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    memory: "4g"
+    runtime: "PT2H"
+slurm_schedulers:
+  - name: short_scheduler
+    account: test
+    walltime: "01:00:00"
+    mem: "8g"
+  - name: long_scheduler
+    account: test
+    walltime: "04:00:00"
+    mem: "8g"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        assert!(spec.validate_scheduler_resources().is_empty());
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_unassigned_job_fails_if_no_scheduler_fits_all_dims() {
+        // Scheduler A has enough walltime but not enough memory
+        // Scheduler B has enough memory but not enough walltime
+        // No single scheduler satisfies all dimensions
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: tricky
+resource_requirements:
+  - name: tricky
+    num_cpus: 1
+    memory: "16g"
+    runtime: "PT2H"
+slurm_schedulers:
+  - name: long_but_small
+    account: test
+    walltime: "04:00:00"
+    mem: "8g"
+  - name: short_but_big
+    account: test
+    walltime: "01:00:00"
+    mem: "32g"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        let warnings = spec.validate_scheduler_resources();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("test_job"));
+        assert!(warnings[0].contains("no explicit scheduler"));
+    }
+
+    #[test]
+    fn test_validate_scheduler_resources_no_schedulers_returns_empty() {
+        let yaml = r#"
+name: test_workflow
+jobs:
+  - name: test_job
+    command: echo hello
+    resource_requirements: big
+resource_requirements:
+  - name: big
+    num_cpus: 1
+    memory: "1g"
+    runtime: "PT2H"
+"#;
+        let spec: WorkflowSpec = serde_yaml::from_str(yaml).expect("Failed to parse YAML");
+        assert!(spec.validate_scheduler_resources().is_empty());
     }
 }

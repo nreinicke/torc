@@ -548,10 +548,13 @@ pub fn create_workflow(
 
     match (action, workflow_type) {
         ("create_workflow", "local") => {
-            // Create local workflow using the library function
+            // Validate and parse once, then reuse for creation
+            let spec = crate::client::workflow_spec::WorkflowSpec::validate_for_creation(temp_path)
+                .map_err(|e| internal_error(format!("Workflow validation failed: {}", e)))?;
+
             let workflow_id =
-                crate::client::workflow_spec::WorkflowSpec::create_workflow_from_spec(
-                    config, temp_path, user, false, false,
+                crate::client::workflow_spec::WorkflowSpec::create_from_validated_spec(
+                    config, spec, user, false,
                 )
                 .map_err(|e| internal_error(format!("Failed to create workflow: {}", e)))?;
 

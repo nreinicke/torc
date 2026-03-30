@@ -2618,14 +2618,12 @@ pub fn handle_create(
         return;
     }
 
+    if !skip_checks {
+        WorkflowSpec::prevalidate_or_exit(file);
+    }
+
     // Normal create mode
-    match WorkflowSpec::create_workflow_from_spec(
-        config,
-        file,
-        user,
-        !no_resource_monitoring,
-        skip_checks,
-    ) {
+    match WorkflowSpec::create_workflow_from_spec(config, file, user, !no_resource_monitoring) {
         Ok(workflow_id) => {
             if format == "json" {
                 let json_output = serde_json::json!({

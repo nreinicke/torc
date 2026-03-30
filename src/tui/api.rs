@@ -298,16 +298,17 @@ impl TorcClient {
     }
 
     pub fn create_workflow_from_file(&self, path: &str) -> Result<i64> {
-        // Get current user
+        // Validate and parse once, then reuse for creation
+        let spec = WorkflowSpec::validate_for_creation(path)
+            .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+
         let user = crate::get_username();
 
-        // Create the workflow using the spec
-        let workflow_id = WorkflowSpec::create_workflow_from_spec(
+        let workflow_id = WorkflowSpec::create_from_validated_spec(
             &self.config,
-            path,
+            spec,
             &user,
             false, // enable_resource_monitoring
-            false, // skip_checks
         )
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
