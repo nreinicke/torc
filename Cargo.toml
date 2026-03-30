@@ -6,7 +6,13 @@ resolver = "2"
 
 [workspace.package]
 version = "0.22.0"
-authors = ["Daniel Thom", "Joseph McKinsey", "Nathan Keilbart"]
+authors = [
+  "Daniel Thom",
+  "Joseph McKinsey",
+  "Nathan Keilbart",
+  "Andrew Lai",
+  "Kapil Duwadi"
+]
 license = "BSD-3-Clause"
 edition = "2024"
 repository = "https://github.com/NatLabRockies/torc"
