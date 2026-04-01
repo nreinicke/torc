@@ -354,6 +354,7 @@ pub struct AccessPaginationQuery {
 }
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PendingActionsQuery {
     #[param(nullable = true)]
     pub trigger_type: Option<Vec<String>>,

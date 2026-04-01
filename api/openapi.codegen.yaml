@@ -4067,8 +4067,8 @@ paths:
           type: integer
           format: int64
       - name: trigger_type
-        in: path
-        required: true
+        in: query
+        required: false
         schema:
           type:
           - array

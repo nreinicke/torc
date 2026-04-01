@@ -69,7 +69,11 @@ docker_run run \
   -t /templates \
   --additional-properties=supportAsync=false
 
-rm -f "${REPO_ROOT}/src/client/apis/"*_api.rs
+find "${REPO_ROOT}/src/client/apis" \
+  -maxdepth 1 \
+  -name '*_api.rs' \
+  ! -name 'ro_crate_api.rs' \
+  -delete
 cp "${TMP_RUST_CLIENT}/src/apis/"*_api.rs "${REPO_ROOT}/src/client/apis/"
 
 cargo fmt --manifest-path "${REPO_ROOT}/Cargo.toml" -- "${REPO_ROOT}/src/client/apis/"*_api.rs

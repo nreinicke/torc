@@ -85,16 +85,19 @@ case "${COMMAND}" in
     ;;
   all)
     "${SCRIPT_DIR}/emit_openapi_from_rust.sh"
-    "${SCRIPT_DIR}/check_openapi_codegen_parity.sh"
 
     if [[ "${PROMOTE}" -eq 1 ]]; then
       "${SCRIPT_DIR}/promote_openapi_from_rust.sh"
+      "${SCRIPT_DIR}/check_openapi_codegen_parity.sh"
       "${SCRIPT_DIR}/regenerate_clients.sh" --spec "${SCRIPT_DIR}/openapi.yaml"
     elif [[ -n "${SPEC_PATH}" ]]; then
+      "${SCRIPT_DIR}/check_openapi_codegen_parity.sh"
       "${SCRIPT_DIR}/regenerate_clients.sh" --spec "${SPEC_PATH}"
     elif [[ "${USE_RUST_SPEC}" -eq 1 ]]; then
+      "${SCRIPT_DIR}/check_openapi_codegen_parity.sh"
       "${SCRIPT_DIR}/regenerate_clients.sh" --spec "${SCRIPT_DIR}/openapi.codegen.yaml"
     else
+      "${SCRIPT_DIR}/check_openapi_codegen_parity.sh"
       "${SCRIPT_DIR}/regenerate_clients.sh" --spec "${SCRIPT_DIR}/openapi.yaml"
     fi
     ;;
