@@ -26,7 +26,7 @@ SPEC_FILE="$(basename "${SPEC_PATH}")"
 TMP_PYTHON="$(mktemp -d "${TMPDIR:-/tmp}/torc-py-check.XXXXXX")"
 TMP_JULIA="$(mktemp -d "${TMPDIR:-/tmp}/torc-jl-check.XXXXXX")"
 
-# shellcheck disable=SC2329  # invoked indirectly via trap
+# shellcheck disable=SC2329,SC2317  # invoked indirectly via trap
 cleanup_tmp() {
   # Docker may create root-owned files that the CI runner cannot delete directly.
   # Use a container to remove them, then clean up the (now-empty) temp dirs.
