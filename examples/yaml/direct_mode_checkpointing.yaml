@@ -1,0 +1,192 @@
+# Direct Mode with Checkpointing and Resource Enforcement
+#
+# Demonstrates direct execution mode features:
+#   - execution_config.mode: direct (torc manages processes directly)
+#   - limit_resources: true (kill jobs exceeding memory/CPU limits)
+#   - termination_signal / sigterm_lead_seconds (graceful shutdown for checkpointing)
+#   - oom_exit_code / timeout_exit_code (custom exit codes)
+#   - failure_handler with recovery_script for checkpoint-based restart
+#
+# The training jobs write periodic checkpoints. When torc sends SIGTERM
+# (e.g., approaching a time limit), the job saves a final checkpoint and
+# exits cleanly. On retry, the recovery script detects the checkpoint and
+# the job resumes from where it left off.
+#
+# Workflow structure:
+#   prepare_data
+#       |
+#   train_model_{i} (3 independent training runs, checkpoint-enabled)
+#       |
+#   evaluate_best
+
+name: direct_mode_checkpointing
+description: Training pipeline with checkpointing and direct-mode resource enforcement
+project: ml-training
+
+execution_config:
+  mode: direct
+  limit_resources: true               # Enforce memory/CPU limits, kill violators
+  termination_signal: "SIGTERM"        # Signal sent before hard kill
+  sigterm_lead_seconds: 45             # 45s grace period for checkpoint save
+  oom_exit_code: 137                   # Exit code when OOM-killed
+  timeout_exit_code: 152               # Exit code when timed out
+
+failure_handlers:
+  # Retry on timeout: the job checkpointed, so restart will resume
+  - name: "checkpoint_retry"
+    rules:
+      - exit_codes: [152]
+        max_retries: 5
+        recovery_script: |
+          #!/bin/bash
+          echo "Job timed out (exit 152) - checkpoint should exist"
+          CKPT_DIR="/workspace/checkpoints/${TORC_JOB_NAME}"
+          if [ -d "$CKPT_DIR" ] && ls "$CKPT_DIR"/checkpoint_*.pt 1>/dev/null 2>&1; then
+            LATEST=$(ls -t "$CKPT_DIR"/checkpoint_*.pt | head -1)
+            echo "Found checkpoint: $LATEST - job will resume on retry"
+          else
+            echo "WARNING: No checkpoint found - job will restart from scratch"
+          fi
+      # Retry on OOM with a warning; resource correction can fix this
+      - exit_codes: [137]
+        max_retries: 2
+        recovery_script: |
+          #!/bin/bash
+          echo "Job OOM-killed (exit 137) - consider increasing memory allocation"
+      # Retry transient failures up to 3 times
+      - match_all_exit_codes: true
+        max_retries: 3
+
+resource_requirements:
+  - name: "small"
+    num_cpus: 2
+    num_gpus: 0
+    memory: "4g"
+    runtime: "PT15M"
+
+  - name: "training"
+    num_cpus: 8
+    num_gpus: 0
+    memory: "32g"
+    runtime: "PT2H"
+
+files:
+  - name: "dataset"
+    path: "/workspace/data/dataset.pkl"
+
+  - name: "model_{i}"
+    path: "/workspace/models/model_{i}.pt"
+    parameters:
+      i: "[0,1,2]"
+
+  - name: "eval_report"
+    path: "/workspace/results/evaluation.json"
+
+jobs:
+  - name: "prepare_data"
+    command: |
+      #!/bin/bash
+      set -e
+      mkdir -p /workspace/data /workspace/checkpoints /workspace/models /workspace/results
+      python3 -c "
+      import pickle, numpy as np
+      data = {'X': np.random.rand(50000, 128), 'y': np.random.randint(0, 10, 50000)}
+      with open('/workspace/data/dataset.pkl', 'wb') as f:
+        pickle.dump(data, f)
+      print('Dataset prepared: 50000 samples, 128 features')
+      "
+    resource_requirements: "small"
+    output_files: ["dataset"]
+
+  # Training jobs with checkpointing support.
+  # On SIGTERM, the trap handler saves a final checkpoint before exiting.
+  # On restart (after timeout), training resumes from the latest checkpoint.
+  - name: "train_model_{i}"
+    command: |
+      #!/bin/bash
+      set -e
+
+      CKPT_DIR="/workspace/checkpoints/${TORC_JOB_NAME}"
+      MODEL_OUT="/workspace/models/model_{i}.pt"
+      mkdir -p "$CKPT_DIR"
+
+      # Trap SIGTERM for graceful checkpoint
+      TERMINATED=0
+      trap 'echo "SIGTERM received - saving emergency checkpoint..."; TERMINATED=1' TERM
+
+      python3 << 'PYEOF'
+      import pickle, numpy as np, os, signal, sys, time, json
+
+      ckpt_dir = os.environ["CKPT_DIR"]
+      model_out = os.environ["MODEL_OUT"]
+
+      # Check for existing checkpoint
+      checkpoints = sorted(
+        [f for f in os.listdir(ckpt_dir) if f.startswith("checkpoint_")],
+        reverse=True
+      )
+      start_epoch = 0
+      weights = np.random.rand(128, 10) * 0.01
+      if checkpoints:
+        latest = os.path.join(ckpt_dir, checkpoints[0])
+        data = np.load(latest, allow_pickle=True).item()
+        weights = data["weights"]
+        start_epoch = data["epoch"] + 1
+        print(f"Resuming from checkpoint at epoch {start_epoch}")
+      else:
+        print("Starting fresh training")
+
+      with open("/workspace/data/dataset.pkl", "rb") as f:
+        dataset = pickle.load(f)
+
+      total_epochs = 100
+      for epoch in range(start_epoch, total_epochs):
+        # Simulate training step
+        grad = np.random.randn(*weights.shape) * 0.001
+        weights -= grad
+        loss = np.linalg.norm(grad)
+
+        # Periodic checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0:
+          ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{epoch:04d}.npy")
+          np.save(ckpt_path, {"weights": weights, "epoch": epoch, "loss": float(loss)})
+          print(f"Epoch {epoch+1}/{total_epochs} loss={loss:.6f} [checkpoint saved]")
+        else:
+          print(f"Epoch {epoch+1}/{total_epochs} loss={loss:.6f}")
+
+        time.sleep(1)  # Simulate compute time
+
+      # Save final model
+      np.save(model_out, {"weights": weights, "final_loss": float(loss)})
+      print(f"Training complete. Model saved to {model_out}")
+      PYEOF
+    resource_requirements: "training"
+    failure_handler: "checkpoint_retry"
+    depends_on: ["prepare_data"]
+    input_files: ["dataset"]
+    output_files: ["model_{i}"]
+    parameters:
+      i: "[0,1,2]"
+
+  - name: "evaluate_best"
+    command: |
+      #!/bin/bash
+      set -e
+      python3 -c "
+      import numpy as np, json, glob
+      models = glob.glob('/workspace/models/model_*.pt.npy')
+      best_loss = float('inf')
+      best_model = None
+      for m in models:
+        data = np.load(m, allow_pickle=True).item()
+        if data['final_loss'] < best_loss:
+          best_loss = data['final_loss']
+          best_model = m
+      report = {'best_model': best_model, 'best_loss': best_loss, 'num_models': len(models)}
+      with open('/workspace/results/evaluation.json', 'w') as f:
+        json.dump(report, f, indent=2)
+      print(json.dumps(report, indent=2))
+      "
+    resource_requirements: "small"
+    input_file_regexes: ["^model_\\d+$"]
+    output_files: ["eval_report"]
