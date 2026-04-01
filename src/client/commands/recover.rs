@@ -1677,10 +1677,20 @@ fn prompt_scheduler_choice(
             }
         };
 
-        // Prompt for start_one_worker_per_node if multi-node scheduler
+        // Prompt for start_one_worker_per_node if multi-node scheduler and direct mode.
+        // start_one_worker_per_node is only valid when execution_config.mode is "direct".
         let start_one_worker_per_node = if scheduler.nodes > 1 {
-            let choice = prompt_choice("  Start one worker per node? (y/N): ", &["y", "n"], "n")?;
-            choice == "y"
+            let workflow = apis::workflows_api::get_workflow(config, args.workflow_id)
+                .map_err(|e| format!("Failed to fetch workflow to check execution mode: {}", e))?;
+            let exec_config =
+                crate::client::workflow_spec::ExecutionConfig::from_workflow_model(&workflow);
+            if exec_config.mode == crate::client::workflow_spec::ExecutionMode::Direct {
+                let choice =
+                    prompt_choice("  Start one worker per node? (y/N): ", &["y", "n"], "n")?;
+                choice == "y"
+            } else {
+                false
+            }
         } else {
             false
         };

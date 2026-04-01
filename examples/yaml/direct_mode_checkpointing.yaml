@@ -8,9 +8,11 @@
 #   - failure_handler with recovery_script for checkpoint-based restart
 #
 # The training jobs write periodic checkpoints. When torc sends SIGTERM
-# (e.g., approaching a time limit), the job saves a final checkpoint and
-# exits cleanly. On retry, the recovery script detects the checkpoint and
-# the job resumes from where it left off.
+# (e.g., approaching a time limit), the Python script catches it, saves
+# an emergency checkpoint, and exits cleanly. On retry, the job resumes
+# from the latest checkpoint automatically.
+#
+# See examples/scripts/checkpointing_train.py for the SIGTERM-aware training loop.
 #
 # Workflow structure:
 #   prepare_data
@@ -41,8 +43,8 @@ failure_handlers:
           #!/bin/bash
           echo "Job timed out (exit 152) - checkpoint should exist"
           CKPT_DIR="/workspace/checkpoints/${TORC_JOB_NAME}"
-          if [ -d "$CKPT_DIR" ] && ls "$CKPT_DIR"/checkpoint_*.pt 1>/dev/null 2>&1; then
-            LATEST=$(ls -t "$CKPT_DIR"/checkpoint_*.pt | head -1)
+          if [ -d "$CKPT_DIR" ] && ls "$CKPT_DIR"/checkpoint_*.npy 1>/dev/null 2>&1; then
+            LATEST=$(ls -t "$CKPT_DIR"/checkpoint_*.npy | head -1)
             echo "Found checkpoint: $LATEST - job will resume on retry"
           else
             echo "WARNING: No checkpoint found - job will restart from scratch"
@@ -84,82 +86,15 @@ files:
 
 jobs:
   - name: "prepare_data"
-    command: |
-      #!/bin/bash
-      set -e
-      mkdir -p /workspace/data /workspace/checkpoints /workspace/models /workspace/results
-      python3 -c "
-      import pickle, numpy as np
-      data = {'X': np.random.rand(50000, 128), 'y': np.random.randint(0, 10, 50000)}
-      with open('/workspace/data/dataset.pkl', 'wb') as f:
-        pickle.dump(data, f)
-      print('Dataset prepared: 50000 samples, 128 features')
-      "
+    command: bash examples/scripts/checkpointing_prepare_data.sh
     resource_requirements: "small"
     output_files: ["dataset"]
 
   # Training jobs with checkpointing support.
-  # On SIGTERM, the trap handler saves a final checkpoint before exiting.
+  # The Python script handles SIGTERM by saving an emergency checkpoint and exiting.
   # On restart (after timeout), training resumes from the latest checkpoint.
   - name: "train_model_{i}"
-    command: |
-      #!/bin/bash
-      set -e
-
-      CKPT_DIR="/workspace/checkpoints/${TORC_JOB_NAME}"
-      MODEL_OUT="/workspace/models/model_{i}.pt"
-      mkdir -p "$CKPT_DIR"
-
-      # Trap SIGTERM for graceful checkpoint
-      TERMINATED=0
-      trap 'echo "SIGTERM received - saving emergency checkpoint..."; TERMINATED=1' TERM
-
-      python3 << 'PYEOF'
-      import pickle, numpy as np, os, signal, sys, time, json
-
-      ckpt_dir = os.environ["CKPT_DIR"]
-      model_out = os.environ["MODEL_OUT"]
-
-      # Check for existing checkpoint
-      checkpoints = sorted(
-        [f for f in os.listdir(ckpt_dir) if f.startswith("checkpoint_")],
-        reverse=True
-      )
-      start_epoch = 0
-      weights = np.random.rand(128, 10) * 0.01
-      if checkpoints:
-        latest = os.path.join(ckpt_dir, checkpoints[0])
-        data = np.load(latest, allow_pickle=True).item()
-        weights = data["weights"]
-        start_epoch = data["epoch"] + 1
-        print(f"Resuming from checkpoint at epoch {start_epoch}")
-      else:
-        print("Starting fresh training")
-
-      with open("/workspace/data/dataset.pkl", "rb") as f:
-        dataset = pickle.load(f)
-
-      total_epochs = 100
-      for epoch in range(start_epoch, total_epochs):
-        # Simulate training step
-        grad = np.random.randn(*weights.shape) * 0.001
-        weights -= grad
-        loss = np.linalg.norm(grad)
-
-        # Periodic checkpoint every 10 epochs
-        if (epoch + 1) % 10 == 0:
-          ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{epoch:04d}.npy")
-          np.save(ckpt_path, {"weights": weights, "epoch": epoch, "loss": float(loss)})
-          print(f"Epoch {epoch+1}/{total_epochs} loss={loss:.6f} [checkpoint saved]")
-        else:
-          print(f"Epoch {epoch+1}/{total_epochs} loss={loss:.6f}")
-
-        time.sleep(1)  # Simulate compute time
-
-      # Save final model
-      np.save(model_out, {"weights": weights, "final_loss": float(loss)})
-      print(f"Training complete. Model saved to {model_out}")
-      PYEOF
+    command: "MODEL_INDEX={i} python3 examples/scripts/checkpointing_train.py"
     resource_requirements: "training"
     failure_handler: "checkpoint_retry"
     depends_on: ["prepare_data"]
@@ -169,24 +104,7 @@ jobs:
       i: "[0,1,2]"
 
   - name: "evaluate_best"
-    command: |
-      #!/bin/bash
-      set -e
-      python3 -c "
-      import numpy as np, json, glob
-      models = glob.glob('/workspace/models/model_*.pt.npy')
-      best_loss = float('inf')
-      best_model = None
-      for m in models:
-        data = np.load(m, allow_pickle=True).item()
-        if data['final_loss'] < best_loss:
-          best_loss = data['final_loss']
-          best_model = m
-      report = {'best_model': best_model, 'best_loss': best_loss, 'num_models': len(models)}
-      with open('/workspace/results/evaluation.json', 'w') as f:
-        json.dump(report, f, indent=2)
-      print(json.dumps(report, indent=2))
-      "
+    command: bash examples/scripts/checkpointing_evaluate.sh
     resource_requirements: "small"
     input_file_regexes: ["^model_\\d+$"]
     output_files: ["eval_report"]

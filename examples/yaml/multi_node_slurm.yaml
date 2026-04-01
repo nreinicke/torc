@@ -95,20 +95,9 @@ files:
     path: "/scratch/linalg/report.json"
 
 jobs:
-  # Stage 1: Single-node preparation
+  # Stage 1: Single-node preparation — generate random input matrices
   - name: "prepare_inputs"
-    command: |
-      #!/bin/bash
-      set -e
-      mkdir -p /scratch/linalg
-      for i in $(seq -f "%02g" 0 3); do
-        python3 -c "
-      import numpy as np
-      M = np.random.rand(10000, 10000)
-      M.tofile('/scratch/linalg/input_matrix_${i}.bin')
-      print(f'Generated 10000x10000 matrix: input_matrix_${i}.bin')
-      "
-      done
+    command: "python3 examples/scripts/multi_node_prepare_inputs.py /scratch/linalg 4 10000"
     scheduler: "single_node_scheduler"
     resource_requirements: "light"
     output_files:
@@ -119,24 +108,12 @@ jobs:
 
   # Stage 2: Multi-node CPU-bound matrix multiplications (2 nodes each)
   - name: "parallel_matrix_multiply_{i:02d}"
-    command: |
-      #!/bin/bash
-      set -e
-      echo "Running dense matrix multiply on 2 nodes with CPU binding"
-      echo "SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
-      echo "SLURM_CPUS_PER_TASK=$SLURM_CPUS_PER_TASK"
-      export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-      export OMP_PLACES=cores
-      export OMP_PROC_BIND=close
-      python3 -c "
-      import numpy as np
-      print('Loading input matrix...')
-      A = np.fromfile('/scratch/linalg/input_matrix_{i:02d}.bin', dtype=np.float64).reshape(10000, 10000)
-      print('Computing A^T @ A (CPU-bound BLAS)...')
-      result = A.T @ A
-      result.tofile('/scratch/linalg/product_{i:02d}.bin')
-      print(f'Wrote product_{i:02d}.bin ({result.nbytes} bytes)')
-      "
+    command: >-
+      OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-64} OMP_PLACES=cores OMP_PROC_BIND=close
+      python3 examples/scripts/multi_node_matrix_multiply.py
+      /scratch/linalg/input_matrix_{i:02d}.bin
+      /scratch/linalg/product_{i:02d}.bin
+      10000
     scheduler: "dual_node_scheduler"
     resource_requirements: "cpu_intensive_2node"
     depends_on: ["prepare_inputs"]
@@ -147,25 +124,10 @@ jobs:
 
   # Stage 3: Large multi-node eigenvalue decomposition (4 nodes)
   - name: "distributed_eigensolve"
-    command: |
-      #!/bin/bash
-      set -e
-      echo "Running distributed eigenvalue solve on 4 nodes"
-      echo "SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
-      echo "SLURM_NNODES=$SLURM_NNODES"
-      export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-      export OMP_PLACES=cores
-      export OMP_PROC_BIND=close
-      python3 -c "
-      import numpy as np
-      print('Loading product matrices...')
-      matrices = [np.fromfile(f'/scratch/linalg/product_{i:02d}.bin', dtype=np.float64).reshape(10000, 10000) for i in range(4)]
-      combined = sum(matrices) / len(matrices)
-      print('Computing eigenvalue decomposition (CPU-intensive)...')
-      eigenvalues = np.linalg.eigvalsh(combined)
-      eigenvalues.tofile('/scratch/linalg/eigenvalues.bin')
-      print(f'Computed {len(eigenvalues)} eigenvalues')
-      "
+    command: >-
+      OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-64} OMP_PLACES=cores OMP_PROC_BIND=close
+      python3 examples/scripts/multi_node_eigensolve.py
+      /scratch/linalg 4 10000
     scheduler: "quad_node_scheduler"
     resource_requirements: "cpu_intensive_4node"
     input_file_regexes: ["^product_\\d+$"]
@@ -173,23 +135,7 @@ jobs:
 
   # Stage 4: Collect and summarize results (single node)
   - name: "collect_results"
-    command: |
-      #!/bin/bash
-      set -e
-      python3 -c "
-      import numpy as np, json
-      eigs = np.fromfile('/scratch/linalg/eigenvalues.bin', dtype=np.float64)
-      report = {
-        'num_eigenvalues': len(eigs),
-        'min': float(eigs.min()),
-        'max': float(eigs.max()),
-        'mean': float(eigs.mean()),
-        'condition_number': float(eigs.max() / eigs[eigs > 0].min()),
-      }
-      with open('/scratch/linalg/report.json', 'w') as f:
-        json.dump(report, f, indent=2)
-      print(json.dumps(report, indent=2))
-      "
+    command: "python3 examples/scripts/multi_node_collect_results.py /scratch/linalg"
     scheduler: "single_node_scheduler"
     resource_requirements: "light"
     input_files: ["eigenvalues"]

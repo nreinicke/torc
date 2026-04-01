@@ -63,31 +63,14 @@ jobs:
     command: |
       #!/bin/bash
       mkdir -p output
-      cat > output/config.json << 'JSON'
-      {"timesteps": 1000, "dt": 0.01, "model": "stochastic_v2"}
-      JSON
+      echo '{"timesteps": 1000, "dt": 0.01, "model": "stochastic_v2"}' > output/config.json
       echo "Config written"
     resource_requirements: "minimal"
     output_files: ["config"]
 
   # Parameterized simulation: 4 regions x 6 seeds = 24 jobs
   - name: "simulate_{region}_{seed:03d}"
-    command: |
-      #!/bin/bash
-      set -e
-      python3 -c "
-      import json, random, csv
-      random.seed({seed})
-      with open('output/config.json') as f:
-        cfg = json.load(f)
-      results = [random.gauss(0, 1) for _ in range(cfg['timesteps'])]
-      with open('output/sim_{region}_{seed:03d}.csv', 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['timestep', 'value'])
-        for i, v in enumerate(results):
-          w.writerow([i, v])
-      print('Wrote {seed:03d} for region {region}: {cfg[timesteps]} timesteps')
-      "
+    command: "python3 examples/scripts/fan_in_simulate.py {region} {seed}"
     resource_requirements: "compute"
     input_files: ["config"]
     output_files: ["sim_{region}_{seed:03d}"]
@@ -99,33 +82,8 @@ jobs:
   # Uses input_file_regexes to match sim_{region}_000 through sim_{region}_005
   # without listing them explicitly.
   - name: "regional_summary_{region}"
-    command: |
-      #!/bin/bash
-      set -e
-      python3 -c "
-      import csv, json, glob, numpy as np
-      files = sorted(glob.glob('output/sim_{region}_*.csv'))
-      all_values = []
-      for f in files:
-        with open(f) as fh:
-          reader = csv.DictReader(fh)
-          all_values.extend(float(row['value']) for row in reader)
-      arr = np.array(all_values)
-      summary = {
-        'region': '{region}',
-        'num_simulations': len(files),
-        'total_samples': len(arr),
-        'mean': float(arr.mean()),
-        'std': float(arr.std()),
-        'min': float(arr.min()),
-        'max': float(arr.max()),
-      }
-      with open('output/summary_{region}.json', 'w') as f:
-        json.dump(summary, f, indent=2)
-      print(json.dumps(summary, indent=2))
-      "
+    command: "python3 examples/scripts/fan_in_regional_summary.py {region}"
     resource_requirements: "minimal"
-    # Fan-in via regex: matches sim_north_000, sim_north_001, ... sim_north_005
     input_file_regexes: ["^sim_{region}_\\d+$"]
     output_files: ["summary_{region}"]
     parameters:
@@ -133,25 +91,7 @@ jobs:
 
   # Global fan-in: aggregates all 4 regional summaries via regex
   - name: "global_report"
-    command: |
-      #!/bin/bash
-      set -e
-      python3 -c "
-      import json, glob
-      summaries = []
-      for f in sorted(glob.glob('output/summary_*.json')):
-        with open(f) as fh:
-          summaries.append(json.load(fh))
-      report = {
-        'regions': {s['region']: s for s in summaries},
-        'global_mean': sum(s['mean'] for s in summaries) / len(summaries),
-        'total_simulations': sum(s['num_simulations'] for s in summaries),
-      }
-      with open('output/global_report.json', 'w') as f:
-        json.dump(report, f, indent=2)
-      print(json.dumps(report, indent=2))
-      "
+    command: "python3 examples/scripts/fan_in_global_report.py"
     resource_requirements: "minimal"
-    # Fan-in via regex: matches summary_north, summary_south, etc.
     input_file_regexes: ["^summary_\\w+$"]
     output_files: ["global_report"]
