@@ -1679,11 +1679,7 @@ fn prompt_scheduler_choice(
 
         // Prompt for start_one_worker_per_node if multi-node scheduler
         let start_one_worker_per_node = if scheduler.nodes > 1 {
-            let choice = prompt_choice(
-                "  Start one worker per node? (y/N): ",
-                &["y", "n"],
-                "n",
-            )?;
+            let choice = prompt_choice("  Start one worker per node? (y/N): ", &["y", "n"], "n")?;
             choice == "y"
         } else {
             false

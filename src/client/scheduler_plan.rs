@@ -158,8 +158,10 @@ pub struct PlannedScheduler {
     pub name: String,
     /// Slurm account
     pub account: String,
-    /// Partition (if explicit request required)
+    /// Partition (if explicit request required for sbatch --partition flag)
     pub partition: Option<String>,
+    /// Resolved partition name (always set, used for cluster state queries and display)
+    pub resolved_partition: String,
     /// Memory request
     pub mem: Option<String>,
     /// Walltime in HH:MM:SS format
@@ -506,6 +508,7 @@ fn process_scheduler_group<RR: ResourceRequirements>(
         } else {
             None
         },
+        resolved_partition: partition.name.clone(),
         mem: Some(mem_str),
         walltime: secs_to_walltime(walltime_secs),
         nodes: nodes_per_alloc,
@@ -906,6 +909,7 @@ fn generate_plan_grouped_by_partition<RR: ResourceRequirements>(
             } else {
                 None
             },
+            resolved_partition: partition.name.clone(),
             mem: Some(mem_str),
             walltime: secs_to_walltime(walltime_secs),
             nodes: nodes_per_alloc,
