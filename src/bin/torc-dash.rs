@@ -257,20 +257,18 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     if let Some(ref socket_path) = socket_path {
         info!(
-            "Starting torc-dash v{} ({}{}) on unix:{} torc_bin={} server_bin={}",
+            "Starting torc-dash v{} ({}) on unix:{} torc_bin={} server_bin={}",
             env!("CARGO_PKG_VERSION"),
             env!("GIT_HASH"),
-            env!("GIT_DIRTY"),
             socket_path.display(),
             torc_bin,
             torc_server_bin
         );
     } else {
         info!(
-            "Starting torc-dash v{} ({}{}) on {}:{} torc_bin={} server_bin={}",
+            "Starting torc-dash v{} ({}) on {}:{} torc_bin={} server_bin={}",
             env!("CARGO_PKG_VERSION"),
             env!("GIT_HASH"),
-            env!("GIT_DIRTY"),
             host,
             port,
             torc_bin,
@@ -279,10 +277,9 @@ async fn main() -> Result<()> {
     }
     #[cfg(not(unix))]
     info!(
-        "Starting torc-dash v{} ({}{}) on {}:{} torc_bin={} server_bin={}",
+        "Starting torc-dash v{} ({}) on {}:{} torc_bin={} server_bin={}",
         env!("CARGO_PKG_VERSION"),
         env!("GIT_HASH"),
-        env!("GIT_DIRTY"),
         host,
         port,
         torc_bin,

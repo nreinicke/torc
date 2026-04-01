@@ -245,8 +245,7 @@ impl Default for OpenApiAppState {
         Self {
             version: {
                 let git_hash = option_env!("GIT_HASH").unwrap_or("unknown");
-                let git_dirty = option_env!("GIT_DIRTY").unwrap_or("");
-                format!("{} ({}{})", env!("CARGO_PKG_VERSION"), git_hash, git_dirty)
+                format!("{} ({})", env!("CARGO_PKG_VERSION"), git_hash)
             },
             api_version: HTTP_API_VERSION.to_string(),
             git_hash: option_env!("GIT_HASH").unwrap_or("unknown").to_string(),

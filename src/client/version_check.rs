@@ -25,17 +25,14 @@ pub const CLIENT_API_VERSION: &str = crate::api_version::HTTP_API_VERSION;
 /// The git commit hash of this binary, set at compile time via build.rs.
 pub const GIT_HASH: &str = env!("GIT_HASH");
 
-/// Suffix indicating if the build was from a dirty working directory.
-pub const GIT_DIRTY: &str = env!("GIT_DIRTY");
-
 /// Returns the full version string including git hash (e.g., "0.8.0 (abc1234)")
 pub fn full_version() -> String {
-    format!("{} ({}{})", CLIENT_VERSION, GIT_HASH, GIT_DIRTY)
+    format!("{} ({})", CLIENT_VERSION, GIT_HASH)
 }
 
 /// Returns just the version with git hash suffix (e.g., "0.8.0-abc1234")
 pub fn version_with_hash() -> String {
-    format!("{}-{}{}", CLIENT_VERSION, GIT_HASH, GIT_DIRTY)
+    format!("{}-{}", CLIENT_VERSION, GIT_HASH)
 }
 
 /// Severity level for API version mismatches.

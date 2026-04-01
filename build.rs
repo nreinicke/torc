@@ -22,20 +22,18 @@ fn main() {
 
     println!("cargo:rustc-env=GIT_HASH={}", git_hash);
 
-    // Check if working directory is dirty
-    let is_dirty = Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .ok()
-        .map(|output| !output.stdout.is_empty())
-        .unwrap_or(false);
-
-    let dirty_suffix = if is_dirty { "-dirty" } else { "" };
-    println!("cargo:rustc-env=GIT_DIRTY={}", dirty_suffix);
-
-    // Rerun if git HEAD changes or if any tracked files change
+    // Rerun when the checked-out commit changes (new commit, branch switch).
+    // NOTE: Do NOT watch .git/index — it is modified by nearly every git
+    // operation (stage, stash, status) and causes constant rebuilds of all
+    // test targets that depend on the env vars emitted above.
     println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/index");
+    if let Ok(head) = fs::read_to_string(".git/HEAD") {
+        // HEAD usually contains "ref: refs/heads/<branch>"; watch that file
+        // so we rebuild when the branch tip moves (i.e., a new commit).
+        if let Some(refpath) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=.git/{}", refpath);
+        }
+    }
 
     // Ensure binaries embedding SQLx migrations rebuild whenever migrations change.
     emit_rerun_if_changed_for_dir(Path::new("torc-server/migrations"));
