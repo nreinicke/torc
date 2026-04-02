@@ -19,11 +19,10 @@ use sqlx::sqlite::SqlitePool;
 
 const TORC_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_HASH: &str = env!("GIT_HASH");
-const GIT_DIRTY: &str = env!("GIT_DIRTY");
 
 /// Returns the full version string including git hash (e.g., "0.8.0 (abc1234)")
 fn full_version() -> String {
-    format!("{} ({}{})", TORC_VERSION, GIT_HASH, GIT_DIRTY)
+    format!("{} ({})", TORC_VERSION, GIT_HASH)
 }
 
 macro_rules! forbidden_error {

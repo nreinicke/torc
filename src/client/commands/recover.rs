@@ -1425,11 +1425,15 @@ fn recover_workflow_interactive(
             scheduler_id,
             scheduler_name,
             num_allocations,
+            start_one_worker_per_node,
         } => {
             eprintln!(
                 "\n  Scheduler: {} (ID {}), {} allocation(s)",
                 scheduler_name, scheduler_id, num_allocations
             );
+            if *start_one_worker_per_node {
+                eprintln!("  Start one worker per node: yes");
+            }
         }
     }
 
@@ -1485,6 +1489,7 @@ fn recover_workflow_interactive(
         SchedulerChoice::Existing {
             scheduler_id,
             num_allocations,
+            start_one_worker_per_node,
             ..
         } => {
             info!(
@@ -1495,6 +1500,7 @@ fn recover_workflow_interactive(
                 args.workflow_id,
                 *scheduler_id,
                 *num_allocations,
+                *start_one_worker_per_node,
                 &args.output_dir,
             )?;
         }
@@ -1528,6 +1534,7 @@ enum SchedulerChoice {
         scheduler_id: i64,
         scheduler_name: String,
         num_allocations: i32,
+        start_one_worker_per_node: bool,
     },
 }
 
@@ -1670,10 +1677,29 @@ fn prompt_scheduler_choice(
             }
         };
 
+        // Prompt for start_one_worker_per_node if multi-node scheduler and direct mode.
+        // start_one_worker_per_node is only valid when execution_config.mode is "direct".
+        let start_one_worker_per_node = if scheduler.nodes > 1 {
+            let workflow = apis::workflows_api::get_workflow(config, args.workflow_id)
+                .map_err(|e| format!("Failed to fetch workflow to check execution mode: {}", e))?;
+            let exec_config =
+                crate::client::workflow_spec::ExecutionConfig::from_workflow_model(&workflow);
+            if exec_config.mode == crate::client::workflow_spec::ExecutionMode::Direct {
+                let choice =
+                    prompt_choice("  Start one worker per node? (y/N): ", &["y", "n"], "n")?;
+                choice == "y"
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         return Ok(SchedulerChoice::Existing {
             scheduler_id: final_id,
             scheduler_name: final_name,
             num_allocations,
+            start_one_worker_per_node,
         });
     }
 }
@@ -1683,21 +1709,26 @@ fn submit_existing_scheduler(
     workflow_id: i64,
     scheduler_id: i64,
     num_allocations: i32,
+    start_one_worker_per_node: bool,
     output_dir: &Path,
 ) -> Result<(), String> {
     let mut cmd = torc_command()?;
+    let mut args = vec![
+        "slurm".to_string(),
+        "schedule-nodes".to_string(),
+        workflow_id.to_string(),
+        "--scheduler-config-id".to_string(),
+        scheduler_id.to_string(),
+        "--num-hpc-jobs".to_string(),
+        num_allocations.to_string(),
+        "-o".to_string(),
+        output_dir.to_str().unwrap_or("torc_output").to_string(),
+    ];
+    if start_one_worker_per_node {
+        args.push("--start-one-worker-per-node".to_string());
+    }
     let output = cmd
-        .args([
-            "slurm",
-            "schedule-nodes",
-            &workflow_id.to_string(),
-            "--scheduler-config-id",
-            &scheduler_id.to_string(),
-            "--num-hpc-jobs",
-            &num_allocations.to_string(),
-            "-o",
-            output_dir.to_str().unwrap_or("torc_output"),
-        ])
+        .args(&args)
         .output()
         .map_err(|e| format!("Failed to run slurm schedule-nodes: {}", e))?;
 

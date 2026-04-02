@@ -31,12 +31,9 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The git commit hash of this binary, set at compile time via build.rs.
 const GIT_HASH: &str = env!("GIT_HASH");
 
-/// Suffix indicating if the build was from a dirty working directory.
-const GIT_DIRTY: &str = env!("GIT_DIRTY");
-
 /// Returns the full version string including git hash (e.g., "0.8.0 (abc1234)")
 fn full_version() -> String {
-    format!("{} ({}{})", SERVER_VERSION, GIT_HASH, GIT_DIRTY)
+    format!("{} ({})", SERVER_VERSION, GIT_HASH)
 }
 
 /// Trait defining RO-Crate entity-related API operations

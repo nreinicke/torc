@@ -3757,7 +3757,7 @@ pub fn analyze_plan_allocations(
         .iter()
         .map(|s| ResourceGroupInfo {
             name: s.resource_requirements.clone(),
-            partition: s.partition.clone(),
+            partition: Some(s.resolved_partition.clone()),
             job_count: s.job_count,
             walltime: s.walltime.clone(),
             ideal_nodes: s.num_allocations,
@@ -3773,7 +3773,7 @@ pub fn analyze_plan_allocations(
         let partitions: Vec<String> = plan
             .schedulers
             .iter()
-            .filter_map(|s| s.partition.clone())
+            .map(|s| s.resolved_partition.clone())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
