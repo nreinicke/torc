@@ -11,7 +11,7 @@ use crate::server::transport_types::auth_types::{AuthData, Authorization, Scopes
 use crate::server::transport_types::context_types::{EmptyContext, Push, XSpanIdString};
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::{Response, StatusCode};
 use axum::middleware::{self, Next};
@@ -21,6 +21,7 @@ use parking_lot::RwLockReadGuard;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 use url::form_urlencoded;
 use utoipa::IntoParams;
 
@@ -53,8 +54,28 @@ macro_rules! path_handler {
     };
 }
 
+/// Default maximum allowed request body size for bulk job creation (200 MiB).
+/// Override at runtime with TORC_MAX_REQUEST_BODY_MB (value in MiB).
+const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
+
+fn max_request_body_bytes() -> usize {
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("TORC_MAX_REQUEST_BODY_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .and_then(|mb| mb.checked_mul(1024 * 1024))
+            .unwrap_or(DEFAULT_MAX_REQUEST_BODY_BYTES)
+    })
+}
+
 pub fn app_router(state: LiveRouterState) -> Router {
     Router::new()
+        .merge(
+            Router::new()
+                .route("/torc-service/v1/bulk_jobs", post(create_jobs))
+                .layer(DefaultBodyLimit::max(max_request_body_bytes())),
+        )
         .route(
             "/torc-service/v1/access_groups",
             post(create_access_group).get(list_access_groups),
@@ -89,7 +110,6 @@ pub fn app_router(state: LiveRouterState) -> Router {
         )
         .route("/torc-service/v1/ping", get(ping))
         .route("/torc-service/v1/version", get(version))
-        .route("/torc-service/v1/bulk_jobs", post(create_jobs))
         .route(
             "/torc-service/v1/compute_nodes",
             get(list_compute_nodes)
@@ -4085,7 +4105,7 @@ fn anonymous_authorization() -> Authorization {
 #[cfg(test)]
 mod live_router_tests {
     use super::*;
-    use crate::models::{ComputeNodeModel, WorkflowModel};
+    use crate::models::{ComputeNodeModel, JobModel, JobsModel, WorkflowModel};
     use crate::server::api_contract::TransportApiCore;
     use crate::server::auth::{SharedCredentialCache, SharedHtpasswd};
     use crate::server::response_types::workflows::CreateWorkflowResponse;
@@ -4239,6 +4259,75 @@ mod live_router_tests {
         let workflow: WorkflowModel = read_json_body(response).await;
         assert_eq!(workflow.id, Some(workflow_id));
         assert_eq!(workflow.name, "transport-workflow");
+    }
+
+    #[tokio::test]
+    async fn bulk_jobs_route_accepts_body_larger_than_default_limit() {
+        let server = test_server_with_schema().await;
+        let workflow_id = create_workflow_record(&server).await;
+        let router = test_router(server);
+
+        let create_body = JobsModel::new(vec![JobModel::new(
+            workflow_id,
+            "large-job".to_string(),
+            "x".repeat(3 * 1024 * 1024),
+        )]);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/torc-service/v1/bulk_jobs")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&create_body).expect("serialize jobs"),
+                    ))
+                    .expect("valid request"),
+            )
+            .await
+            .expect("bulk jobs response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let created: serde_json::Value = read_json_body(response).await;
+        let jobs = created["jobs"].as_array().expect("jobs array");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["name"], "large-job");
+    }
+
+    #[tokio::test]
+    async fn non_bulk_json_route_still_uses_default_body_limit() {
+        let server = test_server_with_schema().await;
+        let workflow_id = create_workflow_record(&server).await;
+        let router = test_router(server);
+
+        let create_body = ComputeNodeModel::new(
+            workflow_id,
+            "n".repeat(3 * 1024 * 1024),
+            1234,
+            chrono::Utc::now().to_rfc3339(),
+            8,
+            16.0,
+            0,
+            1,
+            "local".to_string(),
+            None,
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/torc-service/v1/compute_nodes")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&create_body).expect("serialize compute node"),
+                    ))
+                    .expect("valid request"),
+            )
+            .await
+            .expect("compute nodes response");
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     fn test_router(server: Server<EmptyContext>) -> Router {
