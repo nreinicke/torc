@@ -16,7 +16,8 @@ This is useful when:
 - Priority affects both queue-depth claims and resource-based claims
 - A high-priority job still must fit the requesting runner's resources to be claimed
 
-If two ready jobs have the same priority, Torc uses a stable tie-breaker.
+If two ready jobs have the same priority, `claim_next_jobs` uses a stable tie-breaker. For
+resource-based claims, Torc prefers more constrained jobs first within the same priority.
 
 ## YAML Example
 

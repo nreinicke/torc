@@ -372,7 +372,8 @@ Use `priority` when some ready jobs should be claimed before others.
 
 - Higher values are preferred over lower values
 - The default is `0`
-- Jobs with the same priority are returned in a stable order
+- `claim_next_jobs` uses a stable tie-breaker for jobs with the same priority
+- `claim_jobs_based_on_resources` prefers more constrained jobs first within the same priority
 - Priority affects both `claim_next_jobs` and `claim_jobs_based_on_resources`
 
 Example:
