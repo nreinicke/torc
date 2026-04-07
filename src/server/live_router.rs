@@ -56,16 +56,16 @@ macro_rules! path_handler {
 
 /// Default maximum allowed request body size for bulk job creation (200 MiB).
 /// Override at runtime with TORC_MAX_REQUEST_BODY_MB (value in MiB).
-const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
+const DEFAULT_MAX_BULK_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
 
-fn max_request_body_bytes() -> usize {
+fn max_bulk_request_body_bytes() -> usize {
     static CACHED: OnceLock<usize> = OnceLock::new();
     *CACHED.get_or_init(|| {
         std::env::var("TORC_MAX_REQUEST_BODY_MB")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .and_then(|mb| mb.checked_mul(1024 * 1024))
-            .unwrap_or(DEFAULT_MAX_REQUEST_BODY_BYTES)
+            .unwrap_or(DEFAULT_MAX_BULK_REQUEST_BODY_BYTES)
     })
 }
 
@@ -73,8 +73,10 @@ pub fn app_router(state: LiveRouterState) -> Router {
     Router::new()
         .merge(
             Router::new()
+                // Axum defaults JSON request bodies to 2 MiB, so bulk job creation needs an
+                // explicit override to preserve large workflow submissions.
                 .route("/torc-service/v1/bulk_jobs", post(create_jobs))
-                .layer(DefaultBodyLimit::max(max_request_body_bytes())),
+                .layer(DefaultBodyLimit::max(max_bulk_request_body_bytes())),
         )
         .route(
             "/torc-service/v1/access_groups",
