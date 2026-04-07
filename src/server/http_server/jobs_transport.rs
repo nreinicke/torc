@@ -1049,9 +1049,6 @@ where
             ORDER BY \
                 job.priority DESC, \
                 rr.num_gpus DESC, \
-                rr.runtime_s DESC, \
-                rr.memory_bytes DESC, \
-                rr.num_cpus DESC, \
                 job.id ASC";
 
         let query_with_scheduler = format!(
