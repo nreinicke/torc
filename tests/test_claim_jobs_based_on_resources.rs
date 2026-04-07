@@ -150,6 +150,130 @@ fn test_claim_jobs_based_on_resources_skips_high_priority_job_that_does_not_fit(
 }
 
 #[rstest]
+fn test_claim_jobs_based_on_resources_prefers_gpu_jobs_with_equal_priority(
+    start_server: &ServerProcess,
+) {
+    let config = &start_server.config;
+    let workflow = models::WorkflowModel::new(
+        "equal_priority_gpu_preference_test".to_string(),
+        "test_user".to_string(),
+    );
+    let created_workflow =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = created_workflow.id.unwrap();
+
+    let cpu_rr = create_test_resource_requirements(
+        config,
+        workflow_id,
+        "cpu_rr_equal_priority",
+        1,
+        0,
+        1,
+        "1g",
+        "PT5M",
+    );
+    let gpu_rr = create_test_resource_requirements(
+        config,
+        workflow_id,
+        "gpu_rr_equal_priority",
+        1,
+        1,
+        1,
+        "1g",
+        "PT5M",
+    );
+
+    for i in 0..4 {
+        let mut job =
+            models::JobModel::new(workflow_id, format!("cpu_job_{i}"), format!("echo cpu {i}"));
+        job.resource_requirements_id = Some(cpu_rr.id.unwrap());
+        apis::jobs_api::create_job(config, job).expect("Failed to create CPU job");
+    }
+
+    for i in 0..2 {
+        let mut job =
+            models::JobModel::new(workflow_id, format!("gpu_job_{i}"), format!("echo gpu {i}"));
+        job.resource_requirements_id = Some(gpu_rr.id.unwrap());
+        apis::jobs_api::create_job(config, job).expect("Failed to create GPU job");
+    }
+
+    apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+        .expect("Failed to initialize jobs");
+
+    let resources = models::ComputeNodesResources::new(4, 8.0, 2, 1);
+    let result =
+        apis::workflows_api::claim_jobs_based_on_resources(config, workflow_id, 4, resources, None)
+            .expect("claim_jobs_based_on_resources should succeed");
+
+    let returned_jobs = result.jobs.expect("Server must return jobs array");
+    let returned_names: Vec<&str> = returned_jobs.iter().map(|job| job.name.as_str()).collect();
+    let gpu_job_count = returned_jobs
+        .iter()
+        .filter(|job| job.name.starts_with("gpu_job_"))
+        .count();
+
+    assert_eq!(returned_jobs.len(), 4);
+    assert_eq!(
+        gpu_job_count, 2,
+        "Equal-priority GPU jobs should not be starved by earlier CPU-only jobs: {:?}",
+        returned_names
+    );
+    assert!(
+        returned_jobs[0].name.starts_with("gpu_job_")
+            && returned_jobs[1].name.starts_with("gpu_job_"),
+        "GPU jobs should be considered before CPU-only jobs when priority is equal: {:?}",
+        returned_names
+    );
+}
+
+#[rstest]
+fn test_claim_jobs_based_on_resources_scans_past_limit_for_runnable_jobs(
+    start_server: &ServerProcess,
+) {
+    let config = &start_server.config;
+    let workflow =
+        models::WorkflowModel::new("scan_past_limit_test".to_string(), "test_user".to_string());
+    let created_workflow =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = created_workflow.id.unwrap();
+
+    let unfit_rr =
+        create_test_resource_requirements(config, workflow_id, "unfit_rr", 4, 0, 1, "8g", "PT10M");
+    let fit_rr =
+        create_test_resource_requirements(config, workflow_id, "fit_rr", 1, 0, 1, "1g", "PT10M");
+
+    for i in 0..3 {
+        let mut job = models::JobModel::new(
+            workflow_id,
+            format!("unfit_job_{i}"),
+            format!("echo unfit {i}"),
+        );
+        job.priority = Some(100);
+        job.resource_requirements_id = Some(unfit_rr.id.unwrap());
+        apis::jobs_api::create_job(config, job).expect("Failed to create unfit job");
+    }
+
+    let mut fit_job =
+        models::JobModel::new(workflow_id, "fit_job".to_string(), "echo fit".to_string());
+    fit_job.priority = Some(50);
+    fit_job.resource_requirements_id = Some(fit_rr.id.unwrap());
+    apis::jobs_api::create_job(config, fit_job).expect("Failed to create fit job");
+
+    apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+        .expect("Failed to initialize jobs");
+
+    let resources = models::ComputeNodesResources::new(1, 1.0, 0, 1);
+    let result =
+        apis::workflows_api::claim_jobs_based_on_resources(config, workflow_id, 2, resources, None)
+            .expect("claim_jobs_based_on_resources should succeed");
+
+    let returned_jobs = result.jobs.expect("Server must return jobs array");
+    assert_eq!(returned_jobs.len(), 1);
+    assert_eq!(returned_jobs[0].name, "fit_job");
+    assert_eq!(returned_jobs[0].priority, Some(50));
+}
+
+#[rstest]
 fn test_claim_jobs_based_on_resources_strict_scheduler_match_controls_fallback(
     start_server: &ServerProcess,
 ) {

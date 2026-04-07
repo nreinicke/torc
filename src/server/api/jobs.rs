@@ -2323,6 +2323,7 @@ where
                 priority
             FROM job
             WHERE workflow_id = $1 AND status = $2
+            ORDER BY priority DESC, id ASC
             LIMIT $3
             "#;
 
