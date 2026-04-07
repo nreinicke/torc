@@ -453,13 +453,26 @@ impl JobRunner {
         }
         let job_resources: HashMap<i64, ResourceRequirementsModel> = HashMap::new();
 
-        // If the environment already constrains visible GPUs (common inside Slurm allocations),
-        // use that list as the authoritative pool and sync the resource counts to match.
         let mut resources = resources;
-        let (available_gpu_devices, env_constrained) = Self::detect_gpu_devices(resources.num_gpus);
-        if env_constrained {
-            resources.num_gpus = available_gpu_devices.len() as i64;
-        }
+        let available_gpu_devices = if execution_config.effective_mode() == ExecutionMode::Slurm {
+            // In Slurm mode, `resources.num_gpus` already represents the
+            // allocation-wide accounting pool. Process-local visible device
+            // env vars may expose only this node's GPUs, so do not use them
+            // to shrink the total pool.
+            (0..resources.num_gpus.max(0))
+                .map(|i| i.to_string())
+                .collect::<VecDeque<_>>()
+        } else {
+            // In direct mode, if the environment already constrains visible
+            // GPUs, use that list as the authoritative device pool and keep
+            // the accounting counts aligned with it.
+            let (available_gpu_devices, env_constrained) =
+                Self::detect_gpu_devices(resources.num_gpus);
+            if env_constrained {
+                resources.num_gpus = available_gpu_devices.len() as i64;
+            }
+            available_gpu_devices
+        };
 
         let orig_resources = ComputeNodesResources {
             id: resources.id,
@@ -3413,6 +3426,71 @@ mod tests {
         let mut runner = make_runner(resources);
         assert_eq!(runner.allocate_gpu_devices(1, 0), None);
         assert_eq!(runner.allocate_gpu_devices(1, -1), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_slurm_mode_keeps_allocation_gpu_count_when_env_is_per_node() {
+        clear_gpu_env_vars();
+        // SAFETY: GPU tests are marked #[serial] so no concurrent env var access.
+        unsafe {
+            std::env::set_var("SLURM_JOB_ID", "12345");
+            std::env::set_var("CUDA_VISIBLE_DEVICES", "0,1,2,3");
+        }
+
+        let resources = ComputeNodesResources::new(64, 256.0, 8, 2);
+        let mut workflow = WorkflowModel::new("test".to_string(), "user".to_string());
+        workflow.id = Some(1);
+        workflow.execution_config = Some(
+            serde_json::to_string(&ExecutionConfig {
+                mode: ExecutionMode::Slurm,
+                ..Default::default()
+            })
+            .expect("execution config should serialize"),
+        );
+
+        let mut runner = JobRunner::new(
+            Configuration::default(),
+            workflow,
+            1,
+            1,
+            PathBuf::from("/tmp"),
+            1.0,
+            None,
+            None,
+            None,
+            resources,
+            None,
+            None,
+            None,
+            false,
+            "test".to_string(),
+            None,
+        );
+
+        assert_eq!(runner.resources.num_gpus, 8);
+        assert_eq!(runner.orig_resources.num_gpus, 8);
+        assert_eq!(runner.available_gpu_devices.len(), 8);
+
+        let rr = ResourceRequirementsModel {
+            id: Some(1),
+            workflow_id: 1,
+            name: "multi_gpu".to_string(),
+            num_cpus: 16,
+            num_gpus: 2,
+            num_nodes: 2,
+            memory: "64g".to_string(),
+            runtime: "PT1H".to_string(),
+        };
+        runner.decrement_resources(&rr);
+        assert_eq!(runner.resources.num_gpus, 4);
+        assert_eq!(runner.resources.num_nodes, 0);
+
+        // SAFETY: GPU tests are marked #[serial] so no concurrent env var access.
+        unsafe {
+            std::env::remove_var("SLURM_JOB_ID");
+        }
+        clear_gpu_env_vars();
     }
 
     #[test]
