@@ -1654,7 +1654,9 @@ where
     ///    - num_gpus <= resources.num_gpus
     ///    - num_nodes <= resources.num_nodes (only multi-node jobs consume dedicated nodes)
     ///    - runtime_s < resources.time_limit (converted to seconds using duration_string_to_seconds)
-    /// 3. Sorts results by job priority descending
+    /// 3. Sorts results by job priority descending, then favors GPU jobs within
+    ///    the same priority to avoid starving GPU-capable work behind CPU-only
+    ///    jobs
     /// 4. Loops through returned records and accumulates resource consumption
     /// 5. Selects jobs that can fit within total available resources
     /// 6. Atomically updates selected jobs to "pending" status

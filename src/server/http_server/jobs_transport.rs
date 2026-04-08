@@ -1045,7 +1045,11 @@ where
         let memory_bytes = (resources.memory_gb * 1024.0 * 1024.0 * 1024.0) as i64;
 
         let ready_status = models::JobStatus::Ready.to_int();
-        let order_by_clause = "ORDER BY job.priority DESC, job.id ASC";
+        let order_by_clause = "\
+            ORDER BY \
+                job.priority DESC, \
+                rr.num_gpus DESC, \
+                job.id ASC";
 
         let query_with_scheduler = format!(
             r#"
@@ -1078,7 +1082,6 @@ where
             AND rr.runtime_s <= $7
             AND (job.scheduler_id IS NULL OR job.scheduler_id = $8)
             {}
-            LIMIT $9
             "#,
             order_by_clause
         );
@@ -1092,7 +1095,6 @@ where
             .bind(resources.num_nodes)
             .bind(time_limit_seconds)
             .bind(resources.scheduler_config_id)
-            .bind(limit)
             .fetch_all(&mut *conn)
             .await
         {
@@ -1135,7 +1137,6 @@ where
                 AND rr.num_nodes <= $6
                 AND rr.runtime_s <= $7
                 {}
-                LIMIT $8
                 "#,
                 order_by_clause
             );
@@ -1148,7 +1149,6 @@ where
                 .bind(resources.num_gpus)
                 .bind(resources.num_nodes)
                 .bind(time_limit_seconds)
-                .bind(limit)
                 .fetch_all(&mut *conn)
                 .await
             {
@@ -1198,6 +1198,10 @@ where
         );
 
         for row in rows {
+            if selected_jobs.len() >= limit as usize {
+                break;
+            }
+
             let job_memory: i64 = row.get("memory_bytes");
             let job_cpus: i64 = row.get("num_cpus");
             let job_gpus: i64 = row.get("num_gpus");
