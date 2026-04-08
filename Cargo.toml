@@ -56,7 +56,7 @@ zxcvbn = "3.1"
 
 # TUI-specific
 ratatui = "0.30"
-crossterm = "0.28"
+crossterm = "0.29"
 petgraph = "0.8"
 
 # Plot-resources-specific
