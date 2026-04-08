@@ -4664,7 +4664,7 @@ fn handle_regenerate(
     };
 
     // Build WorkflowGraph from pending jobs for proper dependency-aware grouping
-    // This aligns with create-slurm's behavior of separating jobs by (rr, has_dependencies)
+    // This aligns with slurm generate's behavior of separating jobs by (rr, has_dependencies)
     let graph = match WorkflowGraph::from_jobs(&pending_jobs, &resource_requirements) {
         Ok(g) => g,
         Err(e) => {

@@ -448,7 +448,7 @@ AFTER SAVING A SPEC FILE - tell users:
    - LOCAL workflows: "torc run <file>"
    - SLURM workflows (spec saved with workflow_type="slurm"):
      - "torc submit <file>" (uses schedulers already generated in the spec)
-     - Or create and submit separately: "torc workflows create-slurm --account <acct> <file>" then "torc workflows submit <id>"
+     - Or create and submit separately: "torc create <file>" then "torc submit <id>"
 IMPORTANT: Do NOT fabricate CLI commands or options. Only use the exact commands shown above.
 
 WORKFLOW_TYPE: "local" or "slurm" (slurm requires account)

@@ -33,7 +33,7 @@ DATABASE_URL=sqlite:db/sqlite/dev.db cargo run --bin torc-server -- run
 export TORC_API_URL="http://localhost:8080/torc-service/v1"
 
 # Create and run the workflow
-torc workflows create tests/workflows/database_contention_test/workflow.yaml
+torc create tests/workflows/database_contention_test/workflow.yaml
 torc run <workflow_id>
 
 # Monitor with TUI

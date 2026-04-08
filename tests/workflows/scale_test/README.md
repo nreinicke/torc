@@ -53,7 +53,7 @@ contention (the point of the test) and better simulates a real multi-node deploy
 #### Step 1: Create the Workflow
 
 ```bash
-torc workflows create tests/workflows/scale_test/workflow.yaml
+torc create tests/workflows/scale_test/workflow.yaml
 ```
 
 Note the workflow ID from the output.
