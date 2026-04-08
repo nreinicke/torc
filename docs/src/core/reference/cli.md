@@ -351,33 +351,25 @@ Workflow management commands
 
 ###### **Subcommands:**
 
-- `create` — Create a workflow from a specification file (supports JSON, JSON5, YAML, and KDL
-  formats)
-- `create-slurm` — Create a workflow with auto-generated Slurm schedulers
 - `new` — Create a new empty workflow
+- `init` — Initialize workflow dependencies
+- `reinit` — Reinitialize jobs with changed inputs
+- `reset-status` — Reset workflow and job statuses
+- `is-complete` — Check if workflow is complete
+- `sync-status` — Detect orphaned jobs from ended Slurm allocations
 - `list` — List workflows
 - `get` — Get a specific workflow by ID
-- `update` — Update an existing workflow
-- `cancel` — Cancel a workflow and all associated Slurm jobs
-- `delete` — Delete one or more workflows
-- `archive` — Archive or unarchive one or more workflows
-- `submit` — Submit a workflow: initialize if needed and schedule nodes for on_workflow_start
-  actions. This command requires the workflow to have an on_workflow_start action with
-  schedule_nodes
-- `run` — Run a workflow locally on the current node
-- `initialize` — Initialize a workflow, including all job statuses
-- `reinitialize` — Reinitialize a workflow. This will reinitialize all jobs with a status of
-  canceled, submitting, pending, or terminated. Jobs with a status of done will also be
-  reinitialized if an input_file or user_data record has changed
-- `status` — Get workflow status
-- `reset-status` — Reset workflow and job status
 - `execution-plan` — Show the execution plan for a workflow specification or existing workflow
-- `list-actions` — List workflow actions and their statuses (useful for debugging action triggers)
-- `is-complete` — Check if a workflow is complete
-- `export` — Export a workflow to a portable JSON file
-- `import` — Import a workflow from an exported JSON file
-- `sync-status` — Synchronize job statuses with Slurm (detect and fail orphaned jobs)
+- `list-actions` — List workflow actions and their statuses
+- `update` — Update workflow properties
+- `archive` — Archive or unarchive workflows
 - `correct-resources` — Correct resource requirements based on actual job usage
+- `check-resources` — Check for resource utilization violations
+- `export` — Export a workflow to JSON
+- `import` — Import a workflow from JSON
+
+Note: Lifecycle commands (`create`, `run`, `submit`, `status`, `cancel`, `delete`) are at the top
+level. Run `torc --help` to see all commands.
 
 ## `torc create`
 
@@ -399,33 +391,6 @@ Create a workflow from a specification file (supports JSON, JSON5, YAML, and KDL
   Default: `false`
 - `--dry-run` — Validate the workflow specification without creating it (dry-run mode). Returns a
   summary of what would be created including job count after parameter expansion.
-
-## `torc create-slurm`
-
-Create a workflow with auto-generated Slurm schedulers
-
-Automatically generates Slurm schedulers based on job resource requirements and HPC profile. For
-Slurm workflows without pre-configured schedulers.
-
-**Usage:** `torc create-slurm [OPTIONS] --account <ACCOUNT> --user <USER> <FILE>`
-
-###### **Arguments:**
-
-- `<FILE>` — Path to specification file containing WorkflowSpec
-
-###### **Options:**
-
-- `--account <ACCOUNT>` — Slurm account to use for allocations
-- `--hpc-profile <HPC_PROFILE>` — HPC profile to use (auto-detected if not specified)
-- `--single-allocation` — Bundle all nodes into a single Slurm allocation per scheduler. By default,
-  creates one Slurm allocation per node (N×1 mode). With this flag, creates one large allocation
-  with all nodes (1×N mode).
-- `-u`, `--user <USER>` — User that owns the workflow (defaults to USER environment variable)
-- `--no-resource-monitoring` — Disable resource monitoring (default: enabled with summary
-  granularity and 5s sample rate). Default: `false`
-- `--skip-checks` — Skip validation checks (e.g., scheduler node requirements). Use with caution.
-  Default: `false`
-- `--dry-run` — Validate the workflow specification without creating it (dry-run mode)
 
 ## `torc workflows new`
 

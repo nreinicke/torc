@@ -78,6 +78,31 @@ pub fn shell_command() -> Command {
 ///
 /// # Returns
 /// The result of the API call, or the original error if retries are exhausted
+/// Check whether an error string indicates a transient failure that should be retried.
+///
+/// Retryable errors include:
+/// - Network-level failures (connection refused, DNS, timeout, unreachable)
+/// - HTTP 500/502/503 responses (server crash, gateway error, overloaded)
+/// - Database contention ("database is locked", "busy")
+fn is_retryable_error(error_str: &str) -> bool {
+    let s = error_str.to_lowercase();
+
+    // Network errors
+    s.contains("connection")
+        || s.contains("timeout")
+        || s.contains("network")
+        || s.contains("dns")
+        || s.contains("resolve")
+        || s.contains("unreachable")
+        // HTTP server errors (formatted as "status code 500" by the generated client)
+        || s.contains("status code 500")
+        || s.contains("status code 502")
+        || s.contains("status code 503")
+        // Database contention
+        || s.contains("database is locked")
+        || s.contains("database is busy")
+}
+
 pub fn send_with_retries<T, E, F>(
     config: &Configuration,
     mut api_call: F,
@@ -90,22 +115,13 @@ where
     match api_call() {
         Ok(result) => Ok(result),
         Err(e) => {
-            // Check if this is a network-related error
-            let error_str = e.to_string().to_lowercase();
-            let is_network_error = error_str.contains("connection")
-                || error_str.contains("timeout")
-                || error_str.contains("network")
-                || error_str.contains("dns")
-                || error_str.contains("resolve")
-                || error_str.contains("unreachable");
-
-            if !is_network_error {
-                // Not a network error, return immediately
+            let error_str = e.to_string();
+            if !is_retryable_error(&error_str) {
                 return Err(e);
             }
 
             warn!(
-                "Network error detected: {}. Entering retry loop for up to {} minutes.",
+                "Transient error detected: {}. Entering retry loop for up to {} minutes.",
                 e, wait_for_healthy_database_minutes
             );
 
@@ -123,12 +139,25 @@ where
 
                 thread::sleep(Duration::from_secs(PING_INTERVAL_SECONDS));
 
-                // Try to ping the server
+                // Try to ping the server first to confirm it's reachable
                 match apis::system_api::ping(config) {
                     Ok(_) => {
-                        info!("Server is back online. Retrying original API call.");
-                        // Server is back, retry the original call
-                        return api_call();
+                        info!("Server is responding. Retrying original API call.");
+                        match api_call() {
+                            Ok(result) => return Ok(result),
+                            Err(retry_err) => {
+                                let retry_str = retry_err.to_string();
+                                if is_retryable_error(&retry_str) {
+                                    warn!(
+                                        "Retry attempt failed with transient error: {}. \
+                                         Will keep retrying.",
+                                        retry_err
+                                    );
+                                    continue;
+                                }
+                                return Err(retry_err);
+                            }
+                        }
                     }
                     Err(ping_error) => {
                         debug!(
@@ -411,6 +440,41 @@ mod tests {
         let line = "[invalid timestamp] message";
         let ts = parse_dmesg_timestamp(line);
         assert!(ts.is_none());
+    }
+
+    #[test]
+    fn test_is_retryable_error() {
+        // Network errors
+        assert!(is_retryable_error("connection refused"));
+        assert!(is_retryable_error("Connection reset by peer"));
+        assert!(is_retryable_error("DNS lookup failed"));
+        assert!(is_retryable_error("request timeout"));
+        assert!(is_retryable_error("network is unreachable"));
+
+        // HTTP 5xx from generated client
+        assert!(is_retryable_error(
+            "error in response: status code 500: internal error"
+        ));
+        assert!(is_retryable_error("error in response: status code 502"));
+        assert!(is_retryable_error(
+            "error in response: status code 503: service unavailable"
+        ));
+
+        // Database contention
+        assert!(is_retryable_error("database is locked"));
+        assert!(is_retryable_error("database is busy"));
+
+        // Non-retryable errors
+        assert!(!is_retryable_error(
+            "error in response: status code 404: not found"
+        ));
+        assert!(!is_retryable_error(
+            "error in response: status code 422: validation error"
+        ));
+        assert!(!is_retryable_error("serde: missing field `id`"));
+        assert!(!is_retryable_error(
+            "error in response: status code 403: forbidden"
+        ));
     }
 
     #[test]

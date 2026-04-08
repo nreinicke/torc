@@ -569,17 +569,38 @@ pub fn create_workflow(
             )]))
         }
         ("create_workflow", "slurm") => {
-            // Create slurm workflow using CLI: torc workflows create-slurm
-            let mut cmd = Command::new("torc");
-            cmd.args(["-f", "json", "workflows", "create-slurm"]);
-            cmd.args(["--account", account.unwrap()]);
-            cmd.args(["--user", user]);
+            // Create slurm workflow: first generate schedulers, then create
+            // Step 1: Run torc slurm generate to create spec with schedulers
+            let slurm_spec_path = format!("{}_slurm", temp_path.display());
+            let mut gen_cmd = Command::new("torc");
+            gen_cmd.args(["slurm", "generate"]);
+            gen_cmd.args(["--account", account.unwrap()]);
+            gen_cmd.args(["-o", &slurm_spec_path]);
 
             if let Some(profile) = hpc_profile {
-                cmd.args(["--hpc-profile", profile]);
+                gen_cmd.args(["--profile", profile]);
             }
 
-            cmd.arg(temp_path);
+            gen_cmd.arg(temp_path);
+
+            let gen_output = gen_cmd
+                .output()
+                .map_err(|e| internal_error(format!("Failed to run slurm generate: {}", e)))?;
+
+            if !gen_output.status.success() {
+                let stderr = String::from_utf8_lossy(&gen_output.stderr);
+                return Err(internal_error(format!(
+                    "Failed to generate slurm schedulers: {}",
+                    stderr.trim()
+                )));
+            }
+
+            // Step 2: Create the workflow from the generated spec
+            let mut cmd = Command::new("torc");
+            cmd.args(["-f", "json", "create"]);
+            cmd.args(["--user", user]);
+
+            cmd.arg(&slurm_spec_path);
 
             let output = cmd
                 .output()

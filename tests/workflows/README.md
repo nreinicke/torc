@@ -111,7 +111,7 @@ resolution, job claiming, and completion processing under heavy concurrent acces
 torc run tests/workflows/scale_test/workflow.yaml --num-parallel-processes 16
 
 # Or with multiple independent runners for maximum contention
-torc workflows create tests/workflows/scale_test/workflow.yaml
+torc create tests/workflows/scale_test/workflow.yaml
 for i in $(seq 1 16); do
   torc run <workflow_id> &
 done

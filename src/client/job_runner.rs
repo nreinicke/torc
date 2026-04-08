@@ -722,15 +722,23 @@ impl JobRunner {
                         "Failed to check workflow completion after retries: {}",
                         retry_err
                     );
+                    self.kill_running_jobs();
                     return Err(
                         format!("Unable to check workflow completion: {}", retry_err).into(),
                     );
                 }
             }
 
-            self.check_job_status();
-            if self.execution_config.limit_resources() && exec_mode == ExecutionMode::Direct {
-                self.handle_oom_violations();
+            if let Err(e) = self.check_job_status() {
+                self.kill_running_jobs();
+                return Err(e);
+            }
+            if self.execution_config.limit_resources()
+                && exec_mode == ExecutionMode::Direct
+                && let Err(e) = self.handle_oom_violations()
+            {
+                self.kill_running_jobs();
+                return Err(e);
             }
             self.check_and_execute_actions();
 
@@ -853,6 +861,31 @@ impl JobRunner {
         })
     }
 
+    /// Kill all running child processes without making any API calls.
+    ///
+    /// Used when the server is unreachable and we need to exit immediately.
+    /// Jobs are left in their current server-side status (likely "running");
+    /// the server will detect them as stale when the compute node is no longer
+    /// reporting in.
+    fn kill_running_jobs(&mut self) {
+        if self.running_jobs.is_empty() {
+            return;
+        }
+        error!(
+            "Killing {} running job(s) due to unrecoverable API failure workflow_id={}",
+            self.running_jobs.len(),
+            self.workflow_id
+        );
+        for (job_id, async_job) in self.running_jobs.iter_mut() {
+            if let Err(e) = async_job.send_sigkill() {
+                warn!(
+                    "Failed to SIGKILL job workflow_id={} job_id={}: {}",
+                    self.workflow_id, job_id, e
+                );
+            }
+        }
+    }
+
     /// Deactivate the compute node and set its duration.
     fn deactivate_compute_node(&self) {
         let duration_seconds = self.start_instant.elapsed().as_secs_f64();
@@ -920,7 +953,12 @@ impl JobRunner {
             };
         }
         for (job_id, result) in results {
-            self.handle_job_completion(job_id, result);
+            if let Err(e) = self.handle_job_completion(job_id, result) {
+                error!(
+                    "Failed to record canceled job completion workflow_id={} job_id={}: {}",
+                    self.workflow_id, job_id, e
+                );
+            }
         }
     }
 
@@ -1100,12 +1138,17 @@ impl JobRunner {
 
         // Final pass: handle completions (notify server)
         for (job_id, result) in results {
-            self.handle_job_completion(job_id, result);
+            if let Err(e) = self.handle_job_completion(job_id, result) {
+                error!(
+                    "Failed to record terminated job completion workflow_id={} job_id={}: {}",
+                    self.workflow_id, job_id, e
+                );
+            }
         }
     }
 
     /// Check the status of running jobs and remove completed ones.
-    fn check_job_status(&mut self) {
+    fn check_job_status(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut completed_jobs = Vec::new();
         let mut job_results = Vec::new();
 
@@ -1147,8 +1190,9 @@ impl JobRunner {
                 result.status = JobStatus::Failed;
             }
 
-            self.handle_job_completion(job_id, result);
+            self.handle_job_completion(job_id, result)?;
         }
+        Ok(())
     }
 
     /// Handle OOM violations detected by the resource monitor.
@@ -1161,14 +1205,14 @@ impl JobRunner {
     /// 2. Immediately SIGKILLs the violating job (no grace period for OOM)
     /// 3. Waits for the job to exit and collects its result
     /// 4. Reports the job as failed with the configured `oom_exit_code`
-    fn handle_oom_violations(&mut self) {
+    fn handle_oom_violations(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let violations = match &self.resource_monitor {
             Some(monitor) => monitor.recv_oom_violations(),
-            None => return,
+            None => return Ok(()),
         };
 
         if violations.is_empty() {
-            return;
+            return Ok(());
         }
 
         let oom_exit_code = self.execution_config.oom_exit_code();
@@ -1243,8 +1287,9 @@ impl JobRunner {
 
         // Third pass: handle completions (notify server)
         for (job_id, result) in results {
-            self.handle_job_completion(job_id, result);
+            self.handle_job_completion(job_id, result)?;
         }
+        Ok(())
     }
 
     /// Validate that all expected output files exist and update their st_mtime
@@ -1447,7 +1492,11 @@ impl JobRunner {
         }
     }
 
-    fn handle_job_completion(&mut self, job_id: i64, result: ResultModel) {
+    fn handle_job_completion(
+        &mut self,
+        job_id: i64,
+        result: ResultModel,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Take sacct stats now, before the result is sent to the server, so we can backfill
         // resource fields.  For srun-wrapped jobs the sysinfo monitor only sees the srun process
         // (negligible overhead), so sacct provides the authoritative peak memory and CPU data.
@@ -1500,7 +1549,7 @@ impl JobRunner {
                     self.last_job_claimed_time = Some(Instant::now());
                     self.running_jobs.remove(&job_id);
                     self.job_resources.remove(&job_id);
-                    return;
+                    return Ok(());
                 }
                 RecoveryOutcome::NoHandler | RecoveryOutcome::NoMatchingRule => {
                     // Check if workflow has use_pending_failed enabled
@@ -1593,14 +1642,22 @@ impl JobRunner {
             }
             Err(e) => {
                 error!(
-                    "Job complete failed workflow_id={} job_id={} error={}",
+                    "Job complete failed after retries workflow_id={} job_id={} error={}",
                     self.workflow_id, job_id, e
+                );
+                // Clean up local state before propagating the error
+                self.running_jobs.remove(&job_id);
+                self.job_resources.remove(&job_id);
+                self.release_gpu_devices(job_id);
+                return Err(
+                    format!("Unable to record job completion for job {}: {}", job_id, e).into(),
                 );
             }
         }
         self.running_jobs.remove(&job_id);
         self.job_resources.remove(&job_id);
         self.release_gpu_devices(job_id);
+        Ok(())
     }
 
     /// Delete stdio files for a completed job.
@@ -2026,10 +2083,12 @@ impl JobRunner {
                         Ok(rr) => rr,
                         Err(e) => {
                             error!(
-                                "Error getting resource requirements for job {}: {}",
-                                job_id, e
+                                "Failed to get resource requirements after retries \
+                                 workflow_id={} job_id={} rr_id={}: {}",
+                                self.workflow_id, job_id, rr_id, e
                             );
-                            panic!("Failed to get resource requirements");
+                            self.revert_job_to_ready(job_id);
+                            continue;
                         }
                     };
 
@@ -2045,10 +2104,13 @@ impl JobRunner {
                             debug!("Successfully marked job {} as started in database", job_id);
                         }
                         Err(e) => {
-                            panic!(
-                                "Failed to mark job {} as started in database after retries: {}",
-                                job_id, e
+                            error!(
+                                "Failed to mark job as started after retries \
+                                 workflow_id={} job_id={}: {}",
+                                self.workflow_id, job_id, e
                             );
+                            self.revert_job_to_ready(job_id);
+                            continue;
                         }
                     }
 
@@ -2172,10 +2234,12 @@ impl JobRunner {
                         Ok(rr) => rr,
                         Err(e) => {
                             error!(
-                                "Error getting resource requirements for job {}: {}",
-                                job_id, e
+                                "Failed to get resource requirements after retries \
+                                 workflow_id={} job_id={} rr_id={}: {}",
+                                self.workflow_id, job_id, rr_id, e
                             );
-                            panic!("Failed to get resource requirements");
+                            self.revert_job_to_ready(job_id);
+                            continue;
                         }
                     };
 
@@ -2193,10 +2257,11 @@ impl JobRunner {
                         }
                         Err(e) => {
                             error!(
-                                "Failed to mark job {} as started in database after retries: {}",
-                                job_id, e
+                                "Failed to mark job as started after retries \
+                                 workflow_id={} job_id={}: {}",
+                                self.workflow_id, job_id, e
                             );
-                            // Skip this job if we can't mark it as started
+                            self.revert_job_to_ready(job_id);
                             continue;
                         }
                     }
@@ -2251,10 +2316,9 @@ impl JobRunner {
             }
             Err(err) => {
                 error!(
-                    "Job preparation failed workflow_id={} error={}",
+                    "Failed to claim jobs after retries workflow_id={}: {}",
                     self.workflow_id, err
                 );
-                panic!("Failed to prepare jobs for submission after retries");
             }
         }
     }
