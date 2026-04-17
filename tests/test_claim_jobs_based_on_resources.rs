@@ -489,6 +489,102 @@ fn test_claim_jobs_based_on_resources_backfill_short_circuits_when_saturated(
 }
 
 #[rstest]
+fn test_claim_jobs_based_on_resources_backfill_enforces_per_node_limits(
+    start_server: &ServerProcess,
+) {
+    let config = &start_server.config;
+    let workflow = models::WorkflowModel::new(
+        "backfill_per_node_limit_test".to_string(),
+        "test_user".to_string(),
+    );
+    let created_workflow =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = created_workflow.id.unwrap();
+
+    let gpu_rr = create_test_resource_requirements(
+        config,
+        workflow_id,
+        "per_node_gpu_rr",
+        1,
+        1,
+        1,
+        "1g",
+        "PT10M",
+    );
+    let too_large_rr = create_test_resource_requirements(
+        config,
+        workflow_id,
+        "too_large_for_one_node_rr",
+        5,
+        0,
+        1,
+        "1g",
+        "PT10M",
+    );
+    let small_rr = create_test_resource_requirements(
+        config,
+        workflow_id,
+        "per_node_small_rr",
+        1,
+        0,
+        1,
+        "1g",
+        "PT10M",
+    );
+
+    for i in 0..4 {
+        let mut job = models::JobModel::new(
+            workflow_id,
+            format!("per_node_gpu_job_{i}"),
+            format!("echo gpu {i}"),
+        );
+        job.priority = Some(100);
+        job.resource_requirements_id = Some(gpu_rr.id.unwrap());
+        apis::jobs_api::create_job(config, job).expect("Failed to create GPU job");
+    }
+
+    let mut too_large_job = models::JobModel::new(
+        workflow_id,
+        "too_large_for_one_node".to_string(),
+        "echo too-large".to_string(),
+    );
+    too_large_job.priority = Some(90);
+    too_large_job.resource_requirements_id = Some(too_large_rr.id.unwrap());
+    apis::jobs_api::create_job(config, too_large_job).expect("Failed to create oversized job");
+
+    let mut small_job = models::JobModel::new(
+        workflow_id,
+        "fits_one_node".to_string(),
+        "echo small".to_string(),
+    );
+    small_job.priority = Some(10);
+    small_job.resource_requirements_id = Some(small_rr.id.unwrap());
+    apis::jobs_api::create_job(config, small_job).expect("Failed to create small job");
+
+    apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+        .expect("Failed to initialize jobs");
+
+    let resources = models::ComputeNodesResources::new(4, 4.0, 1, 2);
+    let result =
+        apis::workflows_api::claim_jobs_based_on_resources(config, workflow_id, 4, resources, None)
+            .expect("claim_jobs_based_on_resources should succeed");
+
+    let returned_jobs = result.jobs.expect("Server must return jobs array");
+    let returned_names: Vec<&str> = returned_jobs.iter().map(|job| job.name.as_str()).collect();
+
+    assert!(
+        !returned_names.contains(&"too_large_for_one_node"),
+        "Backfill must not claim a job that only fits aggregate capacity, not one node: {:?}",
+        returned_names
+    );
+    assert!(
+        returned_names.contains(&"fits_one_node"),
+        "Backfill should still claim lower-priority work that fits one node: {:?}",
+        returned_names
+    );
+}
+
+#[rstest]
 fn test_claim_jobs_based_on_resources_strict_scheduler_match_controls_fallback(
     start_server: &ServerProcess,
 ) {
