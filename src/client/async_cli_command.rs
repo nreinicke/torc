@@ -141,6 +141,20 @@ fn build_srun_command(params: &SrunParams) -> Result<Command, String> {
     Ok(srun)
 }
 
+fn build_command_string(invocation_script: Option<&str>, command: &str) -> String {
+    match invocation_script {
+        Some(script) => {
+            let script = script.trim();
+            if script.is_empty() {
+                command.to_string()
+            } else {
+                format!("{}\n{}", script, command)
+            }
+        }
+        None => command.to_string(),
+    }
+}
+
 #[allow(dead_code)]
 pub struct AsyncCliCommand {
     pub job: JobModel,
@@ -284,11 +298,8 @@ impl AsyncCliCommand {
         self.stdout_path = stdout_path_opt;
         self.stderr_path = stderr_path_opt;
 
-        let command_str = if let Some(ref invocation_script) = self.job.invocation_script {
-            format!("{} {}", invocation_script, self.job.command)
-        } else {
-            self.job.command.clone()
-        };
+        let command_str =
+            build_command_string(self.job.invocation_script.as_deref(), &self.job.command);
 
         let slurm_job_id = if execution_mode == ExecutionMode::Slurm {
             // JobRunner::new() guarantees SLURM_JOB_ID is set when mode is Slurm.
@@ -1192,5 +1203,17 @@ mod tests {
         let line = "step1|1024K|2048K";
         let stats = parse_sacct_line(line, "step1");
         assert!(stats.is_none());
+    }
+
+    #[test]
+    fn test_build_command_string_joins_prelude_with_newline() {
+        let command = build_command_string(Some("export FOO='bar'"), "python run.py");
+        assert_eq!(command, "export FOO='bar'\npython run.py");
+    }
+
+    #[test]
+    fn test_build_command_string_ignores_empty_prelude() {
+        let command = build_command_string(Some("   "), "python run.py");
+        assert_eq!(command, "python run.py");
     }
 }

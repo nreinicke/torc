@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 static SRUN_MPI_MODE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+_.-]+$").expect("hardcoded regex must compile"));
+static ENV_VAR_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").expect("hardcoded regex must compile")
+});
 
 pub(crate) fn validate_srun_mpi_value(value: &str) -> Result<(), String> {
     let trimmed = value.trim();
@@ -31,6 +34,54 @@ pub(crate) fn validate_srun_mpi_value(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_env_var_name(name: &str) -> Result<(), String> {
+    if ENV_VAR_NAME_REGEX.is_match(name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid environment variable name '{}'; expected [A-Za-z_][A-Za-z0-9_]*",
+            name
+        ))
+    }
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn render_export_block(env: &HashMap<String, String>) -> Result<String, String> {
+    let mut keys: Vec<&String> = env.keys().collect();
+    keys.sort();
+
+    let mut lines = Vec::with_capacity(keys.len());
+    for key in keys {
+        validate_env_var_name(key)?;
+        let value = env
+            .get(key)
+            .expect("key collected from HashMap::keys must exist");
+        lines.push(format!("export {}={}", key, shell_single_quote(value)));
+    }
+
+    Ok(lines.join("\n"))
+}
+
+fn join_shell_blocks(parts: &[&str]) -> String {
+    let mut combined = String::new();
+
+    for part in parts {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(trimmed);
+    }
+
+    combined
+}
 /// Result of validating a workflow specification (dry-run)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidationResult {
@@ -421,6 +472,9 @@ pub struct JobSpec {
     /// Optional script for job invocation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invocation_script: Option<String>,
+    /// Environment variables to export for this job
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
     /// Whether to cancel this job if a blocking job fails
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancel_on_blocking_job_failure: Option<bool>,
@@ -496,6 +550,7 @@ impl JobSpec {
             name,
             command,
             invocation_script: None,
+            env: None,
             cancel_on_blocking_job_failure: Some(false),
             supports_termination: Some(false),
             resource_requirements: None,
@@ -554,6 +609,14 @@ impl JobSpec {
 
             if let Some(ref script) = self.invocation_script {
                 new_spec.invocation_script = Some(substitute_parameters(script, &combo));
+            }
+
+            if let Some(ref env) = self.env {
+                new_spec.env = Some(
+                    env.iter()
+                        .map(|(key, value)| (key.clone(), substitute_parameters(value, &combo)))
+                        .collect(),
+                );
             }
 
             if let Some(ref rr_name) = self.resource_requirements {
@@ -969,6 +1032,9 @@ pub struct WorkflowSpec {
     /// Jobs/files can reference these by setting use_parameters to parameter names
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, String>>,
+    /// Environment variables exported for every job in the workflow
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
     /// Inform all compute nodes to shut down this number of seconds before the expiration time
     /// Deprecated.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1042,6 +1108,7 @@ impl WorkflowSpec {
             user: Some(user),
             description,
             parameters: None,
+            env: None,
             compute_node_expiration_buffer_seconds: None,
             compute_node_wait_for_new_jobs_seconds: None,
             compute_node_ignore_workflow_completion: None,
@@ -1090,6 +1157,7 @@ impl WorkflowSpec {
     /// 2. If job/file has `use_parameters`, select only those from workflow-level params
     pub fn expand_parameters(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let workflow_params = self.parameters.clone();
+        let workflow_env = self.env.clone();
 
         // Expand all jobs
         let mut expanded_jobs = Vec::new();
@@ -1100,6 +1168,13 @@ impl WorkflowSpec {
                 Self::resolve_parameters(&job.parameters, &job.use_parameters, &workflow_params);
             // Clear use_parameters after resolution
             job_with_params.use_parameters = None;
+            if workflow_env.is_some() || job.env.is_some() {
+                let mut merged_env = workflow_env.clone().unwrap_or_default();
+                if let Some(job_env) = &job.env {
+                    merged_env.extend(job_env.clone());
+                }
+                job_with_params.env = (!merged_env.is_empty()).then_some(merged_env);
+            }
 
             let expanded = job_with_params
                 .expand()
@@ -1174,6 +1249,25 @@ impl WorkflowSpec {
         } else {
             Some(filtered)
         }
+    }
+
+    fn validate_env_maps(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(env) = &self.env {
+            for key in env.keys() {
+                validate_env_var_name(key)?;
+            }
+        }
+
+        for job in &self.jobs {
+            if let Some(env) = &job.env {
+                for key in env.keys() {
+                    validate_env_var_name(key)
+                        .map_err(|err| format!("Job '{}': {}", job.name, err))?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate workflow actions
@@ -1595,6 +1689,7 @@ impl WorkflowSpec {
     ) -> Result<WorkflowSpec, Box<dyn std::error::Error>> {
         let mut spec = Self::from_spec_file(path)?;
         spec.expand_parameters()?;
+        spec.validate_env_maps()?;
 
         spec.validate_scheduler_node_requirements()?;
 
@@ -1624,6 +1719,10 @@ impl WorkflowSpec {
         };
         if let Err(e) = spec.expand_parameters() {
             eprintln!("Error expanding parameters: {}", e);
+            std::process::exit(1);
+        }
+        if let Err(e) = spec.validate_env_maps() {
+            eprintln!("Validation error: {}", e);
             std::process::exit(1);
         }
 
@@ -1741,6 +1840,10 @@ impl WorkflowSpec {
         // Step 3: Validate actions (basic structure validation)
         if let Err(e) = spec.validate_actions() {
             errors.push(format!("Action validation failed: {}", e));
+        }
+
+        if let Err(e) = spec.validate_env_maps() {
+            errors.push(format!("Environment validation failed: {}", e));
         }
 
         // Step 4: Validate scheduler node requirements
@@ -2167,8 +2270,10 @@ impl WorkflowSpec {
                 generate_plots: false,
             });
         }
+        spec.validate_env_maps()?;
         spec.validate_actions()?;
         spec.substitute_variables()?;
+        spec.apply_job_env()?;
         Self::create_from_prepared_spec(config, spec)
     }
 
@@ -2188,8 +2293,10 @@ impl WorkflowSpec {
             });
         }
         spec.expand_parameters()?;
+        spec.validate_env_maps()?;
         spec.validate_actions()?;
         spec.substitute_variables()?;
+        spec.apply_job_env()?;
         Ok(())
     }
 
@@ -2217,7 +2324,6 @@ impl WorkflowSpec {
                 ec.job_stdio_overrides = Some(overrides);
             }
         }
-
         // Step 2: Create WorkflowModel
         let workflow_id = Self::create_workflow(config, &spec)?;
 
@@ -3247,10 +3353,11 @@ impl WorkflowSpec {
         (line, col)
     }
 
-    /// Convert a KDL parameters block to a JSON object
+    /// Convert a KDL string map block to a JSON object
     #[cfg(feature = "client")]
-    fn kdl_parameters_to_json(
+    fn kdl_string_map_to_json(
         node: &KdlNode,
+        label: &str,
     ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
         let Some(children) = node.children() else {
             return Ok(None);
@@ -3263,7 +3370,7 @@ impl WorkflowSpec {
                 .entries()
                 .first()
                 .and_then(|e| e.value().as_string())
-                .ok_or_else(|| format!("Parameter '{}' must have a string value", param_name))?
+                .ok_or_else(|| format!("{} '{}' must have a string value", label, param_name))?
                 .to_string();
             params.insert(param_name, serde_json::Value::String(param_value));
         }
@@ -3273,6 +3380,14 @@ impl WorkflowSpec {
         } else {
             Ok(Some(serde_json::Value::Object(params)))
         }
+    }
+
+    /// Convert a KDL parameters block to a JSON object
+    #[cfg(feature = "client")]
+    fn kdl_parameters_to_json(
+        node: &KdlNode,
+    ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
+        Self::kdl_string_map_to_json(node, "Parameter")
     }
 
     /// Convert a KDL job node to a JSON object
@@ -3315,6 +3430,11 @@ impl WorkflowSpec {
                                 "invocation_script".to_string(),
                                 serde_json::Value::String(v.to_string()),
                             );
+                        }
+                    }
+                    "env" => {
+                        if let Some(env) = Self::kdl_string_map_to_json(child, "Environment key")? {
+                            obj.insert("env".to_string(), env);
                         }
                     }
                     "cancel_on_blocking_job_failure" => {
@@ -4303,6 +4423,11 @@ impl WorkflowSpec {
                         obj.insert("parameters".to_string(), params);
                     }
                 }
+                "env" => {
+                    if let Some(env) = Self::kdl_string_map_to_json(node, "Environment key")? {
+                        obj.insert("env".to_string(), env);
+                    }
+                }
                 "job" => {
                     jobs.push(Self::kdl_job_to_json(node)?);
                 }
@@ -4444,6 +4569,17 @@ impl WorkflowSpec {
         {
             lines.push("parameters {".to_string());
             for (key, value) in params {
+                lines.push(format!("    {} {}", key, kdl_escape(value)));
+            }
+            lines.push("}".to_string());
+        }
+        if let Some(ref env) = self.env
+            && !env.is_empty()
+        {
+            lines.push("env {".to_string());
+            let mut entries: Vec<_> = env.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (key, value) in entries {
                 lines.push(format!("    {} {}", key, kdl_escape(value)));
             }
             lines.push("}".to_string());
@@ -4781,6 +4917,17 @@ impl WorkflowSpec {
         if let Some(ref script) = job.invocation_script {
             lines.push(format!("    invocation_script {}", escape(script)));
         }
+        if let Some(ref env) = job.env
+            && !env.is_empty()
+        {
+            lines.push("    env {".to_string());
+            let mut entries: Vec<_> = env.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (key, value) in entries {
+                lines.push(format!("        {} {}", key, escape(value)));
+            }
+            lines.push("    }".to_string());
+        }
         if let Some(val) = job.cancel_on_blocking_job_failure {
             lines.push(format!(
                 "    cancel_on_blocking_job_failure {}",
@@ -4916,6 +5063,28 @@ impl WorkflowSpec {
         };
 
         Self::from_json_value(json_value)
+    }
+
+    fn apply_job_env(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        for job in &mut self.jobs {
+            let Some(env) = &job.env else {
+                continue;
+            };
+
+            if env.is_empty() {
+                continue;
+            }
+
+            let exports = render_export_block(env)?;
+            let combined = if let Some(script) = &job.invocation_script {
+                join_shell_blocks(&[&exports, script])
+            } else {
+                exports
+            };
+            job.invocation_script = Some(combined);
+        }
+
+        Ok(())
     }
 
     /// Perform variable substitution on job commands and invocation scripts
@@ -5510,10 +5679,12 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
             compute_node_ignore_workflow_completion: None,
             compute_node_wait_for_new_jobs_seconds: None,
             parameters: None,
+            env: None,
             jobs: vec![JobSpec {
                 name: "job_{i}".to_string(),
                 command: "echo {i}".to_string(),
                 invocation_script: None,
+                env: None,
                 cancel_on_blocking_job_failure: Some(false),
                 supports_termination: Some(false),
                 resource_requirements: None,
@@ -5633,6 +5804,107 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
             expanded[1].invocation_script,
             Some("#!/bin/bash\nexport RUN_ID=2\n".to_string())
         );
+    }
+
+    #[test]
+    fn test_workflow_env_merges_into_jobs_during_parameter_expansion() {
+        let mut job = JobSpec::new("job".to_string(), "echo hi".to_string());
+        job.env = Some(HashMap::from([
+            ("JOB_ONLY".to_string(), "job".to_string()),
+            ("SHARED".to_string(), "job".to_string()),
+        ]));
+
+        let mut spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
+        spec.env = Some(HashMap::from([
+            ("WF_ONLY".to_string(), "workflow".to_string()),
+            ("SHARED".to_string(), "workflow".to_string()),
+        ]));
+
+        spec.expand_parameters().expect("expand parameters");
+
+        assert_eq!(
+            spec.jobs[0].env,
+            Some(HashMap::from([
+                ("WF_ONLY".to_string(), "workflow".to_string()),
+                ("JOB_ONLY".to_string(), "job".to_string()),
+                ("SHARED".to_string(), "job".to_string()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_apply_job_env_prepends_quoted_exports_to_invocation_script() {
+        let mut job = JobSpec::new("job".to_string(), "python run.py".to_string());
+        job.invocation_script = Some("#!/bin/bash\necho preflight".to_string());
+        job.env = Some(HashMap::from([
+            ("ALPHA".to_string(), "beta".to_string()),
+            ("QUOTE".to_string(), "it's".to_string()),
+        ]));
+
+        let mut spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
+
+        spec.apply_job_env().expect("apply env");
+
+        assert_eq!(
+            spec.jobs[0].invocation_script,
+            Some(
+                "export ALPHA='beta'\nexport QUOTE='it'\\''s'\n#!/bin/bash\necho preflight"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_validate_env_maps_rejects_invalid_names() {
+        let mut job = JobSpec::new("job".to_string(), "echo hi".to_string());
+        job.env = Some(HashMap::from([(
+            "BAD-NAME".to_string(),
+            "value".to_string(),
+        )]));
+        let spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
+
+        let err = spec
+            .validate_env_maps()
+            .expect_err("expected validation error");
+        assert!(err.to_string().contains("BAD-NAME"));
+    }
+
+    #[test]
+    fn test_kdl_env_round_trip() {
+        let kdl_content = r#"
+name "env_workflow"
+env {
+    PIXI_CACHE_FOLDER "/tmp/cache"
+}
+
+job "train" {
+    command "python train.py"
+    env {
+        JOB_FLAG "true"
+    }
+}
+"#;
+
+        let spec =
+            WorkflowSpec::from_spec_file_content(kdl_content, "kdl").expect("parse KDL spec");
+        assert_eq!(
+            spec.env
+                .as_ref()
+                .and_then(|env| env.get("PIXI_CACHE_FOLDER")),
+            Some(&"/tmp/cache".to_string())
+        );
+        assert_eq!(
+            spec.jobs[0]
+                .env
+                .as_ref()
+                .and_then(|env| env.get("JOB_FLAG")),
+            Some(&"true".to_string())
+        );
+
+        let round_tripped =
+            WorkflowSpec::from_spec_file_content(&spec.to_kdl_str(), "kdl").expect("round trip");
+        assert_eq!(round_tripped.env, spec.env);
+        assert_eq!(round_tripped.jobs[0].env, spec.jobs[0].env);
     }
 
     #[test]
