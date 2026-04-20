@@ -4578,7 +4578,7 @@ impl WorkflowSpec {
         {
             lines.push("env {".to_string());
             let mut entries: Vec<_> = env.iter().collect();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(left, _)| *left);
             for (key, value) in entries {
                 lines.push(format!("    {} {}", key, kdl_escape(value)));
             }
@@ -4922,7 +4922,7 @@ impl WorkflowSpec {
         {
             lines.push("    env {".to_string());
             let mut entries: Vec<_> = env.iter().collect();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(left, _)| *left);
             for (key, value) in entries {
                 lines.push(format!("        {} {}", key, escape(value)));
             }
