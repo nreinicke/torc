@@ -144,11 +144,13 @@ fn build_srun_command(params: &SrunParams) -> Result<Command, String> {
 fn build_command_string(invocation_script: Option<&str>, command: &str) -> String {
     match invocation_script {
         Some(script) => {
-            let script = script.trim();
-            if script.is_empty() {
+            let trimmed = script.trim();
+            if trimmed.is_empty() {
                 command.to_string()
+            } else if script.contains('\n') || script.contains('\r') {
+                format!("{}\n{}", script.trim_end(), command)
             } else {
-                format!("{}\n{}", script, command)
+                format!("{} {}", trimmed, command)
             }
         }
         None => command.to_string(),
@@ -1206,9 +1208,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_command_string_joins_prelude_with_newline() {
-        let command = build_command_string(Some("export FOO='bar'"), "python run.py");
-        assert_eq!(command, "export FOO='bar'\npython run.py");
+    fn test_build_command_string_keeps_single_line_wrapper_compatible() {
+        let command = build_command_string(Some("bash setup.sh"), "python run.py");
+        assert_eq!(command, "bash setup.sh python run.py");
+    }
+
+    #[test]
+    fn test_build_command_string_uses_newline_for_multi_line_prelude() {
+        let command = build_command_string(Some("#!/bin/bash\necho preflight"), "python run.py");
+        assert_eq!(command, "#!/bin/bash\necho preflight\npython run.py");
     }
 
     #[test]

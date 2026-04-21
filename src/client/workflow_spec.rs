@@ -49,38 +49,20 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn render_export_block(env: &HashMap<String, String>) -> Result<String, String> {
+fn render_env_command_prefix(env: &HashMap<String, String>) -> Result<String, String> {
     let mut keys: Vec<&String> = env.keys().collect();
     keys.sort();
 
-    let mut lines = Vec::with_capacity(keys.len());
+    let mut assignments = Vec::with_capacity(keys.len());
     for key in keys {
         validate_env_var_name(key)?;
         let value = env
             .get(key)
             .expect("key collected from HashMap::keys must exist");
-        lines.push(format!("export {}={}", key, shell_single_quote(value)));
+        assignments.push(format!("{}={}", key, shell_single_quote(value)));
     }
 
-    Ok(lines.join("\n"))
-}
-
-fn join_shell_blocks(parts: &[&str]) -> String {
-    let mut combined = String::new();
-
-    for part in parts {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if !combined.is_empty() {
-            combined.push('\n');
-        }
-        combined.push_str(trimmed);
-    }
-
-    combined
+    Ok(format!("env {}", assignments.join(" ")))
 }
 /// Result of validating a workflow specification (dry-run)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -5075,13 +5057,8 @@ impl WorkflowSpec {
                 continue;
             }
 
-            let exports = render_export_block(env)?;
-            let combined = if let Some(script) = &job.invocation_script {
-                join_shell_blocks(&[&exports, script])
-            } else {
-                exports
-            };
-            job.invocation_script = Some(combined);
+            let env_prefix = render_env_command_prefix(env)?;
+            job.command = format!("{} {}", env_prefix, job.command);
         }
 
         Ok(())
@@ -5833,9 +5810,8 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
     }
 
     #[test]
-    fn test_apply_job_env_prepends_quoted_exports_to_invocation_script() {
+    fn test_apply_job_env_prefixes_command_with_quoted_env_assignments() {
         let mut job = JobSpec::new("job".to_string(), "python run.py".to_string());
-        job.invocation_script = Some("#!/bin/bash\necho preflight".to_string());
         job.env = Some(HashMap::from([
             ("ALPHA".to_string(), "beta".to_string()),
             ("QUOTE".to_string(), "it's".to_string()),
@@ -5846,11 +5822,28 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
         spec.apply_job_env().expect("apply env");
 
         assert_eq!(
+            spec.jobs[0].command,
+            "env ALPHA='beta' QUOTE='it'\\''s' python run.py".to_string()
+        );
+    }
+
+    #[test]
+    fn test_apply_job_env_does_not_rewrite_invocation_script() {
+        let mut job = JobSpec::new("job".to_string(), "python run.py".to_string());
+        job.invocation_script = Some("bash setup.sh".to_string());
+        job.env = Some(HashMap::from([("ALPHA".to_string(), "beta".to_string())]));
+
+        let mut spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
+
+        spec.apply_job_env().expect("apply env");
+
+        assert_eq!(
             spec.jobs[0].invocation_script,
-            Some(
-                "export ALPHA='beta'\nexport QUOTE='it'\\''s'\n#!/bin/bash\necho preflight"
-                    .to_string()
-            )
+            Some("bash setup.sh".to_string())
+        );
+        assert_eq!(
+            spec.jobs[0].command,
+            "env ALPHA='beta' python run.py".to_string()
         );
     }
 
