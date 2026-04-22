@@ -74,6 +74,10 @@ pub fn deserialize_env_map(
     field_name: &str,
 ) -> Result<Option<HashMap<String, String>>, ApiError> {
     env_json
+        .and_then(|env| {
+            let trimmed = env.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
         .map(|env| {
             serde_json::from_str::<HashMap<String, String>>(&env)
                 .map_err(|e| ApiError(format!("Failed to parse {}: {}", field_name, e)))
@@ -93,7 +97,8 @@ pub fn escape_like_pattern(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::escape_like_pattern;
+    use super::{deserialize_env_map, escape_like_pattern};
+    use std::collections::HashMap;
 
     #[test]
     fn escapes_percent_sign() {
@@ -132,6 +137,22 @@ mod tests {
         assert_eq!(escape_like_pattern("simpletext"), "simpletext");
         assert_eq!(escape_like_pattern("123456"), "123456");
         assert_eq!(escape_like_pattern(""), "");
+    }
+
+    #[test]
+    fn deserialize_env_map_treats_empty_string_as_none() {
+        let env = deserialize_env_map(Some(String::new()), "job env").expect("empty env");
+        assert_eq!(env, None);
+    }
+
+    #[test]
+    fn deserialize_env_map_round_trips_json_object() {
+        let env = deserialize_env_map(Some(r#"{"FOO":"bar"}"#.to_string()), "job env")
+            .expect("valid env json");
+        assert_eq!(
+            env,
+            Some(HashMap::from([("FOO".to_string(), "bar".to_string())]))
+        );
     }
 }
 
