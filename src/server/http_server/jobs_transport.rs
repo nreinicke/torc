@@ -239,7 +239,7 @@ async fn claim_backfill_jobs(
             rr.runtime_s
         FROM job
         JOIN resource_requirements rr ON job.resource_requirements_id = rr.id
-        WHERE job.workflow_id =
+        WHERE job.workflow_id = 
         "#,
     );
     builder

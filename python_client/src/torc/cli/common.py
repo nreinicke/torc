@@ -22,9 +22,7 @@ def check_output_path(path: Path, force: bool) -> None:
         if force:
             path.unlink()
         else:
-            msg = (
-                f"{path} already exists. Choose a different name or pass --force to overwrite it."
-            )
+            msg = f"{path} already exists. Choose a different name or pass --force to overwrite it."
             print(msg, file=sys.stderr)
             sys.exit(1)
 

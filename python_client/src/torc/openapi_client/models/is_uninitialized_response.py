@@ -83,3 +83,5 @@ class IsUninitializedResponse(BaseModel):
             "is_uninitialized": obj.get("is_uninitialized")
         })
         return _obj
+
+
