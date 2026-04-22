@@ -15,7 +15,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
-use torc::client::{Configuration, apis, workflow_manager::WorkflowManager};
+use torc::client::{Configuration, apis, default_api, workflow_manager::WorkflowManager};
 use torc::config::TorcConfig;
 use torc::models;
 
@@ -37,6 +37,30 @@ fn wait_for_job_status(
         thread::sleep(Duration::from_millis(50));
     }
     false
+}
+
+/// Helper to wait for an async task to reach a terminal state.
+fn wait_for_task_completion(
+    config: &Configuration,
+    task_id: i64,
+    timeout_secs: u64,
+) -> torc::models::TaskModel {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_secs() < timeout_secs {
+        let task = default_api::get_task(config, task_id).expect("Failed to get task");
+        if matches!(
+            task.status,
+            models::TaskStatus::Succeeded | models::TaskStatus::Failed
+        ) {
+            return task;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    panic!(
+        "Task {} did not complete within {} seconds",
+        task_id, timeout_secs
+    );
 }
 
 /// Helper function to create a WorkflowManager with a test workflow
@@ -2796,5 +2820,212 @@ fn test_reinitialize_with_file_change_depends_on_complete_job(start_server: &Ser
         postprocess_after.status.unwrap(),
         models::JobStatus::Blocked,
         "postprocess should be Blocked (waiting for work1 to complete)"
+    );
+}
+
+#[rstest]
+fn test_reinitialize_async_with_file_change_runs_task_and_updates_statuses(
+    start_server: &ServerProcess,
+) {
+    let config = start_server.config.clone();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let jobs = create_diamond_workflow(&config, false, temp_dir.path());
+
+    let preprocess_job = jobs.get("preprocess").unwrap();
+    let work1_job = jobs.get("work1").unwrap();
+    let work2_job = jobs.get("work2").unwrap();
+    let postprocess_job = jobs.get("postprocess").unwrap();
+
+    let workflow_id = preprocess_job.workflow_id;
+    let preprocess_id = preprocess_job.id.unwrap();
+    let work1_id = work1_job.id.unwrap();
+    let work2_id = work2_job.id.unwrap();
+    let postprocess_id = postprocess_job.id.unwrap();
+
+    let workflow =
+        apis::workflows_api::get_workflow(&config, workflow_id).expect("Failed to get workflow");
+    let torc_config = TorcConfig::load().unwrap_or_default();
+    let manager = WorkflowManager::new(config.clone(), torc_config, workflow);
+
+    let f1_path = temp_dir.path().join("f1.json");
+    let f2_path = temp_dir.path().join("f2.json");
+    let f3_path = temp_dir.path().join("f3.json");
+    let f4_path = temp_dir.path().join("f4.json");
+    let f5_path = temp_dir.path().join("f5.json");
+    let f6_path = temp_dir.path().join("f6.json");
+
+    fs::write(&f1_path, r#"{"input": "data"}"#).expect("Failed to write f1");
+
+    manager.initialize(true).expect("Failed to initialize");
+    let run_id = manager.get_run_id().expect("Failed to get run_id");
+
+    let compute_node = create_test_compute_node(&config, workflow_id);
+    let compute_node_id = compute_node.id.unwrap();
+
+    apis::jobs_api::manage_status_change(
+        &config,
+        preprocess_id,
+        models::JobStatus::Running,
+        run_id,
+    )
+    .expect("Failed to set preprocess to Running");
+    fs::write(&f2_path, r#"{"preprocess": "output1"}"#).expect("Failed to write f2");
+    fs::write(&f3_path, r#"{"preprocess": "output2"}"#).expect("Failed to write f3");
+
+    let preprocess_result = models::ResultModel::new(
+        preprocess_id,
+        workflow_id,
+        run_id,
+        1,
+        compute_node_id,
+        0,
+        1.0,
+        chrono::Utc::now().to_rfc3339(),
+        models::JobStatus::Completed,
+    );
+    apis::jobs_api::complete_job(
+        &config,
+        preprocess_id,
+        models::JobStatus::Completed,
+        run_id,
+        preprocess_result,
+    )
+    .expect("Failed to complete preprocess");
+
+    assert!(
+        wait_for_job_status(&config, work1_id, models::JobStatus::Ready, 5),
+        "work1 did not become ready after preprocess completed"
+    );
+    apis::jobs_api::manage_status_change(&config, work1_id, models::JobStatus::Running, run_id)
+        .expect("Failed to set work1 to Running");
+    fs::write(&f4_path, r#"{"work1": "output"}"#).expect("Failed to write f4");
+
+    let work1_result = models::ResultModel::new(
+        work1_id,
+        workflow_id,
+        run_id,
+        1,
+        compute_node_id,
+        0,
+        1.0,
+        chrono::Utc::now().to_rfc3339(),
+        models::JobStatus::Completed,
+    );
+    apis::jobs_api::complete_job(
+        &config,
+        work1_id,
+        models::JobStatus::Completed,
+        run_id,
+        work1_result,
+    )
+    .expect("Failed to complete work1");
+
+    assert!(
+        wait_for_job_status(&config, work2_id, models::JobStatus::Ready, 5),
+        "work2 did not become ready after preprocess completed"
+    );
+    apis::jobs_api::manage_status_change(&config, work2_id, models::JobStatus::Running, run_id)
+        .expect("Failed to set work2 to Running");
+    fs::write(&f5_path, r#"{"work2": "output"}"#).expect("Failed to write f5");
+
+    let work2_result = models::ResultModel::new(
+        work2_id,
+        workflow_id,
+        run_id,
+        1,
+        compute_node_id,
+        0,
+        1.0,
+        chrono::Utc::now().to_rfc3339(),
+        models::JobStatus::Completed,
+    );
+    apis::jobs_api::complete_job(
+        &config,
+        work2_id,
+        models::JobStatus::Completed,
+        run_id,
+        work2_result,
+    )
+    .expect("Failed to complete work2");
+
+    assert!(
+        wait_for_job_status(&config, postprocess_id, models::JobStatus::Ready, 5),
+        "postprocess did not become ready after work1 and work2 completed"
+    );
+    apis::jobs_api::manage_status_change(
+        &config,
+        postprocess_id,
+        models::JobStatus::Running,
+        run_id,
+    )
+    .expect("Failed to set postprocess to Running");
+    fs::write(&f6_path, r#"{"postprocess": "output"}"#).expect("Failed to write f6");
+
+    let postprocess_result = models::ResultModel::new(
+        postprocess_id,
+        workflow_id,
+        run_id,
+        1,
+        compute_node_id,
+        0,
+        1.0,
+        chrono::Utc::now().to_rfc3339(),
+        models::JobStatus::Completed,
+    );
+    apis::jobs_api::complete_job(
+        &config,
+        postprocess_id,
+        models::JobStatus::Completed,
+        run_id,
+        postprocess_result,
+    )
+    .expect("Failed to complete postprocess");
+
+    manager
+        .initialize_files()
+        .expect("Failed to initialize file mtimes");
+
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&f2_path, r#"{"preprocess": "modified_output"}"#).expect("Failed to modify f2");
+
+    let task = manager
+        .reinitialize_async(false, false)
+        .expect("Failed to start async reinitialize")
+        .expect("Expected an async task for non-dry-run reinitialize");
+    assert_eq!(task.workflow_id, workflow_id);
+    assert_eq!(task.operation, "initialize_jobs");
+
+    let completed_task = wait_for_task_completion(&config, task.id, 20);
+    assert_eq!(completed_task.status, models::TaskStatus::Succeeded);
+
+    let preprocess_after = apis::jobs_api::get_job(&config, preprocess_id)
+        .expect("Failed to get preprocess after reinit");
+    let work1_after =
+        apis::jobs_api::get_job(&config, work1_id).expect("Failed to get work1 after reinit");
+    let work2_after =
+        apis::jobs_api::get_job(&config, work2_id).expect("Failed to get work2 after reinit");
+    let postprocess_after = apis::jobs_api::get_job(&config, postprocess_id)
+        .expect("Failed to get postprocess after reinit");
+
+    assert_eq!(
+        preprocess_after.status.unwrap(),
+        models::JobStatus::Completed,
+        "preprocess should remain Completed"
+    );
+    assert_eq!(
+        work1_after.status.unwrap(),
+        models::JobStatus::Ready,
+        "work1 should be Ready after its input file changes"
+    );
+    assert_eq!(
+        work2_after.status.unwrap(),
+        models::JobStatus::Completed,
+        "work2 should remain Completed because its inputs did not change"
+    );
+    assert_eq!(
+        postprocess_after.status.unwrap(),
+        models::JobStatus::Blocked,
+        "postprocess should be Blocked waiting on work1 to run again"
     );
 }
