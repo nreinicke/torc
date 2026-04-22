@@ -3,6 +3,7 @@
 use crate::server::transport_types::context_types::ApiError;
 use log::{debug, error, info};
 use sqlx::sqlite::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use crate::MAX_RECORD_TRANSFER_COUNT;
@@ -50,6 +51,35 @@ pub fn database_lock_aware_error(e: impl std::fmt::Display, msg: impl Into<Strin
 pub fn json_parse_error(e: impl std::fmt::Display) -> ApiError {
     info!("Failed to parse JSON data: {}", e);
     ApiError("Failed to parse event data".to_string())
+}
+
+pub fn normalize_env_map(env: Option<HashMap<String, String>>) -> Option<HashMap<String, String>> {
+    env.filter(|env_map| !env_map.is_empty())
+}
+
+pub fn serialize_env_map(
+    env: Option<HashMap<String, String>>,
+    field_name: &str,
+) -> Result<Option<String>, ApiError> {
+    normalize_env_map(env)
+        .map(|env_map| {
+            serde_json::to_string(&env_map)
+                .map_err(|e| ApiError(format!("Failed to serialize {}: {}", field_name, e)))
+        })
+        .transpose()
+}
+
+pub fn deserialize_env_map(
+    env_json: Option<String>,
+    field_name: &str,
+) -> Result<Option<HashMap<String, String>>, ApiError> {
+    env_json
+        .map(|env| {
+            serde_json::from_str::<HashMap<String, String>>(&env)
+                .map_err(|e| ApiError(format!("Failed to parse {}: {}", field_name, e)))
+        })
+        .transpose()
+        .map(normalize_env_map)
 }
 
 /// Escape SQL LIKE wildcard characters in user input.

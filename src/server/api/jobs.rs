@@ -21,7 +21,10 @@ use crate::server::api_responses::{
 
 use crate::models::{self as models, JobStatus};
 
-use super::{ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg};
+use super::{
+    ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg,
+    deserialize_env_map, normalize_env_map, serialize_env_map,
+};
 
 /// Trait defining job-related API operations
 #[async_trait]
@@ -154,6 +157,7 @@ const JOB_COLUMNS: &[&str] = &[
     "workflow_id",
     "name",
     "command",
+    "env",
     "cancel_on_blocking_job_failure",
     "supports_termination",
     "resource_requirements_id",
@@ -167,6 +171,34 @@ const JOB_COLUMNS: &[&str] = &[
 impl JobsApiImpl {
     pub fn new(context: ApiContext) -> Self {
         Self { context }
+    }
+
+    async fn get_workflow_env(
+        &self,
+        workflow_id: i64,
+    ) -> Result<Option<HashMap<String, String>>, ApiError> {
+        let env_json: Option<String> = sqlx::query_scalar("SELECT env FROM workflow WHERE id = ?")
+            .bind(workflow_id)
+            .fetch_optional(self.context.pool.as_ref())
+            .await
+            .map_err(|e| database_error_with_msg(e, "Failed to fetch workflow env"))?
+            .flatten();
+        deserialize_env_map(env_json, "workflow env")
+    }
+
+    async fn get_effective_job_env(
+        &self,
+        workflow_id: i64,
+        job_env: Option<&HashMap<String, String>>,
+    ) -> Result<Option<HashMap<String, String>>, ApiError> {
+        let mut effective_env = self
+            .get_workflow_env(workflow_id)
+            .await?
+            .unwrap_or_default();
+        if let Some(job_env) = job_env {
+            effective_env.extend(job_env.clone());
+        }
+        Ok(normalize_env_map(Some(effective_env)))
     }
 
     /// Create an association between a job and a file.
@@ -268,6 +300,7 @@ impl JobsApiImpl {
         let record = match sqlx::query(
             r#"
                 SELECT id, workflow_id, name, command, resource_requirements_id, invocation_script,
+                       env,
                        status, cancel_on_blocking_job_failure, supports_termination, scheduler_id,
                        failure_handler_id, attempt_id, priority
                 FROM job
@@ -425,6 +458,7 @@ impl JobsApiImpl {
             workflow_id: record.get("workflow_id"),
             name: record.get("name"),
             command: record.get("command"),
+            env: deserialize_env_map(record.try_get("env").ok(), "job env")?,
             cancel_on_blocking_job_failure: record.try_get("cancel_on_blocking_job_failure").ok(),
             supports_termination: record.try_get("supports_termination").ok(),
             depends_on_job_ids,
@@ -727,11 +761,15 @@ impl JobsApiImpl {
         // Normalize invocation_script: treat Some("") the same as None to ensure
         // consistent hashing between per-job and bulk hash computation methods.
         let invocation_script = job.invocation_script.filter(|s| !s.is_empty());
+        let effective_env = self
+            .get_effective_job_env(job.workflow_id, job.env.as_ref())
+            .await?;
 
         // Build JSON object with all input fields in deterministic order
         let hash_input = serde_json::json!({
             "command": job.command,
             "invocation_script": invocation_script,
+            "env": effective_env,
             "depends_on_job_ids": job.depends_on_job_ids,
             "input_file_ids": job.input_file_ids,
             "output_file_ids": job.output_file_ids,
@@ -800,7 +838,7 @@ impl JobsApiImpl {
         // Query 1: All jobs in the workflow
         let job_rows = sqlx::query(
             r#"
-            SELECT id, command, invocation_script
+            SELECT id, command, invocation_script, env
             FROM job
             WHERE workflow_id = ?
             ORDER BY id
@@ -820,6 +858,7 @@ impl JobsApiImpl {
             "Computing bulk input hashes for {} jobs in workflow {}",
             job_count, workflow_id
         );
+        let workflow_env = self.get_workflow_env(workflow_id).await?;
 
         // Query 2: All depends_on relationships
         let depends_on_rows = sqlx::query!(
@@ -982,6 +1021,12 @@ impl JobsApiImpl {
             let invocation_script: Option<String> = job_row
                 .get::<Option<String>, _>("invocation_script")
                 .filter(|s| !s.is_empty());
+            let job_env = deserialize_env_map(job_row.get("env"), "job env")?;
+            let mut effective_env = workflow_env.clone().unwrap_or_default();
+            if let Some(job_env) = job_env {
+                effective_env.extend(job_env);
+            }
+            let effective_env = normalize_env_map(Some(effective_env));
 
             // Build the same JSON structure as compute_job_input_hash
             let depends_on: Option<&Vec<i64>> = depends_on_map.get(&job_id);
@@ -1009,6 +1054,7 @@ impl JobsApiImpl {
             let hash_input = serde_json::json!({
                 "command": command,
                 "invocation_script": invocation_script,
+                "env": effective_env,
                 "depends_on_job_ids": depends_on,
                 "input_file_ids": input_files,
                 "output_file_ids": output_files,
@@ -1124,6 +1170,7 @@ where
         );
 
         let invocation_script = job.invocation_script.clone();
+        let job_env = serialize_env_map(job.env.clone(), "job env")?;
         let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
         let supports_termination = job.supports_termination.unwrap_or(false);
         let priority = job.priority.unwrap_or(0);
@@ -1158,12 +1205,13 @@ where
                 supports_termination,
                 resource_requirements_id,
                 invocation_script,
+                env,
                 status,
                 scheduler_id,
                 failure_handler_id,
                 priority
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
@@ -1174,6 +1222,7 @@ where
         .bind(supports_termination)
         .bind(job.resource_requirements_id)
         .bind(&invocation_script)
+        .bind(&job_env)
         .bind(status_int)
         .bind(job.scheduler_id)
         .bind(job.failure_handler_id)
@@ -1332,6 +1381,7 @@ where
         // Process each job
         for mut job in body.jobs {
             let invocation_script = job.invocation_script.clone();
+            let job_env = serialize_env_map(job.env.clone(), "job env")?;
             let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
             let supports_termination = job.supports_termination.unwrap_or(false);
             let priority = job.priority.unwrap_or(0);
@@ -1360,12 +1410,13 @@ where
                     supports_termination,
                     resource_requirements_id,
                     invocation_script,
+                    env,
                     status,
                     scheduler_id,
                     failure_handler_id,
                     priority
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 "#,
             )
@@ -1376,6 +1427,7 @@ where
             .bind(supports_termination)
             .bind(job.resource_requirements_id)
             .bind(&invocation_script)
+            .bind(&job_env)
             .bind(status_int)
             .bind(job.scheduler_id)
             .bind(job.failure_handler_id)
@@ -1670,7 +1722,7 @@ where
         );
 
         // Build base query
-        let base_query = "SELECT id, workflow_id, name, command, resource_requirements_id, invocation_script, status, cancel_on_blocking_job_failure, supports_termination, scheduler_id, failure_handler_id, attempt_id, priority FROM job".to_string();
+        let base_query = "SELECT id, workflow_id, name, command, resource_requirements_id, invocation_script, env, status, cancel_on_blocking_job_failure, supports_termination, scheduler_id, failure_handler_id, attempt_id, priority FROM job".to_string();
 
         // Build WHERE clause conditions
         let mut where_conditions = vec!["workflow_id = ?".to_string()];
@@ -1792,6 +1844,7 @@ where
                     workflow_id: record.get("workflow_id"),
                     name: record.get("name"),
                     command: record.get("command"),
+                    env: deserialize_env_map(record.try_get("env").ok(), "job env")?,
                     cancel_on_blocking_job_failure: record
                         .try_get("cancel_on_blocking_job_failure")
                         .ok(),
@@ -1921,6 +1974,8 @@ where
         // Note: If body field is None, we treat it as "not changing" that field
         let name_changed = body.name != existing_job.name;
         let command_changed = body.command != existing_job.command;
+        let body_env = normalize_env_map(body.env.clone());
+        let env_changed = body.env.is_some() && body_env != existing_job.env;
         // Treat None as "not changing" - only compare if body.status is Some
         let status_changed = body.status.is_some() && body.status != existing_job.status;
         let input_file_ids_changed =
@@ -1936,6 +1991,7 @@ where
 
         let has_restricted_updates = name_changed
             || command_changed
+            || env_changed
             || status_changed
             || input_file_ids_changed
             || output_file_ids_changed
@@ -1954,6 +2010,9 @@ where
             }
             if command_changed {
                 changed_fields.push("command".to_string());
+            }
+            if env_changed {
+                changed_fields.push("env".to_string());
             }
             if status_changed {
                 changed_fields.push(format!(
@@ -2101,6 +2160,8 @@ where
 
         // Update the job (only non-relationship fields)
         let status_int = body.status.map(|s| s.to_int());
+        let env_is_provided = body.env.is_some();
+        let job_env = serialize_env_map(body_env, "job env")?;
 
         if let Some(p) = body.priority
             && p < 0
@@ -2121,6 +2182,7 @@ where
                 ,status = COALESCE(?, status)
                 ,command = COALESCE(?, command)
                 ,invocation_script = COALESCE(?, invocation_script)
+                ,env = CASE WHEN ? THEN ? ELSE env END
                 ,cancel_on_blocking_job_failure = COALESCE(?, cancel_on_blocking_job_failure)
                 ,supports_termination = COALESCE(?, supports_termination)
                 ,resource_requirements_id = COALESCE(?, resource_requirements_id)
@@ -2133,6 +2195,8 @@ where
         .bind(status_int)
         .bind(body.command)
         .bind(body.invocation_script)
+        .bind(env_is_provided)
+        .bind(job_env)
         .bind(body.cancel_on_blocking_job_failure)
         .bind(body.supports_termination)
         .bind(body.resource_requirements_id)
@@ -2314,6 +2378,7 @@ where
                 name,
                 command,
                 invocation_script,
+                env,
                 status,
                 cancel_on_blocking_job_failure,
                 supports_termination,
@@ -2360,6 +2425,7 @@ where
                 workflow_id: row.get("workflow_id"),
                 name: row.get("name"),
                 command: row.get("command"),
+                env: deserialize_env_map(row.get("env"), "job env")?,
                 invocation_script: row.get("invocation_script"),
                 status: Some(models::JobStatus::Pending),
                 schedule_compute_nodes: None,
@@ -2799,7 +2865,7 @@ where
         let job_record = match sqlx::query(
             r#"
             SELECT j.id, j.workflow_id, j.name, j.command, j.status, j.failure_handler_id, j.attempt_id,
-                   j.invocation_script, j.cancel_on_blocking_job_failure, j.supports_termination,
+                   j.invocation_script, j.env, j.cancel_on_blocking_job_failure, j.supports_termination,
                    j.resource_requirements_id, j.scheduler_id, j.priority,
                    ws.run_id as workflow_run_id
             FROM job j
@@ -2835,6 +2901,8 @@ where
         let failure_handler_id: Option<i64> = job_record.get("failure_handler_id");
         let attempt_id: i64 = job_record.get("attempt_id");
         let invocation_script: Option<String> = job_record.get("invocation_script");
+        let env: Option<HashMap<String, String>> =
+            deserialize_env_map(job_record.get("env"), "job env")?;
         let cancel_on_blocking_job_failure: Option<bool> =
             job_record.get("cancel_on_blocking_job_failure");
         let supports_termination: Option<bool> = job_record.get("supports_termination");
@@ -2976,6 +3044,7 @@ where
             name,
             command,
             invocation_script,
+            env,
             status: Some(status),
             schedule_compute_nodes: None,
             cancel_on_blocking_job_failure,

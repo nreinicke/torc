@@ -32,6 +32,7 @@ use crate::memory_utils::{memory_string_to_bytes, memory_string_to_mb};
 use crate::models::{JobModel, JobStatus, ResourceRequirementsModel, ResultModel, SlurmStatsModel};
 use chrono::{DateTime, Utc};
 use log::{self, debug, error, info, warn};
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -225,6 +226,7 @@ impl AsyncCliCommand {
         resource_monitor: Option<&ResourceMonitor>,
         api_url: &str,
         resource_requirements: Option<&ResourceRequirementsModel>,
+        effective_env: Option<&HashMap<String, String>>,
         gpu_visible_devices: Option<&str>,
         limit_resources: bool,
         execution_mode: ExecutionMode,
@@ -343,6 +345,12 @@ impl AsyncCliCommand {
             shell.arg(&command_str);
             shell
         };
+
+        if let Some(env) = effective_env {
+            for (key, value) in env {
+                cmd.env(key, value);
+            }
+        }
 
         if let Some(v) = gpu_visible_devices {
             cmd.env("CUDA_VISIBLE_DEVICES", v)

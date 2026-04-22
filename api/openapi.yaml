@@ -5373,6 +5373,14 @@ components:
           items:
             type: integer
             format: int64
+        env:
+          type:
+          - object
+          - 'null'
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
         failure_handler_id:
           type:
           - integer
@@ -6586,6 +6594,14 @@ components:
           type:
           - boolean
           - 'null'
+        env:
+          type:
+          - object
+          - 'null'
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
         execution_config:
           type:
           - string

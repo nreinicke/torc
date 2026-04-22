@@ -44,26 +44,6 @@ fn validate_env_var_name(name: &str) -> Result<(), String> {
         ))
     }
 }
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn render_env_command_prefix(env: &HashMap<String, String>) -> Result<String, String> {
-    let mut keys: Vec<&String> = env.keys().collect();
-    keys.sort();
-
-    let mut assignments = Vec::with_capacity(keys.len());
-    for key in keys {
-        validate_env_var_name(key)?;
-        let value = env
-            .get(key)
-            .expect("key collected from HashMap::keys must exist");
-        assignments.push(format!("{}={}", key, shell_single_quote(value)));
-    }
-
-    Ok(format!("env {}", assignments.join(" ")))
-}
 /// Result of validating a workflow specification (dry-run)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidationResult {
@@ -1139,7 +1119,28 @@ impl WorkflowSpec {
     /// 2. If job/file has `use_parameters`, select only those from workflow-level params
     pub fn expand_parameters(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let workflow_params = self.parameters.clone();
-        let workflow_env = self.env.clone();
+        let workflow_env_params: Option<HashMap<String, ParameterValue>> =
+            workflow_params.as_ref().map(|params| {
+                params
+                    .iter()
+                    .map(|(key, value)| {
+                        let parameter_value = parse_parameter_value(value)
+                            .ok()
+                            .and_then(|values| {
+                                (values.len() == 1)
+                                    .then(|| values.into_iter().next())
+                                    .flatten()
+                            })
+                            .unwrap_or_else(|| ParameterValue::String(value.clone()));
+                        (key.clone(), parameter_value)
+                    })
+                    .collect()
+            });
+        if let (Some(env), Some(params)) = (&mut self.env, workflow_env_params.as_ref()) {
+            for value in env.values_mut() {
+                *value = substitute_parameters(value, params);
+            }
+        }
 
         // Expand all jobs
         let mut expanded_jobs = Vec::new();
@@ -1150,13 +1151,6 @@ impl WorkflowSpec {
                 Self::resolve_parameters(&job.parameters, &job.use_parameters, &workflow_params);
             // Clear use_parameters after resolution
             job_with_params.use_parameters = None;
-            if workflow_env.is_some() || job.env.is_some() {
-                let mut merged_env = workflow_env.clone().unwrap_or_default();
-                if let Some(job_env) = &job.env {
-                    merged_env.extend(job_env.clone());
-                }
-                job_with_params.env = (!merged_env.is_empty()).then_some(merged_env);
-            }
 
             let expanded = job_with_params
                 .expand()
@@ -2255,7 +2249,6 @@ impl WorkflowSpec {
         spec.validate_env_maps()?;
         spec.validate_actions()?;
         spec.substitute_variables()?;
-        spec.apply_job_env()?;
         Self::create_from_prepared_spec(config, spec)
     }
 
@@ -2278,7 +2271,6 @@ impl WorkflowSpec {
         spec.validate_env_maps()?;
         spec.validate_actions()?;
         spec.substitute_variables()?;
-        spec.apply_job_env()?;
         Ok(())
     }
 
@@ -2402,6 +2394,7 @@ impl WorkflowSpec {
         let user = spec.user.clone().unwrap_or_else(|| "unknown".to_string());
         let mut workflow_model = models::WorkflowModel::new(spec.name.clone(), user);
         workflow_model.description = spec.description.clone();
+        workflow_model.env = spec.env.clone().filter(|env| !env.is_empty());
 
         // Set compute node configuration fields if present
         if spec.compute_node_expiration_buffer_seconds.is_some() {
@@ -3147,6 +3140,7 @@ impl WorkflowSpec {
 
                 // Set optional fields
                 job_model.invocation_script = job_spec.invocation_script.clone();
+                job_model.env = job_spec.env.clone().filter(|env| !env.is_empty());
                 // Only override cancel_on_blocking_job_failure if explicitly set in spec
                 // (JobModel::new() defaults to Some(true))
                 if job_spec.cancel_on_blocking_job_failure.is_some() {
@@ -5047,23 +5041,6 @@ impl WorkflowSpec {
         Self::from_json_value(json_value)
     }
 
-    fn apply_job_env(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for job in &mut self.jobs {
-            let Some(env) = &job.env else {
-                continue;
-            };
-
-            if env.is_empty() {
-                continue;
-            }
-
-            let env_prefix = render_env_command_prefix(env)?;
-            job.command = format!("{} {}", env_prefix, job.command);
-        }
-
-        Ok(())
-    }
-
     /// Perform variable substitution on job commands and invocation scripts
     /// Supported variables:
     /// - ${files.input.NAME} - input file (automatically adds to input_files)
@@ -5784,7 +5761,7 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
     }
 
     #[test]
-    fn test_workflow_env_merges_into_jobs_during_parameter_expansion() {
+    fn test_workflow_env_stays_on_workflow_during_parameter_expansion() {
         let mut job = JobSpec::new("job".to_string(), "echo hi".to_string());
         job.env = Some(HashMap::from([
             ("JOB_ONLY".to_string(), "job".to_string()),
@@ -5800,9 +5777,16 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
         spec.expand_parameters().expect("expand parameters");
 
         assert_eq!(
-            spec.jobs[0].env,
+            spec.env,
             Some(HashMap::from([
                 ("WF_ONLY".to_string(), "workflow".to_string()),
+                ("SHARED".to_string(), "workflow".to_string()),
+            ]))
+        );
+        assert_eq!(spec.jobs[0].command, "echo hi".to_string());
+        assert_eq!(
+            spec.jobs[0].env,
+            Some(HashMap::from([
                 ("JOB_ONLY".to_string(), "job".to_string()),
                 ("SHARED".to_string(), "job".to_string()),
             ]))
@@ -5810,40 +5794,23 @@ job "train_lr{lr:.4f}_bs{batch_size}" {
     }
 
     #[test]
-    fn test_apply_job_env_prefixes_command_with_quoted_env_assignments() {
-        let mut job = JobSpec::new("job".to_string(), "python run.py".to_string());
-        job.env = Some(HashMap::from([
-            ("ALPHA".to_string(), "beta".to_string()),
-            ("QUOTE".to_string(), "it's".to_string()),
-        ]));
-
+    fn test_workflow_env_parameters_are_substituted() {
+        let job = JobSpec::new("job".to_string(), "echo hi".to_string());
         let mut spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
+        spec.parameters = Some(HashMap::from([("target".to_string(), "gpu".to_string())]));
+        spec.env = Some(HashMap::from([(
+            "QUEUE".to_string(),
+            "queue_{target}".to_string(),
+        )]));
 
-        spec.apply_job_env().expect("apply env");
-
-        assert_eq!(
-            spec.jobs[0].command,
-            "env ALPHA='beta' QUOTE='it'\\''s' python run.py".to_string()
-        );
-    }
-
-    #[test]
-    fn test_apply_job_env_does_not_rewrite_invocation_script() {
-        let mut job = JobSpec::new("job".to_string(), "python run.py".to_string());
-        job.invocation_script = Some("bash setup.sh".to_string());
-        job.env = Some(HashMap::from([("ALPHA".to_string(), "beta".to_string())]));
-
-        let mut spec = WorkflowSpec::new("wf".to_string(), "user".to_string(), None, vec![job]);
-
-        spec.apply_job_env().expect("apply env");
+        spec.expand_parameters().expect("expand parameters");
 
         assert_eq!(
-            spec.jobs[0].invocation_script,
-            Some("bash setup.sh".to_string())
-        );
-        assert_eq!(
-            spec.jobs[0].command,
-            "env ALPHA='beta' python run.py".to_string()
+            spec.env
+                .as_ref()
+                .and_then(|env| env.get("QUEUE"))
+                .map(String::as_str),
+            Some("queue_gpu")
         );
     }
 
