@@ -81,26 +81,54 @@ pub fn shell_command() -> Command {
 /// Check whether an error string indicates a transient failure that should be retried.
 ///
 /// Retryable errors include:
+/// - Most `apis::Error::Reqwest` variants (matched via the "error in reqwest" substring
+///   produced by `apis::Error::Display`). This covers connect, send-request, and
+///   response-read failures whose inner cause is not exposed by reqwest's top-level
+///   `Display`. Reqwest *builder* errors (invalid URL, misconfigured client) are
+///   excluded — they are deterministic and retrying will not help.
 /// - Network-level failures (connection refused, DNS, timeout, unreachable)
-/// - HTTP 500/502/503 responses (server crash, gateway error, overloaded)
+/// - HTTP 5xx responses (server crash, gateway error, overloaded)
 /// - Database contention ("database is locked", "busy")
 fn is_retryable_error(error_str: &str) -> bool {
-    let s = error_str.to_lowercase();
+    let s = error_str.to_ascii_lowercase();
 
-    // Network errors
-    s.contains("connection")
+    // reqwest::Error with Kind::Builder (e.g. invalid URL, bad base_path) is
+    // deterministic. It surfaces as "error in reqwest: builder error: ..." and
+    // must not enter the retry loop.
+    if s.contains("builder error") {
+        return false;
+    }
+
+    // Any other reqwest-layer failure is transient: connect, send, body read, TLS, etc.
+    // apis::Error::Display emits "error in reqwest: ..." for every Error::Reqwest.
+    s.contains("error in reqwest")
+        // Network errors
+        || s.contains("connection")
         || s.contains("timeout")
         || s.contains("network")
         || s.contains("dns")
         || s.contains("resolve")
         || s.contains("unreachable")
-        // HTTP server errors (formatted as "status code 500" by the generated client)
-        || s.contains("status code 500")
-        || s.contains("status code 502")
-        || s.contains("status code 503")
+        // HTTP server errors (formatted as "status code NNN" by the generated client)
+        || is_5xx_response_error(&s)
         // Database contention
         || s.contains("database is locked")
         || s.contains("database is busy")
+}
+
+fn is_5xx_response_error(s: &str) -> bool {
+    let Some(start) = s.find("status code ") else {
+        return false;
+    };
+    let status_start = start + "status code ".len();
+    let digits: String = s[status_start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+
+    digits
+        .parse::<u16>()
+        .is_ok_and(|code| (500..600).contains(&code))
 }
 
 pub fn send_with_retries<T, E, F>(
@@ -451,6 +479,15 @@ mod tests {
         assert!(is_retryable_error("request timeout"));
         assert!(is_retryable_error("network is unreachable"));
 
+        // Any apis::Error::Reqwest variant (surfaces as "error in reqwest: ...")
+        assert!(is_retryable_error(
+            "error in reqwest: error sending request for url \
+             (http://127.0.0.1:39195/torc-service/v1/workflows/1/is_complete)"
+        ));
+        assert!(is_retryable_error(
+            "error in reqwest: error decoding response body"
+        ));
+
         // HTTP 5xx from generated client
         assert!(is_retryable_error(
             "error in response: status code 500: internal error"
@@ -459,12 +496,22 @@ mod tests {
         assert!(is_retryable_error(
             "error in response: status code 503: service unavailable"
         ));
+        assert!(is_retryable_error(
+            "error in response: status code 504: gateway timeout"
+        ));
+        assert!(is_retryable_error(
+            "error in response: status code 599: network connect timeout"
+        ));
 
         // Database contention
         assert!(is_retryable_error("database is locked"));
         assert!(is_retryable_error("database is busy"));
 
         // Non-retryable errors
+        // reqwest builder errors are deterministic (invalid URL, etc.)
+        assert!(!is_retryable_error(
+            "error in reqwest: builder error: relative URL without a base"
+        ));
         assert!(!is_retryable_error(
             "error in response: status code 404: not found"
         ));
