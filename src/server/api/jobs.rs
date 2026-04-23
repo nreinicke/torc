@@ -2,7 +2,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::server::transport_types::context_types::{ApiError, Has, XSpanIdString};
 use async_trait::async_trait;
@@ -186,7 +186,7 @@ impl JobsApiImpl {
         deserialize_env_map(env_json, "workflow env")
     }
 
-    async fn get_effective_job_env(
+    async fn merge_workflow_and_job_env(
         &self,
         workflow_id: i64,
         job_env: Option<&HashMap<String, String>>,
@@ -199,6 +199,10 @@ impl JobsApiImpl {
             effective_env.extend(job_env.clone());
         }
         Ok(normalize_env_map(Some(effective_env)))
+    }
+
+    fn env_for_hash(env: Option<HashMap<String, String>>) -> Option<BTreeMap<String, String>> {
+        env.map(|env_map| env_map.into_iter().collect())
     }
 
     /// Create an association between a job and a file.
@@ -458,7 +462,12 @@ impl JobsApiImpl {
             workflow_id: record.get("workflow_id"),
             name: record.get("name"),
             command: record.get("command"),
-            env: deserialize_env_map(record.try_get("env").ok(), "job env")?,
+            env: deserialize_env_map(
+                record
+                    .try_get::<Option<String>, _>("env")
+                    .map_err(|e| database_error_with_msg(e, "Failed to decode job env"))?,
+                "job env",
+            )?,
             cancel_on_blocking_job_failure: record.try_get("cancel_on_blocking_job_failure").ok(),
             supports_termination: record.try_get("supports_termination").ok(),
             depends_on_job_ids,
@@ -761,9 +770,7 @@ impl JobsApiImpl {
         // Normalize invocation_script: treat Some("") the same as None to ensure
         // consistent hashing between per-job and bulk hash computation methods.
         let invocation_script = job.invocation_script.filter(|s| !s.is_empty());
-        let effective_env = self
-            .get_effective_job_env(job.workflow_id, job.env.as_ref())
-            .await?;
+        let effective_env = Self::env_for_hash(normalize_env_map(job.env.clone()));
 
         // Build JSON object with all input fields in deterministic order
         let hash_input = serde_json::json!({
@@ -858,8 +865,6 @@ impl JobsApiImpl {
             "Computing bulk input hashes for {} jobs in workflow {}",
             job_count, workflow_id
         );
-        let workflow_env = self.get_workflow_env(workflow_id).await?;
-
         // Query 2: All depends_on relationships
         let depends_on_rows = sqlx::query!(
             r#"
@@ -1021,12 +1026,8 @@ impl JobsApiImpl {
             let invocation_script: Option<String> = job_row
                 .get::<Option<String>, _>("invocation_script")
                 .filter(|s| !s.is_empty());
-            let job_env = deserialize_env_map(job_row.get("env"), "job env")?;
-            let mut effective_env = workflow_env.clone().unwrap_or_default();
-            if let Some(job_env) = job_env {
-                effective_env.extend(job_env);
-            }
-            let effective_env = normalize_env_map(Some(effective_env));
+            let effective_env =
+                Self::env_for_hash(deserialize_env_map(job_row.get("env"), "job env")?);
 
             // Build the same JSON structure as compute_job_input_hash
             let depends_on: Option<&Vec<i64>> = depends_on_map.get(&job_id);
@@ -1169,6 +1170,9 @@ where
             context.get().0.clone()
         );
 
+        job.env = self
+            .merge_workflow_and_job_env(job.workflow_id, job.env.as_ref())
+            .await?;
         let invocation_script = job.invocation_script.clone();
         let job_env = serialize_env_map(job.env.clone(), "job env")?;
         let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
@@ -1380,6 +1384,9 @@ where
 
         // Process each job
         for mut job in body.jobs {
+            job.env = self
+                .merge_workflow_and_job_env(job.workflow_id, job.env.as_ref())
+                .await?;
             let invocation_script = job.invocation_script.clone();
             let job_env = serialize_env_map(job.env.clone(), "job env")?;
             let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
@@ -1844,7 +1851,12 @@ where
                     workflow_id: record.get("workflow_id"),
                     name: record.get("name"),
                     command: record.get("command"),
-                    env: deserialize_env_map(record.try_get("env").ok(), "job env")?,
+                    env: deserialize_env_map(
+                        record
+                            .try_get::<Option<String>, _>("env")
+                            .map_err(|e| database_error_with_msg(e, "Failed to decode job env"))?,
+                        "job env",
+                    )?,
                     cancel_on_blocking_job_failure: record
                         .try_get("cancel_on_blocking_job_failure")
                         .ok(),
@@ -2156,6 +2168,15 @@ where
                     error_response,
                 ));
             }
+        }
+
+        if env_changed {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": "Cannot modify env - this field is immutable after job creation"
+            }));
+            return Ok(UpdateJobResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
         }
 
         // Update the job (only non-relationship fields)

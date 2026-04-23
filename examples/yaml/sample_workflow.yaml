@@ -25,7 +25,7 @@ jobs:
 
   - name: data_validation
     command: python validate_data.py input_data.csv
-    # Workflow env applies to every job; this job adds PYTHONPATH and overrides LOG_LEVEL
+    # Workflow env applies to every job; this job sets PYTHONPATH and overrides LOG_LEVEL
     env:
       PYTHONPATH: /opt/validation
       LOG_LEVEL: debug

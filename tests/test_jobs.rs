@@ -6,6 +6,7 @@ use common::{
 };
 use rstest::rstest;
 use serde_json::json;
+use std::collections::HashMap;
 use torc::client::apis;
 use torc::client::workflow_manager::WorkflowManager;
 use torc::config::TorcConfig;
@@ -1362,4 +1363,70 @@ fn test_jobs_update_runtime_and_resource_requirements_id_together(start_server: 
     let rr_after = apis::resource_requirements_api::get_resource_requirements(config, rr_id)
         .expect("Failed to get RR after");
     assert_eq!(rr_after.runtime, "PT8H");
+}
+
+#[rstest]
+fn test_create_job_materializes_effective_env(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let mut workflow = models::WorkflowModel::new(
+        "test_materialized_job_env_workflow".to_string(),
+        "test_user".to_string(),
+    );
+    workflow.env = Some(HashMap::from([
+        ("WORKFLOW_ONLY".to_string(), "workflow".to_string()),
+        ("SHARED".to_string(), "workflow".to_string()),
+    ]));
+    let workflow =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = workflow.id.unwrap();
+
+    let mut job = models::JobModel::new(
+        workflow_id,
+        "materialized_env_job".to_string(),
+        "echo materialized".to_string(),
+    );
+    job.env = Some(HashMap::from([
+        ("JOB_ONLY".to_string(), "job".to_string()),
+        ("SHARED".to_string(), "job".to_string()),
+    ]));
+
+    let created = apis::jobs_api::create_job(config, job).expect("Failed to create job");
+    let job_id = created.id.unwrap();
+
+    let fetched = apis::jobs_api::get_job(config, job_id).expect("Failed to fetch job");
+    assert_eq!(
+        fetched.env,
+        Some(HashMap::from([
+            ("WORKFLOW_ONLY".to_string(), "workflow".to_string()),
+            ("JOB_ONLY".to_string(), "job".to_string()),
+            ("SHARED".to_string(), "job".to_string()),
+        ]))
+    );
+}
+
+#[rstest]
+fn test_update_job_rejects_env_changes(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let workflow = create_test_workflow(config, "test_job_env_immutable_workflow");
+    let workflow_id = workflow.id.unwrap();
+    let job = create_test_job(config, workflow_id, "immutable_env_job");
+    let job_id = job.id.unwrap();
+
+    let mut update = apis::jobs_api::get_job(config, job_id).expect("Failed to fetch job");
+    update.env = Some(HashMap::from([(
+        "NEW_ENV".to_string(),
+        "value".to_string(),
+    )]));
+
+    let result = apis::jobs_api::update_job(config, job_id, update);
+    assert!(result.is_err(), "Updating job env should fail");
+
+    let err_str = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_str.contains("immutable") || err_str.contains("Cannot modify env"),
+        "Error should mention env immutability, got: {}",
+        err_str
+    );
 }

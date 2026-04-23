@@ -2,6 +2,7 @@ mod common;
 
 use common::{ServerProcess, start_server};
 use rstest::rstest;
+use std::collections::HashMap;
 use torc::client::apis;
 use torc::models;
 
@@ -190,4 +191,81 @@ fn test_partial_update_preserves_fields(start_server: &ServerProcess) {
     // Verify project changed but metadata preserved
     assert_eq!(updated.project, Some("new-project".to_string()));
     assert_eq!(updated.metadata, Some(r#"{"key":"value"}"#.to_string()));
+}
+
+#[rstest]
+fn test_workflow_env_is_immutable_after_creation(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let mut workflow = models::WorkflowModel::new(
+        "test_workflow_env_immutable".to_string(),
+        "test_user".into(),
+    );
+    workflow.env = Some(HashMap::from([(
+        "LOG_LEVEL".to_string(),
+        "info".to_string(),
+    )]));
+
+    let created =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = created.id.unwrap();
+
+    let mut update = created.clone();
+    update.env = Some(HashMap::from([(
+        "LOG_LEVEL".to_string(),
+        "debug".to_string(),
+    )]));
+
+    let result = apis::workflows_api::update_workflow(config, workflow_id, update);
+    assert!(result.is_err(), "Updating workflow env should fail");
+
+    let err_str = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_str.contains("immutable") || err_str.contains("Cannot modify env"),
+        "Error should mention env immutability, got: {}",
+        err_str
+    );
+
+    let fetched =
+        apis::workflows_api::get_workflow(config, workflow_id).expect("Failed to fetch workflow");
+    assert_eq!(fetched.env, created.env);
+}
+
+#[rstest]
+fn test_list_workflows_archived_filter_selects_env(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let mut workflow = models::WorkflowModel::new(
+        "test_list_workflows_with_env".to_string(),
+        "test_user".to_string(),
+    );
+    workflow.env = Some(HashMap::from([(
+        "TORC_TEST_ENV".to_string(),
+        "present".to_string(),
+    )]));
+
+    let created =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    let workflow_id = created.id.unwrap();
+
+    let response = apis::workflows_api::list_workflows(
+        config,
+        None,
+        None,
+        Some("env"),
+        None,
+        Some("test_list_workflows_with_env"),
+        None,
+        None,
+        Some(false),
+    )
+    .expect("Failed to list workflows with archived filter");
+
+    let listed = response
+        .items
+        .into_iter()
+        .find(|workflow| workflow.id == Some(workflow_id))
+        .expect("Created workflow should be listed");
+
+    assert_eq!(listed.env, created.env);
 }

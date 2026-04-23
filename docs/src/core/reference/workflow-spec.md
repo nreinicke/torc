@@ -116,9 +116,9 @@ Defines a single computational task within a workflow.
 | `use_parameters`                 | [string]                    | none        | Workflow parameter names to use for this job                           |
 | `stdio`                          | [StdioConfig](#stdioconfig) | none        | Per-job override for stdout/stderr capture (overrides workflow-level)  |
 
-When both workflow-level and job-level `env` maps are present, Torc merges them before the job is
-created. Job-level values win on key conflicts. Torc exports these variables before running the
-job's `invocation_script`, if any.
+When both workflow-level and job-level `env` maps are present, Torc merges them when the job is
+created and stores the effective environment on the job. Job-level values win on key conflicts. Torc
+exports these variables before running the job's `invocation_script`, if any.
 
 ## FileSpec
 

@@ -186,6 +186,7 @@ const ALL_WORKFLOW_COLUMNS: &[&str] = &[
     "name",
     "user",
     "description",
+    "env",
     "timestamp",
     "compute_node_expiration_buffer_seconds",
     "compute_node_wait_for_new_jobs_seconds",
@@ -302,6 +303,7 @@ impl WorkflowsApiImpl {
                 ,w.name
                 ,w.user
                 ,w.description
+                ,w.env
                 ,w.timestamp
                 ,w.compute_node_expiration_buffer_seconds
                 ,w.compute_node_wait_for_new_jobs_seconds
@@ -652,7 +654,7 @@ where
         let use_pending_failed_int = body.use_pending_failed.map(|v| if v { 1 } else { 0 });
         let enable_ro_crate_int = body.enable_ro_crate.map(|v| if v { 1 } else { 0 });
 
-        let workflow_result = match sqlx::query(
+        let workflow_result = match sqlx::query!(
             r#"
             INSERT INTO workflow
             (
@@ -676,29 +678,29 @@ where
                 slurm_config,
                 execution_config
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING id
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            RETURNING rowid
             "#,
+            body.name,
+            body.description,
+            body.user,
+            workflow_env,
+            body.timestamp,
+            compute_node_expiration_buffer_seconds,
+            compute_node_wait_for_new_jobs_seconds,
+            compute_node_ignore_workflow_completion,
+            compute_node_wait_for_healthy_database_minutes,
+            compute_node_min_time_for_new_jobs_seconds,
+            body.resource_monitor_config,
+            body.slurm_defaults,
+            use_pending_failed_int,
+            enable_ro_crate_int,
+            body.project,
+            body.metadata,
+            status_result[0].id,
+            body.slurm_config,
+            body.execution_config
         )
-        .bind(&body.name)
-        .bind(&body.description)
-        .bind(&body.user)
-        .bind(workflow_env)
-        .bind(&body.timestamp)
-        .bind(compute_node_expiration_buffer_seconds)
-        .bind(compute_node_wait_for_new_jobs_seconds)
-        .bind(compute_node_ignore_workflow_completion)
-        .bind(compute_node_wait_for_healthy_database_minutes)
-        .bind(compute_node_min_time_for_new_jobs_seconds)
-        .bind(&body.resource_monitor_config)
-        .bind(&body.slurm_defaults)
-        .bind(use_pending_failed_int)
-        .bind(enable_ro_crate_int)
-        .bind(&body.project)
-        .bind(&body.metadata)
-        .bind(status_result[0].id)
-        .bind(&body.slurm_config)
-        .bind(&body.execution_config)
         .fetch_all(&mut *tx)
         .await
         {
@@ -713,7 +715,7 @@ where
         };
 
         // Update workflow_status with the workflow_id back-reference
-        let workflow_id: i64 = workflow_result[0].get("id");
+        let workflow_id = workflow_result[0].id;
         let status_id = status_result[0].id;
         if let Err(e) = sqlx::query("UPDATE workflow_status SET workflow_id = $1 WHERE id = $2")
             .bind(workflow_id)
@@ -1269,8 +1271,8 @@ where
         );
 
         // First check if the workflow exists
-        match self.get_workflow(id, context).await? {
-            GetWorkflowResponse::SuccessfulResponse(_) => {}
+        let current_workflow = match self.get_workflow(id, context).await? {
+            GetWorkflowResponse::SuccessfulResponse(workflow) => workflow,
             GetWorkflowResponse::ForbiddenErrorResponse(err) => {
                 return Ok(UpdateWorkflowResponse::ForbiddenErrorResponse(err));
             }
@@ -1289,47 +1291,48 @@ where
             .map(|val| if val { 1 } else { 0 });
         let use_pending_failed_int = body.use_pending_failed.map(|val| if val { 1 } else { 0 });
         let enable_ro_crate_int = body.enable_ro_crate.map(|val| if val { 1 } else { 0 });
-        let env_is_provided = body.env.is_some();
-        let workflow_env = serialize_env_map(body.env.clone(), "workflow env")?;
+        if body.env.is_some() && body.env != current_workflow.env {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": "Cannot modify env - this field is immutable after workflow creation"
+            }));
+            return Ok(UpdateWorkflowResponse::DefaultErrorResponse(error_response));
+        }
 
         // Update the workflow record using COALESCE to only update non-null fields
-        let result = match sqlx::query(
+        let result = match sqlx::query!(
             r#"
             UPDATE workflow
             SET
-                name = COALESCE(?, name),
-                description = COALESCE(?, description),
-                user = COALESCE(?, user),
-                env = CASE WHEN ? THEN ? ELSE env END,
-                compute_node_expiration_buffer_seconds = COALESCE(?, compute_node_expiration_buffer_seconds),
-                compute_node_wait_for_new_jobs_seconds = COALESCE(?, compute_node_wait_for_new_jobs_seconds),
-                compute_node_ignore_workflow_completion = COALESCE(?, compute_node_ignore_workflow_completion),
-                compute_node_wait_for_healthy_database_minutes = COALESCE(?, compute_node_wait_for_healthy_database_minutes),
-                use_pending_failed = COALESCE(?, use_pending_failed),
-                enable_ro_crate = COALESCE(?, enable_ro_crate),
-                project = COALESCE(?, project),
-                metadata = COALESCE(?, metadata),
-                slurm_config = COALESCE(?, slurm_config),
-                execution_config = COALESCE(?, execution_config)
-            WHERE id = ?
+                name = COALESCE($1, name),
+                description = COALESCE($2, description),
+                user = COALESCE($3, user),
+                compute_node_expiration_buffer_seconds = COALESCE($4, compute_node_expiration_buffer_seconds),
+                compute_node_wait_for_new_jobs_seconds = COALESCE($5, compute_node_wait_for_new_jobs_seconds),
+                compute_node_ignore_workflow_completion = COALESCE($6, compute_node_ignore_workflow_completion),
+                compute_node_wait_for_healthy_database_minutes = COALESCE($7, compute_node_wait_for_healthy_database_minutes),
+                use_pending_failed = COALESCE($8, use_pending_failed),
+                enable_ro_crate = COALESCE($9, enable_ro_crate),
+                project = COALESCE($10, project),
+                metadata = COALESCE($11, metadata),
+                slurm_config = COALESCE($12, slurm_config),
+                execution_config = COALESCE($13, execution_config)
+            WHERE id = $14
             "#,
+            body.name,
+            body.description,
+            body.user,
+            body.compute_node_expiration_buffer_seconds,
+            body.compute_node_wait_for_new_jobs_seconds,
+            compute_node_ignore_workflow_completion_int,
+            body.compute_node_wait_for_healthy_database_minutes,
+            use_pending_failed_int,
+            enable_ro_crate_int,
+            body.project,
+            body.metadata,
+            body.slurm_config,
+            body.execution_config,
+            id
         )
-        .bind(&body.name)
-        .bind(&body.description)
-        .bind(&body.user)
-        .bind(env_is_provided)
-        .bind(workflow_env)
-        .bind(body.compute_node_expiration_buffer_seconds)
-        .bind(body.compute_node_wait_for_new_jobs_seconds)
-        .bind(compute_node_ignore_workflow_completion_int)
-        .bind(body.compute_node_wait_for_healthy_database_minutes)
-        .bind(use_pending_failed_int)
-        .bind(enable_ro_crate_int)
-        .bind(&body.project)
-        .bind(&body.metadata)
-        .bind(&body.slurm_config)
-        .bind(&body.execution_config)
-        .bind(id)
         .execute(self.context.pool.as_ref())
         .await
         {

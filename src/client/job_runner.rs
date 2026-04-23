@@ -577,30 +577,6 @@ impl JobRunner {
         })
     }
 
-    fn effective_job_env(
-        &self,
-        workflow_env: Option<&HashMap<String, String>>,
-        job_env: Option<&HashMap<String, String>>,
-    ) -> Option<HashMap<String, String>> {
-        let mut effective_env = workflow_env.cloned().unwrap_or_default();
-        if let Some(job_env) = job_env {
-            effective_env.extend(job_env.clone());
-        }
-        (!effective_env.is_empty()).then_some(effective_env)
-    }
-
-    fn fetch_workflow_env(
-        &self,
-    ) -> Result<Option<HashMap<String, String>>, Box<dyn std::error::Error>> {
-        let workflow = self.send_with_retries(|| {
-            Self::box_retry_error(apis::workflows_api::get_workflow(
-                &self.config,
-                self.workflow_id,
-            ))
-        })?;
-        Ok(workflow.env)
-    }
-
     /// Atomically claim a workflow action for execution.
     ///
     /// This is a convenience method that wraps [`utils::claim_action`] with
@@ -2088,21 +2064,6 @@ impl JobRunner {
                 );
 
                 self.last_job_claimed_time = Some(Instant::now());
-                let workflow_env = match self.fetch_workflow_env() {
-                    Ok(env) => env,
-                    Err(e) => {
-                        error!(
-                            "Failed to fetch workflow env after retries workflow_id={}: {}",
-                            self.workflow_id, e
-                        );
-                        for job in jobs {
-                            if let Some(job_id) = job.id {
-                                self.revert_job_to_ready(job_id);
-                            }
-                        }
-                        return;
-                    }
-                };
 
                 for job in jobs {
                     let job_id = job.id.expect("Job must have an ID");
@@ -2110,8 +2071,7 @@ impl JobRunner {
                         .resource_requirements_id
                         .expect("Job must have a resource_requirements_id");
                     let mut async_job = AsyncCliCommand::new(job);
-                    let effective_job_env =
-                        self.effective_job_env(workflow_env.as_ref(), async_job.job.env.as_ref());
+                    let effective_job_env = async_job.job.env.clone();
 
                     let job_rr = match self.send_with_retries(|| {
                         Self::box_retry_error(
@@ -2256,21 +2216,6 @@ impl JobRunner {
 
                 // Update last job claimed time since we got jobs
                 self.last_job_claimed_time = Some(Instant::now());
-                let workflow_env = match self.fetch_workflow_env() {
-                    Ok(env) => env,
-                    Err(e) => {
-                        error!(
-                            "Failed to fetch workflow env after retries workflow_id={}: {}",
-                            self.workflow_id, e
-                        );
-                        for job in jobs {
-                            if let Some(job_id) = job.id {
-                                self.revert_job_to_ready(job_id);
-                            }
-                        }
-                        return;
-                    }
-                };
 
                 // Start each job asynchronously
                 for job in jobs {
@@ -2279,8 +2224,7 @@ impl JobRunner {
                         .resource_requirements_id
                         .expect("Job must have a resource_requirements_id");
                     let mut async_job = AsyncCliCommand::new(job);
-                    let effective_job_env =
-                        self.effective_job_env(workflow_env.as_ref(), async_job.job.env.as_ref());
+                    let effective_job_env = async_job.job.env.clone();
 
                     let job_rr = match self.send_with_retries(|| {
                         Self::box_retry_error(
