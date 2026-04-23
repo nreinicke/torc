@@ -33,6 +33,7 @@ class WorkflowModel(BaseModel):
     compute_node_wait_for_new_jobs_seconds: Optional[StrictInt] = None
     description: Optional[StrictStr] = None
     enable_ro_crate: Optional[StrictBool] = None
+    env: Optional[Dict[str, StrictStr]] = None
     execution_config: Optional[StrictStr] = None
     id: Optional[StrictInt] = None
     metadata: Optional[StrictStr] = None
@@ -45,7 +46,7 @@ class WorkflowModel(BaseModel):
     timestamp: Optional[StrictStr] = None
     use_pending_failed: Optional[StrictBool] = None
     user: StrictStr
-    __properties: ClassVar[List[str]] = ["compute_node_expiration_buffer_seconds", "compute_node_ignore_workflow_completion", "compute_node_min_time_for_new_jobs_seconds", "compute_node_wait_for_healthy_database_minutes", "compute_node_wait_for_new_jobs_seconds", "description", "enable_ro_crate", "execution_config", "id", "metadata", "name", "project", "resource_monitor_config", "slurm_config", "slurm_defaults", "status_id", "timestamp", "use_pending_failed", "user"]
+    __properties: ClassVar[List[str]] = ["compute_node_expiration_buffer_seconds", "compute_node_ignore_workflow_completion", "compute_node_min_time_for_new_jobs_seconds", "compute_node_wait_for_healthy_database_minutes", "compute_node_wait_for_new_jobs_seconds", "description", "enable_ro_crate", "env", "execution_config", "id", "metadata", "name", "project", "resource_monitor_config", "slurm_config", "slurm_defaults", "status_id", "timestamp", "use_pending_failed", "user"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -190,6 +191,7 @@ class WorkflowModel(BaseModel):
             "compute_node_wait_for_new_jobs_seconds": obj.get("compute_node_wait_for_new_jobs_seconds"),
             "description": obj.get("description"),
             "enable_ro_crate": obj.get("enable_ro_crate"),
+            "env": obj.get("env"),
             "execution_config": obj.get("execution_config"),
             "id": obj.get("id"),
             "metadata": obj.get("metadata"),

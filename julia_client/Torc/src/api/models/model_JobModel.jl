@@ -119,6 +119,7 @@ function OpenAPI.validate_property(::Type{ JobModel }, name::Symbol, val)
 
 
 
+
     if name === Symbol("failure_handler_id")
         OpenAPI.validate_param(name, "JobModel", :format, val, "int64")
     end
