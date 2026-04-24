@@ -3848,11 +3848,35 @@ paths:
         required: true
       responses:
         '200':
-          description: ''
+          description: Successful response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkflowModel'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Unprocessable content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /workflows/{id}:
     get:
       tags:
@@ -3893,11 +3917,35 @@ paths:
         required: true
       responses:
         '200':
-          description: ''
+          description: Successful response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkflowModel'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Unprocessable content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       tags:
       - workflows
@@ -5398,6 +5446,15 @@ components:
           items:
             type: integer
             format: int64
+        env:
+          type:
+          - object
+          - 'null'
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
         failure_handler_id:
           type:
           - integer
@@ -6611,6 +6668,15 @@ components:
           type:
           - boolean
           - 'null'
+        env:
+          type:
+          - object
+          - 'null'
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
         execution_config:
           type:
           - string

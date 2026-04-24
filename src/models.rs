@@ -11,6 +11,17 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Returns true when `name` is a valid POSIX-style environment variable name:
+/// starts with a letter or underscore, followed by letters, digits, or underscores.
+pub fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 const fn default_trigger_count() -> i64 {
     0
 }
@@ -226,6 +237,8 @@ pub struct JobModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invocation_script: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<JobStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_compute_nodes: Option<ComputeNodeSchedule>,
@@ -416,6 +429,8 @@ pub struct WorkflowModel {
     pub user: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1076,6 +1091,7 @@ impl JobModel {
             name,
             command,
             invocation_script: None,
+            env: None,
             status: Some(JobStatus::Uninitialized),
             schedule_compute_nodes: None,
             cancel_on_blocking_job_failure: Some(true),
@@ -1393,6 +1409,7 @@ impl WorkflowModel {
             name,
             user,
             description: None,
+            env: None,
             timestamp: None,
             compute_node_expiration_buffer_seconds: None,
             compute_node_wait_for_new_jobs_seconds: Some(0),
@@ -1836,6 +1853,7 @@ mod tests {
             name: "wf".to_string(),
             user: "alice".to_string(),
             description: Some("desc".to_string()),
+            env: None,
             timestamp: Some("2026-03-20T12:00:00Z".to_string()),
             compute_node_expiration_buffer_seconds: Some(30),
             compute_node_wait_for_new_jobs_seconds: Some(0),
@@ -1899,6 +1917,7 @@ mod tests {
             name: "job".into(),
             command: "echo hi".into(),
             invocation_script: None,
+            env: None,
             status: Some(JobStatus::Ready),
             schedule_compute_nodes: None,
             cancel_on_blocking_job_failure: Some(true),

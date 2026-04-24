@@ -72,7 +72,7 @@ def mixed_workload(duration_seconds=60):
             if data_store:
                 chunk_idx = random.randint(0, len(data_store) - 1)
                 sample_data = data_store[chunk_idx][:100]
-                compute_hashes(sample_data)
+                _ =compute_hashes(sample_data)
 
             print(
                 f"[{elapsed:.1f}s] CPU phase: computed {len(fib_results)} Fibonacci numbers, "

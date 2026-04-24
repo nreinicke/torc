@@ -2125,6 +2125,7 @@ impl JobRunner {
                         .resource_requirements_id
                         .expect("Job must have a resource_requirements_id");
                     let mut async_job = AsyncCliCommand::new(job);
+                    let effective_job_env = async_job.job.env.clone();
 
                     let job_rr = match self.send_with_retries(|| {
                         Self::box_retry_error(
@@ -2184,6 +2185,7 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        effective_job_env.as_ref(),
                         gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
                         effective_mode,
@@ -2276,6 +2278,7 @@ impl JobRunner {
                         .resource_requirements_id
                         .expect("Job must have a resource_requirements_id");
                     let mut async_job = AsyncCliCommand::new(job);
+                    let effective_job_env = async_job.job.env.clone();
 
                     let job_rr = match self.send_with_retries(|| {
                         Self::box_retry_error(
@@ -2336,6 +2339,7 @@ impl JobRunner {
                         self.resource_monitor.as_ref(),
                         &self.config.base_path,
                         Some(&job_rr),
+                        effective_job_env.as_ref(),
                         gpu_visible_devices.as_deref(),
                         self.execution_config.limit_resources(),
                         effective_mode,

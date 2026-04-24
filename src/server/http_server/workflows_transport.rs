@@ -122,6 +122,9 @@ where
             CreateWorkflowResponse::NotFoundErrorResponse(err) => {
                 Ok(CreateWorkflowResponse::NotFoundErrorResponse(err))
             }
+            CreateWorkflowResponse::UnprocessableContentErrorResponse(err) => Ok(
+                CreateWorkflowResponse::UnprocessableContentErrorResponse(err),
+            ),
             CreateWorkflowResponse::DefaultErrorResponse(err) => {
                 Ok(CreateWorkflowResponse::DefaultErrorResponse(err))
             }
