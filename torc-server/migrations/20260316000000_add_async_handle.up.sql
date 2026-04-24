@@ -18,10 +18,12 @@ CREATE TABLE async_handle (
   FOREIGN KEY (workflow_id) REFERENCES workflow(id) ON DELETE CASCADE
 );
 
--- Enforce at most one active task per (workflow_id, operation).
--- SQLite supports partial indexes, which we use to scope uniqueness to "active" statuses.
-CREATE UNIQUE INDEX idx_async_handle_unique_active_workflow_operation
-  ON async_handle(workflow_id, operation)
+-- At most one active (queued or running) task per workflow. Different async operations on the
+-- same workflow would conflict on overlapping state, so we serialize them at the workflow level
+-- rather than per-operation. Partial indexes scope uniqueness to "active" statuses, so history
+-- is unconstrained.
+CREATE UNIQUE INDEX idx_async_handle_unique_active_workflow
+  ON async_handle(workflow_id)
   WHERE status IN ('queued', 'running');
 
 CREATE INDEX idx_async_handle_workflow_status ON async_handle(workflow_id, status);

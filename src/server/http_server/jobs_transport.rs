@@ -408,8 +408,8 @@ where
             .unwrap_or_else(|| "unknown".to_string());
 
         if async_.unwrap_or(false) {
-            let task = match self
-                .create_initialize_jobs_task(
+            let outcome = match self
+                .create_or_get_initialize_jobs_task(
                     id,
                     only_uninitialized,
                     clear_ephemeral_user_data,
@@ -417,16 +417,20 @@ where
                 )
                 .await
             {
-                Ok(task) => task,
-                Err(CreateTaskError::Conflict) => {
-                    let existing_task_id = self.get_existing_initialize_jobs_task_id(id).await?;
-                    let mut payload = serde_json::json!({
+                Ok(outcome) => outcome,
+                Err(CreateTaskError::Conflict {
+                    existing_task_id,
+                    existing_operation,
+                }) => {
+                    let payload = serde_json::json!({
                         "error": "Conflict",
-                        "message": "initialize_jobs already in progress",
+                        "message": format!(
+                            "workflow already has an active {} task",
+                            existing_operation
+                        ),
+                        "existing_task_id": existing_task_id,
+                        "existing_operation": existing_operation,
                     });
-                    if let Some(existing_task_id) = existing_task_id {
-                        payload["existing_task_id"] = existing_task_id.into();
-                    }
                     return Ok(InitializeJobsResponse::ConflictErrorResponse(
                         models::ErrorResponse::new(payload),
                     ));
@@ -434,19 +438,25 @@ where
                 Err(CreateTaskError::Api(err)) => return Err(err),
             };
 
-            let server = self.clone();
-            let task_id = task.id;
-            tokio::spawn(async move {
-                server
-                    .run_initialize_jobs_task(
-                        task_id,
-                        id,
-                        only_uninitialized,
-                        clear_ephemeral_user_data,
-                        username,
-                    )
-                    .await;
-            });
+            let task = match outcome {
+                TaskCreation::Created(task) => {
+                    let server = self.clone();
+                    let task_id = task.id;
+                    tokio::spawn(async move {
+                        server
+                            .run_initialize_jobs_task(
+                                task_id,
+                                id,
+                                only_uninitialized,
+                                clear_ephemeral_user_data,
+                                username,
+                            )
+                            .await;
+                    });
+                    task
+                }
+                TaskCreation::Existing(task) => task,
+            };
 
             return Ok(InitializeJobsResponse::AcceptedResponse(task));
         }

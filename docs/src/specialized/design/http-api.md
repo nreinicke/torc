@@ -94,9 +94,18 @@ POST /workflows/{id}/initialize_jobs?async=true
 
 Clients then either poll `GET /tasks/{id}` or listen on the workflow SSE stream for a
 `task_completed` event (the event's `data.task_id` identifies the task). A partial unique index
-scoped to `status IN ('queued', 'running')` enforces at most one active task per
-`(workflow_id, operation)`. If the server restarts while a task is in-flight, the task is reconciled
-to `failed` on startup so clients never see it stuck in `running`.
+scoped to `status IN ('queued', 'running')` enforces at most one active task per `workflow_id`.
+Different async operations on the same workflow would conflict on overlapping state, so they are
+serialized at the workflow level rather than per-operation.
+
+Repeated async requests of the **same** operation (e.g. two `initialize_jobs?async=true` calls on
+the same workflow) are idempotent: the server returns the existing task with `202 Accepted` rather
+than starting a new one. `409 Conflict` is reserved for cross-operation contention — when we add
+more async operations, asking for operation B while operation A is active will return the active A
+task and `409`.
+
+If the server restarts while a task is in-flight, the task is reconciled to `failed` on startup so
+clients never see it stuck in `running`.
 
 Task `status` progresses through `queued → running → succeeded | failed`.
 

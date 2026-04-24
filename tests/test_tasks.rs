@@ -13,6 +13,7 @@ use common::{
 use torc::client::apis::Error as ApiError;
 use torc::client::apis::tasks_api::GetTaskError;
 use torc::client::apis::{tasks_api, workflows_api};
+use torc::client::commands::tasks::{WaitError, wait_for_task};
 use torc::client::sse_client::SseConnection;
 use torc::models::{EventSeverity, TaskModel, TaskStatus};
 
@@ -83,9 +84,9 @@ fn test_initialize_jobs_async_creates_task_and_emits_sse(start_server: &ServerPr
 
 #[rstest]
 #[serial]
-fn test_initialize_jobs_async_concurrent_requests_yield_conflict(start_server: &ServerProcess) {
+fn test_initialize_jobs_async_concurrent_requests_return_same_task(start_server: &ServerProcess) {
     let server = start_server;
-    let workflow = common::create_test_workflow(&server.config, "tasks-test-conflict-workflow");
+    let workflow = common::create_test_workflow(&server.config, "tasks-test-idempotent-workflow");
     let workflow_id = workflow.id.unwrap();
 
     // Create enough jobs to make initialization take long enough for a concurrent request to race.
@@ -116,31 +117,20 @@ fn test_initialize_jobs_async_concurrent_requests_yield_conflict(start_server: &
 
     barrier.wait();
 
-    let mut ok_count = 0;
-    let mut conflict_count = 0;
+    let mut task_ids = Vec::new();
     for _ in 0..2 {
         let result = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("thread result");
-        match result {
-            Ok(value) => {
-                let _task: TaskModel =
-                    serde_json::from_value(value).expect("initialize_jobs_with_async TaskModel");
-                ok_count += 1;
-            }
-            Err(ApiError::ResponseError(resp)) => {
-                if resp.status.as_u16() == 409 {
-                    conflict_count += 1;
-                } else {
-                    panic!("Expected 409 conflict, got {}", resp.status);
-                }
-            }
-            Err(err) => panic!("Unexpected error from initialize_jobs_with_async: {}", err),
-        }
+        let value = result.expect("both concurrent calls should succeed with the same task");
+        let task: TaskModel = serde_json::from_value(value).expect("TaskModel response");
+        task_ids.push(task.id);
     }
 
-    assert_eq!(ok_count, 1, "expected one successful task creation");
-    assert_eq!(conflict_count, 1, "expected one conflict response");
+    assert_eq!(
+        task_ids[0], task_ids[1],
+        "concurrent initialize_jobs?async=true should be idempotent: both callers should receive the same task id"
+    );
 }
 
 #[rstest]
@@ -185,5 +175,64 @@ fn test_get_task_unauthorized_returns_404(
             );
         }
         Err(err) => panic!("unexpected error from get_task: {}", err),
+    }
+}
+
+#[rstest]
+#[serial]
+fn test_wait_for_task_returns_succeeded(start_server: &ServerProcess) {
+    // Exercises the wait_for_task helper that `torc workflows reinit` uses for auto-wait.
+    let server = start_server;
+    let workflow = common::create_test_workflow(&server.config, "tasks-test-wait-helper");
+    let workflow_id = workflow.id.unwrap();
+
+    let resp = workflows_api::initialize_jobs(
+        &server.config,
+        workflow_id,
+        Some(false),
+        Some(false),
+        Some(true),
+    )
+    .expect("initialize_jobs should accept async request");
+    let task: TaskModel = serde_json::from_value(resp).expect("TaskModel response");
+
+    let final_task = wait_for_task(&server.config, task.id, Some(30), 2)
+        .expect("wait_for_task should return a terminal task within the timeout");
+
+    assert_eq!(final_task.id, task.id);
+    assert_eq!(
+        final_task.status,
+        TaskStatus::Succeeded,
+        "expected initialize_jobs task to reach Succeeded; got {:?} (error: {:?})",
+        final_task.status,
+        final_task.error
+    );
+    assert!(
+        final_task.finished_at_ms.is_some(),
+        "terminal task should have finished_at_ms set"
+    );
+}
+
+#[rstest]
+#[serial]
+fn test_wait_for_task_times_out_for_unknown_task(start_server: &ServerProcess) {
+    // A far-future nonexistent task id: server returns 404, which is non-retryable,
+    // so wait_for_task should fail fast with Api, not hang.
+    let server = start_server;
+    match wait_for_task(&server.config, 9_999_999_999, Some(5), 1) {
+        Err(WaitError::Api(msg)) => {
+            assert!(
+                msg.contains("404") || msg.to_lowercase().contains("not found"),
+                "expected 404 in error message, got: {}",
+                msg
+            );
+        }
+        Err(WaitError::Timeout) => {
+            // Acceptable: if retries happened to mask the 404 it would be a timeout.
+        }
+        Ok(task) => panic!(
+            "unexpected successful wait for non-existent task: {:?}",
+            task
+        ),
     }
 }

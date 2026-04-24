@@ -44,14 +44,39 @@ fn handle_wait(
     poll_interval_secs: u64,
     format: &str,
 ) {
+    match wait_for_task(config, task_id, timeout_secs, poll_interval_secs) {
+        Ok(task) => {
+            print_task_result(&task, format);
+            exit_for_task(&task);
+        }
+        Err(WaitError::Timeout) => {
+            eprintln!("Timeout waiting for task {}", task_id);
+            std::process::exit(1);
+        }
+        Err(WaitError::Api(msg)) => {
+            eprintln!("Error getting task {}: {}", task_id, msg);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Wait for an async task to reach a terminal state.
+///
+/// Uses the workflow SSE stream to wake early on completion, with periodic polling as a
+/// fallback. Prints transient retry warnings to stderr but does not exit the process.
+pub fn wait_for_task(
+    config: &Configuration,
+    task_id: i64,
+    timeout_secs: Option<u64>,
+    poll_interval_secs: u64,
+) -> Result<TaskModel, WaitError> {
     let start = Instant::now();
     let deadline = timeout_secs.map(|limit| start + Duration::from_secs(limit));
 
-    let initial_task = get_task_with_retry(config, task_id, deadline);
+    let initial_task = get_task_with_retry(config, task_id, deadline)?;
 
     if is_task_terminal(&initial_task) {
-        print_task_result(&initial_task, format);
-        exit_for_task(&initial_task);
+        return Ok(initial_task);
     }
 
     let (tx, rx) = mpsc::channel::<()>();
@@ -81,10 +106,7 @@ fn handle_wait(
                         return;
                     }
                 }
-                Ok(None) => {
-                    // Connection closed
-                    return;
-                }
+                Ok(None) => return,
                 Err(SseError::ConnectionClosed) => return,
                 Err(SseError::Io(_)) => return,
                 Err(SseError::Request(_)) => return,
@@ -98,8 +120,7 @@ fn handle_wait(
         if let Some(deadline) = deadline
             && Instant::now() >= deadline
         {
-            eprintln!("Timeout waiting for task {}", task_id);
-            std::process::exit(1);
+            return Err(WaitError::Timeout);
         }
 
         // If SSE notifies us, refresh the task state immediately.
@@ -107,8 +128,7 @@ fn handle_wait(
             match tasks_api::get_task(config, task_id) {
                 Ok(task) => {
                     backoff.reset();
-                    print_task_result(&task, format);
-                    exit_for_task(&task);
+                    return Ok(task);
                 }
                 Err(e) if is_retryable_get_task_error(&e) => {
                     let delay = backoff.next_delay();
@@ -119,10 +139,7 @@ fn handle_wait(
                     let _ = rx.recv_timeout(delay);
                     continue;
                 }
-                Err(e) => {
-                    eprintln!("Error getting task {}: {}", task_id, e);
-                    std::process::exit(1);
-                }
+                Err(e) => return Err(WaitError::Api(e.to_string())),
             }
         }
 
@@ -130,8 +147,7 @@ fn handle_wait(
             Ok(task) => {
                 backoff.reset();
                 if is_task_terminal(&task) {
-                    print_task_result(&task, format);
-                    exit_for_task(&task);
+                    return Ok(task);
                 }
             }
             Err(e) if is_retryable_get_task_error(&e) => {
@@ -143,16 +159,19 @@ fn handle_wait(
                 let _ = rx.recv_timeout(delay);
                 continue;
             }
-            Err(e) => {
-                eprintln!("Error getting task {}: {}", task_id, e);
-                std::process::exit(1);
-            }
+            Err(e) => return Err(WaitError::Api(e.to_string())),
         }
 
         let wait = Duration::from_secs(poll_interval_secs.max(1));
         // If we can receive SSE completion within the interval, we wake early.
         let _ = rx.recv_timeout(wait);
     }
+}
+
+#[derive(Debug)]
+pub enum WaitError {
+    Timeout,
+    Api(String),
 }
 
 #[derive(Debug, Clone)]
@@ -186,18 +205,17 @@ fn get_task_with_retry(
     config: &Configuration,
     task_id: i64,
     deadline: Option<Instant>,
-) -> TaskModel {
+) -> Result<TaskModel, WaitError> {
     let mut backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
     loop {
         if let Some(deadline) = deadline
             && Instant::now() >= deadline
         {
-            eprintln!("Timeout waiting for task {}", task_id);
-            std::process::exit(1);
+            return Err(WaitError::Timeout);
         }
 
         match tasks_api::get_task(config, task_id) {
-            Ok(task) => return task,
+            Ok(task) => return Ok(task),
             Err(e) if is_retryable_get_task_error(&e) => {
                 let delay = backoff.next_delay();
                 eprintln!(
@@ -206,10 +224,7 @@ fn get_task_with_retry(
                 );
                 thread::sleep(delay);
             }
-            Err(e) => {
-                eprintln!("Error getting task {}: {}", task_id, e);
-                std::process::exit(1);
-            }
+            Err(e) => return Err(WaitError::Api(e.to_string())),
         }
     }
 }

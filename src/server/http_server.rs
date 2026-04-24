@@ -27,8 +27,20 @@ fn full_version() -> String {
 
 #[derive(Debug)]
 enum CreateTaskError {
-    Conflict,
+    /// A different async operation is already active for this workflow.
+    Conflict {
+        existing_task_id: i64,
+        existing_operation: String,
+    },
     Api(ApiError),
+}
+
+/// Result of `create_or_get_initialize_jobs_task`.
+pub(super) enum TaskCreation {
+    /// A new task was inserted; the caller must spawn the background work.
+    Created(models::TaskModel),
+    /// An identical task is already active; returned idempotently. No work spawned.
+    Existing(models::TaskModel),
 }
 macro_rules! forbidden_error {
     ($reason:expr) => {
@@ -341,16 +353,16 @@ impl<C> Server<C> {
         chrono::Utc::now().timestamp_millis()
     }
 
-    async fn get_existing_initialize_jobs_task_id(
+    /// Load the single active async task for a workflow, if any.
+    async fn get_active_task(
         &self,
         workflow_id: i64,
-    ) -> Result<Option<i64>, ApiError> {
+    ) -> Result<Option<models::TaskModel>, ApiError> {
         let row = sqlx::query(
             r#"
-            SELECT id
+            SELECT id, workflow_id, operation, status, created_at_ms, started_at_ms, finished_at_ms
             FROM async_handle
             WHERE workflow_id = ?1
-              AND operation = 'initialize_jobs'
               AND status IN ('queued', 'running')
             ORDER BY id DESC
             LIMIT 1
@@ -361,16 +373,40 @@ impl<C> Server<C> {
         .await
         .map_err(|e| ApiError(format!("Database error: {}", e)))?;
 
-        Ok(row.map(|r| r.get("id")))
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let status = row
+            .get::<String, _>("status")
+            .parse::<models::TaskStatus>()
+            .map_err(|e| {
+                error!(
+                    "Invalid async_handle.status for workflow_id={}: {}",
+                    workflow_id, e
+                );
+                ApiError("Database error".to_string())
+            })?;
+
+        Ok(Some(models::TaskModel {
+            id: row.get("id"),
+            workflow_id: row.get("workflow_id"),
+            operation: row.get("operation"),
+            status,
+            created_at_ms: row.get("created_at_ms"),
+            started_at_ms: row.get("started_at_ms"),
+            finished_at_ms: row.get("finished_at_ms"),
+            error: None,
+        }))
     }
 
-    async fn create_initialize_jobs_task(
+    async fn create_or_get_initialize_jobs_task(
         &self,
         workflow_id: i64,
         only_uninitialized: Option<bool>,
         clear_ephemeral_user_data: Option<bool>,
         requested_by: Option<String>,
-    ) -> Result<models::TaskModel, CreateTaskError> {
+    ) -> Result<TaskCreation, CreateTaskError> {
         let created_at_ms = Self::now_ms();
         let request_json = serde_json::json!({
             "only_uninitialized": only_uninitialized,
@@ -378,7 +414,7 @@ impl<C> Server<C> {
         })
         .to_string();
 
-        let result = sqlx::query(
+        let insert_result = sqlx::query(
             r#"
             INSERT INTO async_handle
               (workflow_id, operation, status, created_at_ms, requested_by, request_json)
@@ -391,23 +427,42 @@ impl<C> Server<C> {
         .bind(requested_by)
         .bind(request_json)
         .execute(self.pool.as_ref())
-        .await
-        .map_err(|e| {
-            if Self::is_sqlite_unique_constraint(&e) {
-                CreateTaskError::Conflict
-            } else {
-                CreateTaskError::Api(ApiError(format!("Database error: {}", e)))
-            }
-        })?;
+        .await;
 
-        let id = result.last_insert_rowid();
-        Ok(models::TaskModel::new(
-            id,
-            workflow_id,
-            "initialize_jobs".to_string(),
-            models::TaskStatus::Queued,
-            created_at_ms,
-        ))
+        match insert_result {
+            Ok(result) => Ok(TaskCreation::Created(models::TaskModel::new(
+                result.last_insert_rowid(),
+                workflow_id,
+                "initialize_jobs".to_string(),
+                models::TaskStatus::Queued,
+                created_at_ms,
+            ))),
+            Err(e) if Self::is_sqlite_unique_constraint(&e) => {
+                // Another active task exists for this workflow. If it's also initialize_jobs,
+                // return it idempotently; if it's a different operation, that's a real conflict.
+                let existing = self
+                    .get_active_task(workflow_id)
+                    .await
+                    .map_err(CreateTaskError::Api)?
+                    .ok_or_else(|| {
+                        CreateTaskError::Api(ApiError(
+                            "unique constraint violated but no active task found".to_string(),
+                        ))
+                    })?;
+                if existing.operation == "initialize_jobs" {
+                    Ok(TaskCreation::Existing(existing))
+                } else {
+                    Err(CreateTaskError::Conflict {
+                        existing_task_id: existing.id,
+                        existing_operation: existing.operation,
+                    })
+                }
+            }
+            Err(e) => Err(CreateTaskError::Api(ApiError(format!(
+                "Database error: {}",
+                e
+            )))),
+        }
     }
 
     fn is_sqlite_unique_constraint(err: &sqlx::Error) -> bool {

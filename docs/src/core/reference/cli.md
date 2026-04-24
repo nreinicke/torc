@@ -510,8 +510,10 @@ Reinitialize a workflow. This will reinitialize all jobs with a status of cancel
 pending, or terminated. Jobs with a status of done will also be reinitialized if an input_file or
 user_data record has changed.
 
-Reinitialization runs asynchronously on the server: the command returns a task ID as soon as the
-work is queued. Use [`torc tasks wait`](#torc-tasks) to block until it completes.
+Reinitialization runs asynchronously on the server. By default the command blocks until the
+server-side work finishes (using SSE, with polling as a fallback) and exits non-zero if the task
+fails. Use `--async` to return the task handle immediately — useful for scripting where you want to
+do other work and resume with [`torc tasks wait`](#torc-tasks) later.
 
 **Usage:** `torc workflows reinit [OPTIONS] [WORKFLOW_ID]`
 
@@ -523,6 +525,9 @@ work is queued. Use [`torc tasks wait`](#torc-tasks) to block until it completes
 
 - `--force` — If false, fail the operation if missing data is present. Default: `false`
 - `--dry-run` — Perform a dry run without making changes
+- `--async` — Return immediately with a task handle instead of waiting for reinit to finish
+- `--wait-timeout <SECONDS>` — When waiting (default mode), give up after this many seconds. If the
+  timeout expires, the task keeps running on the server; resume with `torc tasks wait <id>`
 
 ## `torc status`
 
@@ -781,8 +786,9 @@ expired.
 ###### **Example:**
 
 ```bash
-# Reinitialize and block until the server-side work finishes
-task_id=$(torc -f json workflows reinit 123 | jq -r .task_id)
+# Kick off a reinit and resume later
+task_id=$(torc -f json workflows reinit 123 --async | jq -r .task_id)
+# ... do other work ...
 torc tasks wait --timeout 300 "$task_id"
 ```
 
