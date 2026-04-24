@@ -20,7 +20,8 @@ use crate::models;
 
 use super::{
     ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg,
-    deserialize_env_map, escape_like_pattern, serialize_env_map,
+    deserialize_env_map, escape_like_pattern, normalize_env_map, serialize_env_map,
+    validate_env_map,
 };
 
 /// Trait defining workflow-related API operations
@@ -634,6 +635,16 @@ where
         };
 
         body.timestamp = Some(Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string());
+        if let Err(err) = validate_env_map(body.env.as_ref(), "workflow env") {
+            let _ = tx.rollback().await;
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": err.0
+            }));
+            return Ok(CreateWorkflowResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
+        body.env = normalize_env_map(body.env.take());
         let workflow_env = serialize_env_map(body.env.clone(), "workflow env")?;
         let compute_node_expiration_buffer_seconds = body.compute_node_expiration_buffer_seconds;
         // Default must be >= completion_check_interval_secs + job_completion_poll_interval
@@ -1291,11 +1302,14 @@ where
             .map(|val| if val { 1 } else { 0 });
         let use_pending_failed_int = body.use_pending_failed.map(|val| if val { 1 } else { 0 });
         let enable_ro_crate_int = body.enable_ro_crate.map(|val| if val { 1 } else { 0 });
-        if body.env.is_some() && body.env != current_workflow.env {
+        let body_env = normalize_env_map(body.env.clone());
+        if body.env.is_some() && body_env != current_workflow.env {
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": "Cannot modify env - this field is immutable after workflow creation"
             }));
-            return Ok(UpdateWorkflowResponse::DefaultErrorResponse(error_response));
+            return Ok(UpdateWorkflowResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
         }
 
         // Update the workflow record using COALESCE to only update non-null fields

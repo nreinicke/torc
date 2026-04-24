@@ -23,7 +23,7 @@ use crate::models::{self as models, JobStatus};
 
 use super::{
     ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg,
-    deserialize_env_map, normalize_env_map, serialize_env_map,
+    deserialize_env_map, normalize_env_map, serialize_env_map, validate_env_map,
 };
 
 /// Trait defining job-related API operations
@@ -173,32 +173,31 @@ impl JobsApiImpl {
         Self { context }
     }
 
-    async fn get_workflow_env(
-        &self,
+    async fn fetch_workflow_env<'e, E>(
+        executor: E,
         workflow_id: i64,
-    ) -> Result<Option<HashMap<String, String>>, ApiError> {
+    ) -> Result<Option<HashMap<String, String>>, ApiError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
         let env_json: Option<String> = sqlx::query_scalar("SELECT env FROM workflow WHERE id = ?")
             .bind(workflow_id)
-            .fetch_optional(self.context.pool.as_ref())
+            .fetch_optional(executor)
             .await
             .map_err(|e| database_error_with_msg(e, "Failed to fetch workflow env"))?
             .flatten();
         deserialize_env_map(env_json, "workflow env")
     }
 
-    async fn merge_workflow_and_job_env(
-        &self,
-        workflow_id: i64,
+    fn merge_env(
+        workflow_env: Option<&HashMap<String, String>>,
         job_env: Option<&HashMap<String, String>>,
-    ) -> Result<Option<HashMap<String, String>>, ApiError> {
-        let mut effective_env = self
-            .get_workflow_env(workflow_id)
-            .await?
-            .unwrap_or_default();
+    ) -> Option<HashMap<String, String>> {
+        let mut effective_env = workflow_env.cloned().unwrap_or_default();
         if let Some(job_env) = job_env {
             effective_env.extend(job_env.clone());
         }
-        Ok(normalize_env_map(Some(effective_env)))
+        normalize_env_map(Some(effective_env))
     }
 
     fn env_for_hash(env: Option<HashMap<String, String>>) -> Option<BTreeMap<String, String>> {
@@ -1170,17 +1169,21 @@ where
             context.get().0.clone()
         );
 
-        job.env = self
-            .merge_workflow_and_job_env(job.workflow_id, job.env.as_ref())
-            .await?;
         let invocation_script = job.invocation_script.clone();
-        let job_env = serialize_env_map(job.env.clone(), "job env")?;
         let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
         let supports_termination = job.supports_termination.unwrap_or(false);
         let priority = job.priority.unwrap_or(0);
         if priority < 0 {
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!("priority must be >= 0, got {} for job '{}'", priority, job.name)
+            }));
+            return Ok(CreateJobResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
+        if let Err(err) = validate_env_map(job.env.as_ref(), "job env") {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": err.0
             }));
             return Ok(CreateJobResponse::UnprocessableContentErrorResponse(
                 error_response,
@@ -1195,6 +1198,22 @@ where
             Ok(tx) => tx,
             Err(e) => {
                 return Err(database_error_with_msg(e, "Failed to begin transaction"));
+            }
+        };
+
+        let workflow_env = match Self::fetch_workflow_env(&mut *tx, job.workflow_id).await {
+            Ok(env) => env,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        job.env = Self::merge_env(workflow_env.as_ref(), job.env.as_ref());
+        let job_env = match serialize_env_map(job.env.clone(), "job env") {
+            Ok(env) => env,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
             }
         };
 
@@ -1382,13 +1401,46 @@ where
             Err(e) => return Err(database_error_with_msg(e, "Failed to begin transaction")),
         };
 
+        // Cache workflow env per workflow_id to avoid re-fetching inside the loop.
+        // In practice all jobs in a single request share one workflow, so this usually
+        // collapses to a single query.
+        let mut workflow_env_cache: HashMap<i64, Option<HashMap<String, String>>> = HashMap::new();
+
         // Process each job
         for mut job in body.jobs {
-            job.env = self
-                .merge_workflow_and_job_env(job.workflow_id, job.env.as_ref())
-                .await?;
+            if let Err(err) = validate_env_map(job.env.as_ref(), "job env") {
+                let _ = transaction.rollback().await;
+                let error_response = models::ErrorResponse::new(serde_json::json!({
+                    "message": err.0
+                }));
+                return Ok(CreateJobsResponse::UnprocessableContentErrorResponse(
+                    error_response,
+                ));
+            }
+            let workflow_env = match workflow_env_cache.get(&job.workflow_id) {
+                Some(cached) => cached.clone(),
+                None => {
+                    let fetched =
+                        match Self::fetch_workflow_env(&mut *transaction, job.workflow_id).await {
+                            Ok(env) => env,
+                            Err(e) => {
+                                let _ = transaction.rollback().await;
+                                return Err(e);
+                            }
+                        };
+                    workflow_env_cache.insert(job.workflow_id, fetched.clone());
+                    fetched
+                }
+            };
+            job.env = Self::merge_env(workflow_env.as_ref(), job.env.as_ref());
             let invocation_script = job.invocation_script.clone();
-            let job_env = serialize_env_map(job.env.clone(), "job env")?;
+            let job_env = match serialize_env_map(job.env.clone(), "job env") {
+                Ok(env) => env,
+                Err(e) => {
+                    let _ = transaction.rollback().await;
+                    return Err(e);
+                }
+            };
             let cancel_on_blocking_job_failure = job.cancel_on_blocking_job_failure.unwrap_or(true);
             let supports_termination = job.supports_termination.unwrap_or(false);
             let priority = job.priority.unwrap_or(0);
@@ -2181,8 +2233,6 @@ where
 
         // Update the job (only non-relationship fields)
         let status_int = body.status.map(|s| s.to_int());
-        let env_is_provided = body.env.is_some();
-        let job_env = serialize_env_map(body_env, "job env")?;
 
         if let Some(p) = body.priority
             && p < 0
@@ -2203,7 +2253,6 @@ where
                 ,status = COALESCE(?, status)
                 ,command = COALESCE(?, command)
                 ,invocation_script = COALESCE(?, invocation_script)
-                ,env = CASE WHEN ? THEN ? ELSE env END
                 ,cancel_on_blocking_job_failure = COALESCE(?, cancel_on_blocking_job_failure)
                 ,supports_termination = COALESCE(?, supports_termination)
                 ,resource_requirements_id = COALESCE(?, resource_requirements_id)
@@ -2216,8 +2265,6 @@ where
         .bind(status_int)
         .bind(body.command)
         .bind(body.invocation_script)
-        .bind(env_is_provided)
-        .bind(job_env)
         .bind(body.cancel_on_blocking_job_failure)
         .bind(body.supports_termination)
         .bind(body.resource_requirements_id)

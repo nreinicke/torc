@@ -3185,7 +3185,13 @@ pub async fn list_workflows(
     path = "/workflows",
     operation_id = "create_workflow",
     request_body = models::WorkflowModel,
-    responses((status = 200, body = models::WorkflowModel))
+    responses(
+        (status = 200, description = "Successful response", body = models::WorkflowModel),
+        (status = 403, description = "Forbidden", body = models::ErrorResponse),
+        (status = 404, description = "Not found", body = models::ErrorResponse),
+        (status = 422, description = "Unprocessable content", body = models::ErrorResponse),
+        (status = 500, description = "Internal server error", body = models::ErrorResponse)
+    )
 )]
 pub async fn create_workflow(
     State(state): State<LiveRouterState>,
@@ -3224,7 +3230,13 @@ pub async fn get_workflow(
     operation_id = "update_workflow",
     params(("id" = i64, Path, description = "Workflow ID")),
     request_body = models::WorkflowModel,
-    responses((status = 200, body = models::WorkflowModel))
+    responses(
+        (status = 200, description = "Successful response", body = models::WorkflowModel),
+        (status = 403, description = "Forbidden", body = models::ErrorResponse),
+        (status = 404, description = "Not found", body = models::ErrorResponse),
+        (status = 422, description = "Unprocessable content", body = models::ErrorResponse),
+        (status = 500, description = "Internal server error", body = models::ErrorResponse)
+    )
 )]
 pub async fn update_workflow(
     State(state): State<LiveRouterState>,

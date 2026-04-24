@@ -219,7 +219,19 @@ fn test_workflow_env_is_immutable_after_creation(start_server: &ServerProcess) {
     let result = apis::workflows_api::update_workflow(config, workflow_id, update);
     assert!(result.is_err(), "Updating workflow env should fail");
 
-    let err_str = format!("{:?}", result.unwrap_err());
+    let err = result.unwrap_err();
+    if let torc::client::apis::Error::ResponseError(response) = &err {
+        assert_eq!(
+            response.status.as_u16(),
+            422,
+            "Expected HTTP 422 for immutable env update, got: {}",
+            response.status
+        );
+    } else {
+        panic!("Expected ResponseError, got: {:?}", err);
+    }
+
+    let err_str = format!("{:?}", err);
     assert!(
         err_str.contains("immutable") || err_str.contains("Cannot modify env"),
         "Error should mention env immutability, got: {}",
@@ -232,7 +244,64 @@ fn test_workflow_env_is_immutable_after_creation(start_server: &ServerProcess) {
 }
 
 #[rstest]
-fn test_list_workflows_archived_filter_selects_env(start_server: &ServerProcess) {
+fn test_create_workflow_normalizes_empty_env_in_response(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let mut workflow = models::WorkflowModel::new(
+        "test_workflow_empty_env_normalized".to_string(),
+        "test_user".to_string(),
+    );
+    workflow.env = Some(HashMap::new());
+
+    let created =
+        apis::workflows_api::create_workflow(config, workflow).expect("Failed to create workflow");
+    assert_eq!(created.env, None);
+
+    let fetched = apis::workflows_api::get_workflow(config, created.id.unwrap())
+        .expect("Failed to fetch workflow");
+    assert_eq!(fetched.env, None);
+}
+
+#[rstest]
+fn test_create_workflow_rejects_invalid_env_name(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let mut workflow = models::WorkflowModel::new(
+        "test_workflow_invalid_env_name".to_string(),
+        "test_user".to_string(),
+    );
+    workflow.env = Some(HashMap::from([(
+        "BAD-NAME".to_string(),
+        "value".to_string(),
+    )]));
+
+    let result = apis::workflows_api::create_workflow(config, workflow);
+    assert!(
+        result.is_err(),
+        "Creating workflow with invalid env should fail"
+    );
+
+    let err = result.unwrap_err();
+    if let torc::client::apis::Error::ResponseError(response) = &err {
+        assert_eq!(
+            response.status.as_u16(),
+            422,
+            "Expected HTTP 422 for invalid env name, got: {}",
+            response.status
+        );
+    } else {
+        panic!("Expected ResponseError, got: {:?}", err);
+    }
+
+    let err_str = format!("{:?}", err);
+    assert!(
+        err_str.contains("BAD-NAME"),
+        "Error should mention invalid env key"
+    );
+}
+
+#[rstest]
+fn test_list_workflows_returns_env(start_server: &ServerProcess) {
     let config = &start_server.config;
 
     let mut workflow = models::WorkflowModel::new(

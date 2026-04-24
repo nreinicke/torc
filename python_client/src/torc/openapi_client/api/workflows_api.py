@@ -575,9 +575,9 @@ class WorkflowsApi:
             _path_params['limit'] = limit
         # process the query parameters
         if strict_scheduler_match is not None:
-
+            
             _query_params.append(('strict_scheduler_match', strict_scheduler_match))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -864,9 +864,9 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if limit is not None:
-
+            
             _query_params.append(('limit', limit))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -957,6 +957,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -1023,6 +1027,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -1089,6 +1097,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -1665,9 +1677,9 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if scheduler_config_id is not None:
-
+            
             _query_params.append(('scheduler_config_id', scheduler_config_id))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -2466,13 +2478,13 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if only_uninitialized is not None:
-
+            
             _query_params.append(('only_uninitialized', only_uninitialized))
-
+            
         if clear_ephemeral_user_data is not None:
-
+            
             _query_params.append(('clear_ephemeral_user_data', clear_ephemeral_user_data))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -3297,21 +3309,21 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if offset is not None:
-
+            
             _query_params.append(('offset', offset))
-
+            
         if limit is not None:
-
+            
             _query_params.append(('limit', limit))
-
+            
         if sort_by is not None:
-
+            
             _query_params.append(('sort_by', sort_by))
-
+            
         if reverse_sort is not None:
-
+            
             _query_params.append(('reverse_sort', reverse_sort))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -3622,21 +3634,21 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if offset is not None:
-
+            
             _query_params.append(('offset', offset))
-
+            
         if limit is not None:
-
+            
             _query_params.append(('limit', limit))
-
+            
         if sort_by is not None:
-
+            
             _query_params.append(('sort_by', sort_by))
-
+            
         if reverse_sort is not None:
-
+            
             _query_params.append(('reverse_sort', reverse_sort))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -4204,21 +4216,21 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if offset is not None:
-
+            
             _query_params.append(('offset', offset))
-
+            
         if limit is not None:
-
+            
             _query_params.append(('limit', limit))
-
+            
         if sort_by is not None:
-
+            
             _query_params.append(('sort_by', sort_by))
-
+            
         if reverse_sort is not None:
-
+            
             _query_params.append(('reverse_sort', reverse_sort))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -5080,37 +5092,37 @@ class WorkflowsApi:
         # process the path parameters
         # process the query parameters
         if offset is not None:
-
+            
             _query_params.append(('offset', offset))
-
+            
         if limit is not None:
-
+            
             _query_params.append(('limit', limit))
-
+            
         if sort_by is not None:
-
+            
             _query_params.append(('sort_by', sort_by))
-
+            
         if reverse_sort is not None:
-
+            
             _query_params.append(('reverse_sort', reverse_sort))
-
+            
         if name is not None:
-
+            
             _query_params.append(('name', name))
-
+            
         if user is not None:
-
+            
             _query_params.append(('user', user))
-
+            
         if description is not None:
-
+            
             _query_params.append(('description', description))
-
+            
         if is_archived is not None:
-
+            
             _query_params.append(('is_archived', is_archived))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -5382,9 +5394,9 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if dry_run is not None:
-
+            
             _query_params.append(('dry_run', dry_run))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -5656,9 +5668,9 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if failed_only is not None:
-
+            
             _query_params.append(('failed_only', failed_only))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -5930,9 +5942,9 @@ class WorkflowsApi:
             _path_params['id'] = id
         # process the query parameters
         if force is not None:
-
+            
             _query_params.append(('force', force))
-
+            
         # process the header parameters
         # process the form parameters
         # process the body parameter
@@ -6027,6 +6039,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -6097,6 +6113,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -6167,6 +6187,10 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "WorkflowModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '422': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -6535,3 +6559,5 @@ class WorkflowsApi:
             _host=_host,
             _request_auth=_request_auth
         )
+
+

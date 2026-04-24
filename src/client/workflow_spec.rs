@@ -13,9 +13,6 @@ use serde::{Deserialize, Serialize};
 
 static SRUN_MPI_MODE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9+_.-]+$").expect("hardcoded regex must compile"));
-static ENV_VAR_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").expect("hardcoded regex must compile")
-});
 
 pub(crate) fn validate_srun_mpi_value(value: &str) -> Result<(), String> {
     let trimmed = value.trim();
@@ -35,7 +32,7 @@ pub(crate) fn validate_srun_mpi_value(value: &str) -> Result<(), String> {
 }
 
 fn validate_env_var_name(name: &str) -> Result<(), String> {
-    if ENV_VAR_NAME_REGEX.is_match(name) {
+    if models::is_valid_env_var_name(name) {
         Ok(())
     } else {
         Err(format!(

@@ -11,6 +11,17 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Returns true when `name` is a valid POSIX-style environment variable name:
+/// starts with a letter or underscore, followed by letters, digits, or underscores.
+pub fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 const fn default_trigger_count() -> i64 {
     0
 }

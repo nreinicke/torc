@@ -93,3 +93,5 @@ class GetReadyJobRequirementsResponse(BaseModel):
             "num_jobs": obj.get("num_jobs")
         })
         return _obj
+
+

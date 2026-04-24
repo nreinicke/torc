@@ -1430,3 +1430,84 @@ fn test_update_job_rejects_env_changes(start_server: &ServerProcess) {
         err_str
     );
 }
+
+#[rstest]
+fn test_create_job_rejects_invalid_env_name(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let workflow = create_test_workflow(config, "test_invalid_job_env_workflow");
+    let workflow_id = workflow.id.unwrap();
+
+    let mut job = models::JobModel::new(
+        workflow_id,
+        "invalid_env_job".to_string(),
+        "echo invalid".to_string(),
+    );
+    job.env = Some(HashMap::from([(
+        "BAD-NAME".to_string(),
+        "value".to_string(),
+    )]));
+
+    let result = apis::jobs_api::create_job(config, job);
+    assert!(result.is_err(), "Creating job with invalid env should fail");
+
+    let err = result.unwrap_err();
+    if let torc::client::apis::Error::ResponseError(response) = &err {
+        assert_eq!(
+            response.status.as_u16(),
+            422,
+            "Expected HTTP 422 for invalid job env, got: {}",
+            response.status
+        );
+    } else {
+        panic!("Expected ResponseError, got: {:?}", err);
+    }
+
+    let err_str = format!("{:?}", err);
+    assert!(
+        err_str.contains("BAD-NAME"),
+        "Error should mention invalid env key"
+    );
+}
+
+#[rstest]
+fn test_bulk_create_jobs_rejects_invalid_env_name(start_server: &ServerProcess) {
+    let config = &start_server.config;
+
+    let workflow = create_test_workflow(config, "test_invalid_bulk_job_env_workflow");
+    let workflow_id = workflow.id.unwrap();
+
+    let mut job = models::JobModel::new(
+        workflow_id,
+        "invalid_bulk_env_job".to_string(),
+        "echo invalid".to_string(),
+    );
+    job.env = Some(HashMap::from([(
+        "BAD-NAME".to_string(),
+        "value".to_string(),
+    )]));
+
+    let result = apis::jobs_api::create_jobs(config, models::JobsModel { jobs: vec![job] });
+    assert!(
+        result.is_err(),
+        "Bulk creating jobs with invalid env should fail"
+    );
+
+    let err = result.unwrap_err();
+    if let torc::client::apis::Error::ResponseError(response) = &err {
+        assert_eq!(
+            response.status.as_u16(),
+            422,
+            "Expected HTTP 422 for invalid bulk job env, got: {}",
+            response.status
+        );
+    } else {
+        panic!("Expected ResponseError, got: {:?}", err);
+    }
+
+    let err_str = format!("{:?}", err);
+    assert!(
+        err_str.contains("BAD-NAME"),
+        "Error should mention invalid env key"
+    );
+}

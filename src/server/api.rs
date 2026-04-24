@@ -86,6 +86,26 @@ pub fn deserialize_env_map(
         .map(normalize_env_map)
 }
 
+pub fn validate_env_map(
+    env: Option<&HashMap<String, String>>,
+    field_name: &str,
+) -> Result<(), ApiError> {
+    let Some(env) = env else {
+        return Ok(());
+    };
+
+    for key in env.keys() {
+        if !crate::models::is_valid_env_var_name(key) {
+            return Err(ApiError(format!(
+                "Invalid {} key '{}'; expected [A-Za-z_][A-Za-z0-9_]*",
+                field_name, key
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Escape SQL LIKE wildcard characters in user input.
 /// Escapes `%`, `_`, and `\` with a backslash prefix.
 pub fn escape_like_pattern(input: &str) -> String {
@@ -97,7 +117,7 @@ pub fn escape_like_pattern(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{deserialize_env_map, escape_like_pattern};
+    use super::{deserialize_env_map, escape_like_pattern, validate_env_map};
     use std::collections::HashMap;
 
     #[test]
@@ -153,6 +173,31 @@ mod tests {
             env,
             Some(HashMap::from([("FOO".to_string(), "bar".to_string())]))
         );
+    }
+
+    #[test]
+    fn validate_env_map_accepts_valid_names() {
+        validate_env_map(
+            Some(&HashMap::from([
+                ("FOO".to_string(), "bar".to_string()),
+                ("_CACHE1".to_string(), "/tmp".to_string()),
+            ])),
+            "job env",
+        )
+        .expect("valid env map");
+    }
+
+    #[test]
+    fn validate_env_map_rejects_invalid_names() {
+        let err = validate_env_map(
+            Some(&HashMap::from([(
+                "BAD-NAME".to_string(),
+                "bar".to_string(),
+            )])),
+            "job env",
+        )
+        .expect_err("invalid env map should fail");
+        assert!(err.0.contains("BAD-NAME"));
     }
 }
 
