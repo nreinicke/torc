@@ -20,7 +20,8 @@ use crate::models;
 
 use super::{
     ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg,
-    escape_like_pattern,
+    deserialize_env_map, escape_like_pattern, normalize_env_map, serialize_env_map,
+    validate_env_map,
 };
 
 /// Trait defining workflow-related API operations
@@ -157,6 +158,7 @@ const WORKFLOW_COLUMNS: &[&str] = &[
     "name",
     "user",
     "description",
+    "env",
     "timestamp",
     "compute_node_expiration_buffer_seconds",
     "compute_node_wait_for_new_jobs_seconds",
@@ -185,6 +187,7 @@ const ALL_WORKFLOW_COLUMNS: &[&str] = &[
     "name",
     "user",
     "description",
+    "env",
     "timestamp",
     "compute_node_expiration_buffer_seconds",
     "compute_node_wait_for_new_jobs_seconds",
@@ -301,6 +304,7 @@ impl WorkflowsApiImpl {
                 ,w.name
                 ,w.user
                 ,w.description
+                ,w.env
                 ,w.timestamp
                 ,w.compute_node_expiration_buffer_seconds
                 ,w.compute_node_wait_for_new_jobs_seconds
@@ -327,6 +331,7 @@ impl WorkflowsApiImpl {
                 ,name
                 ,user
                 ,description
+                ,env
                 ,timestamp
                 ,compute_node_expiration_buffer_seconds
                 ,compute_node_wait_for_new_jobs_seconds
@@ -468,6 +473,7 @@ impl WorkflowsApiImpl {
                 name: record.get("name"),
                 user: record.get("user"),
                 description: record.get("description"),
+                env: deserialize_env_map(record.get("env"), "workflow env")?,
                 timestamp: Some(record.get("timestamp")),
                 compute_node_expiration_buffer_seconds: record
                     .try_get::<Option<i64>, _>("compute_node_expiration_buffer_seconds")
@@ -629,6 +635,17 @@ where
         };
 
         body.timestamp = Some(Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string());
+        if let Err(err) = validate_env_map(body.env.as_ref(), "workflow env") {
+            let _ = tx.rollback().await;
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": err.0
+            }));
+            return Ok(CreateWorkflowResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
+        body.env = normalize_env_map(body.env.take());
+        let workflow_env = serialize_env_map(body.env.clone(), "workflow env")?;
         let compute_node_expiration_buffer_seconds = body.compute_node_expiration_buffer_seconds;
         // Default must be >= completion_check_interval_secs + job_completion_poll_interval
         // to avoid workers exiting before dependent jobs are unblocked.
@@ -655,6 +672,7 @@ where
                 name,
                 description,
                 user,
+                env,
                 timestamp,
                 compute_node_expiration_buffer_seconds,
                 compute_node_wait_for_new_jobs_seconds,
@@ -671,12 +689,13 @@ where
                 slurm_config,
                 execution_config
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING rowid
             "#,
             body.name,
             body.description,
             body.user,
+            workflow_env,
             body.timestamp,
             compute_node_expiration_buffer_seconds,
             compute_node_wait_for_new_jobs_seconds,
@@ -691,7 +710,7 @@ where
             body.metadata,
             status_result[0].id,
             body.slurm_config,
-            body.execution_config,
+            body.execution_config
         )
         .fetch_all(&mut *tx)
         .await
@@ -928,6 +947,7 @@ where
                     name,
                     user,
                     description,
+                    env,
                     timestamp,
                     compute_node_expiration_buffer_seconds,
                     compute_node_wait_for_new_jobs_seconds,
@@ -957,6 +977,7 @@ where
                     name: row.get("name"),
                     user: row.get("user"),
                     description: row.get("description"),
+                    env: deserialize_env_map(row.get("env"), "workflow env")?,
                     timestamp: Some(row.get("timestamp")),
                     compute_node_expiration_buffer_seconds: row
                         .try_get::<Option<i64>, _>("compute_node_expiration_buffer_seconds")
@@ -1261,8 +1282,8 @@ where
         );
 
         // First check if the workflow exists
-        match self.get_workflow(id, context).await? {
-            GetWorkflowResponse::SuccessfulResponse(_) => {}
+        let current_workflow = match self.get_workflow(id, context).await? {
+            GetWorkflowResponse::SuccessfulResponse(workflow) => workflow,
             GetWorkflowResponse::ForbiddenErrorResponse(err) => {
                 return Ok(UpdateWorkflowResponse::ForbiddenErrorResponse(err));
             }
@@ -1281,6 +1302,15 @@ where
             .map(|val| if val { 1 } else { 0 });
         let use_pending_failed_int = body.use_pending_failed.map(|val| if val { 1 } else { 0 });
         let enable_ro_crate_int = body.enable_ro_crate.map(|val| if val { 1 } else { 0 });
+        let body_env = normalize_env_map(body.env.clone());
+        if body.env.is_some() && body_env != current_workflow.env {
+            let error_response = models::ErrorResponse::new(serde_json::json!({
+                "message": "Cannot modify env - this field is immutable after workflow creation"
+            }));
+            return Ok(UpdateWorkflowResponse::UnprocessableContentErrorResponse(
+                error_response,
+            ));
+        }
 
         // Update the workflow record using COALESCE to only update non-null fields
         let result = match sqlx::query!(
@@ -1402,10 +1432,10 @@ where
         // Update the workflow status
         let result = match sqlx::query!(
             r#"
-            UPDATE workflow_status 
-            SET run_id = ?, 
-                has_detected_need_to_run_completion_script = ?, 
-                is_canceled = ?, 
+            UPDATE workflow_status
+            SET run_id = ?,
+                has_detected_need_to_run_completion_script = ?,
+                is_canceled = ?,
                 is_archived = ?
             WHERE id = ?
             "#,

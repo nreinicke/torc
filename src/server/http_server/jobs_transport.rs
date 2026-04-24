@@ -180,6 +180,7 @@ fn claim_candidate_row(
         workflow_id: row.get("workflow_id"),
         name: row.get("name"),
         command: row.get("command"),
+        env: crate::server::api::deserialize_env_map(row.get("env"), "job env")?,
         invocation_script: row.get("invocation_script"),
         status: Some(models::JobStatus::Pending),
         schedule_compute_nodes: None,
@@ -225,6 +226,7 @@ async fn claim_backfill_jobs(
             job.name,
             job.command,
             job.invocation_script,
+            job.env,
             job.status,
             job.cancel_on_blocking_job_failure,
             job.supports_termination,
@@ -239,7 +241,7 @@ async fn claim_backfill_jobs(
             rr.runtime_s
         FROM job
         JOIN resource_requirements rr ON job.resource_requirements_id = rr.id
-        WHERE job.workflow_id = 
+        WHERE job.workflow_id =
         "#,
     );
     builder
@@ -1384,6 +1386,7 @@ where
                 job.name,
                 job.command,
                 job.invocation_script,
+                job.env,
                 job.status,
                 job.cancel_on_blocking_job_failure,
                 job.supports_termination,
@@ -1443,6 +1446,7 @@ where
                     job.name,
                     job.command,
                     job.invocation_script,
+                    job.env,
                     job.status,
                     job.cancel_on_blocking_job_failure,
                     job.supports_termination,

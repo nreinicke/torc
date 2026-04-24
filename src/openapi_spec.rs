@@ -614,12 +614,84 @@ fn openapi_doc() -> utoipa::openapi::OpenApi {
     doc
 }
 
+const ENV_VAR_NAME_PATTERN: &str = "^[A-Za-z_][A-Za-z0-9_]*$";
+
+/// Inject `propertyNames.pattern` on the `env` map property of the named schemas so the
+/// OpenAPI contract advertises the same key constraint the server enforces at runtime.
+fn apply_env_property_name_pattern_json(value: &mut Value) {
+    let Some(schemas) = value
+        .get_mut("components")
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(|schemas| schemas.as_object_mut())
+    else {
+        return;
+    };
+
+    for schema_name in ["JobModel", "WorkflowModel"] {
+        let Some(env) = schemas
+            .get_mut(schema_name)
+            .and_then(|schema| schema.get_mut("properties"))
+            .and_then(|props| props.get_mut("env"))
+            .and_then(|env| env.as_object_mut())
+        else {
+            continue;
+        };
+
+        let mut property_names = Map::new();
+        property_names.insert("type".to_string(), Value::String("string".to_string()));
+        property_names.insert(
+            "pattern".to_string(),
+            Value::String(ENV_VAR_NAME_PATTERN.to_string()),
+        );
+        env.insert("propertyNames".to_string(), Value::Object(property_names));
+    }
+}
+
+fn apply_env_property_name_pattern_yaml(value: &mut serde_yaml::Value) {
+    let Some(schemas) = value
+        .get_mut("components")
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(|schemas| schemas.as_mapping_mut())
+    else {
+        return;
+    };
+
+    for schema_name in ["JobModel", "WorkflowModel"] {
+        let Some(env) = schemas
+            .get_mut(serde_yaml::Value::String(schema_name.to_string()))
+            .and_then(|schema| schema.get_mut("properties"))
+            .and_then(|props| props.get_mut("env"))
+            .and_then(|env| env.as_mapping_mut())
+        else {
+            continue;
+        };
+
+        let mut property_names = serde_yaml::Mapping::new();
+        property_names.insert(
+            serde_yaml::Value::String("type".to_string()),
+            serde_yaml::Value::String("string".to_string()),
+        );
+        property_names.insert(
+            serde_yaml::Value::String("pattern".to_string()),
+            serde_yaml::Value::String(ENV_VAR_NAME_PATTERN.to_string()),
+        );
+        env.insert(
+            serde_yaml::Value::String("propertyNames".to_string()),
+            serde_yaml::Value::Mapping(property_names),
+        );
+    }
+}
+
 pub fn openapi_value() -> Value {
-    serde_json::to_value(openapi_doc()).expect("OpenAPI document should serialize")
+    let mut value = serde_json::to_value(openapi_doc()).expect("OpenAPI document should serialize");
+    apply_env_property_name_pattern_json(&mut value);
+    value
 }
 
 pub fn render_openapi_yaml() -> Result<String, serde_yaml::Error> {
-    serde_yaml::to_string(&openapi_doc())
+    let mut value = serde_yaml::to_value(openapi_doc())?;
+    apply_env_property_name_pattern_yaml(&mut value);
+    serde_yaml::to_string(&value)
 }
 
 pub fn parity_report(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {

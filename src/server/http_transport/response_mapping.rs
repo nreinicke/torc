@@ -460,7 +460,7 @@ map_response_unprocessable!(
 );
 map_response_unprocessable!(start_job_response, StartJobResponse, SuccessfulResponse);
 map_response_unprocessable!(retry_job_response, RetryJobResponse, SuccessfulResponse);
-map_response_std!(
+map_response_unprocessable!(
     create_workflow_response,
     CreateWorkflowResponse,
     SuccessfulResponse
@@ -475,7 +475,7 @@ map_response_std!(
     GetWorkflowResponse,
     SuccessfulResponse
 );
-map_response_std!(
+map_response_unprocessable!(
     update_workflow_response,
     UpdateWorkflowResponse,
     SuccessfulResponse
