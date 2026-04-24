@@ -139,7 +139,6 @@ impl From<&str> for ContentType {
 pub mod access_control_api;
 pub mod compute_nodes_api;
 pub mod configuration;
-pub mod default_api;
 pub mod events_api;
 pub mod failure_handlers_api;
 pub mod files_api;
@@ -154,6 +153,7 @@ pub mod scheduled_compute_nodes_api;
 pub mod slurm_schedulers_api;
 pub mod slurm_stats_api;
 pub mod system_api;
+pub mod tasks_api;
 pub mod user_data_api;
 pub mod workflow_actions_api;
 pub mod workflows_api;

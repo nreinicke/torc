@@ -15,7 +15,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
-use torc::client::{Configuration, apis, default_api, workflow_manager::WorkflowManager};
+use torc::client::{Configuration, apis, tasks_api, workflow_manager::WorkflowManager};
 use torc::config::TorcConfig;
 use torc::models;
 
@@ -47,7 +47,7 @@ fn wait_for_task_completion(
 ) -> torc::models::TaskModel {
     let start = std::time::Instant::now();
     while start.elapsed().as_secs() < timeout_secs {
-        let task = default_api::get_task(config, task_id).expect("Failed to get task");
+        let task = tasks_api::get_task(config, task_id).expect("Failed to get task");
         if matches!(
             task.status,
             models::TaskStatus::Succeeded | models::TaskStatus::Failed

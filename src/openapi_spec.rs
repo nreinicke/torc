@@ -219,6 +219,11 @@ mod openapi_ro_crate_paths {
     };
 }
 
+#[allow(unused_imports)]
+mod openapi_task_paths {
+    pub use crate::server::live_router::{__path_get_task, get_task};
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PingResponse {
     pub status: String,
@@ -531,7 +536,8 @@ fn resolve_schema_properties<'a>(
         openapi_user_data_paths::list_user_data,
         openapi_user_data_paths::delete_user_data,
         openapi_user_data_paths::get_user_data,
-        openapi_user_data_paths::update_user_data
+        openapi_user_data_paths::update_user_data,
+        openapi_task_paths::get_task
     ),
     components(schemas(
         PingResponse,

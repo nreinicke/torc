@@ -11,8 +11,8 @@ use common::{
 };
 
 use torc::client::apis::Error as ApiError;
-use torc::client::apis::default_api::GetTaskError;
-use torc::client::default_api;
+use torc::client::apis::tasks_api::GetTaskError;
+use torc::client::apis::{tasks_api, workflows_api};
 use torc::client::sse_client::SseConnection;
 use torc::models::{EventSeverity, TaskModel, TaskStatus};
 
@@ -48,13 +48,12 @@ fn test_initialize_jobs_async_creates_task_and_emits_sse(start_server: &ServerPr
         }
     });
 
-    let resp = default_api::initialize_jobs_with_async(
+    let resp = workflows_api::initialize_jobs(
         &server.config,
         workflow_id,
         Some(false),
         Some(false),
         Some(true),
-        None,
     )
     .expect("initialize_jobs_with_async should return 202 task");
 
@@ -69,7 +68,7 @@ fn test_initialize_jobs_async_creates_task_and_emits_sse(start_server: &ServerPr
     // Poll task state until completion
     let start = Instant::now();
     loop {
-        let current = default_api::get_task(&server.config, task.id).expect("get_task should work");
+        let current = tasks_api::get_task(&server.config, task.id).expect("get_task should work");
         if matches!(current.status, TaskStatus::Succeeded | TaskStatus::Failed) {
             assert_eq!(current.status, TaskStatus::Succeeded);
             break;
@@ -104,13 +103,12 @@ fn test_initialize_jobs_async_concurrent_requests_yield_conflict(start_server: &
         let tx = tx.clone();
         thread::spawn(move || {
             barrier.wait();
-            let result = default_api::initialize_jobs_with_async(
+            let result = workflows_api::initialize_jobs(
                 &config,
                 workflow_id,
                 Some(false),
                 Some(false),
                 Some(true),
-                None,
             );
             tx.send(result).ok();
         });
@@ -162,19 +160,18 @@ fn test_get_task_unauthorized_returns_404(
     );
     let workflow_id = workflow.id.unwrap();
 
-    let resp = default_api::initialize_jobs_with_async(
+    let resp = workflows_api::initialize_jobs(
         &owner_config,
         workflow_id,
         Some(false),
         Some(false),
         Some(true),
-        None,
     )
     .expect("initialize_jobs_with_async should return 202 task");
 
     let task: TaskModel = serde_json::from_value(resp).expect("TaskModel response");
 
-    match default_api::get_task(&outsider_config, task.id) {
+    match tasks_api::get_task(&outsider_config, task.id) {
         Ok(_) => panic!("expected 404 when unauthorized user queries a task"),
         Err(ApiError::ResponseError(resp)) => {
             assert_eq!(

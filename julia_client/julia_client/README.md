@@ -110,6 +110,7 @@ Class | Method
 *SlurmStatsApi* | [**list_slurm_stats**](docs/SlurmStatsApi.md#list_slurm_stats)<br/>**GET** /slurm_stats<br/>
 *SystemApi* | [**get_version**](docs/SystemApi.md#get_version)<br/>**GET** /version<br/>
 *SystemApi* | [**ping**](docs/SystemApi.md#ping)<br/>**GET** /ping<br/>
+*TasksApi* | [**get_task**](docs/TasksApi.md#get_task)<br/>**GET** /tasks/{id}<br/>
 *UserDataApi* | [**create_user_data**](docs/UserDataApi.md#create_user_data)<br/>**POST** /user_data<br/>
 *UserDataApi* | [**delete_all_user_data**](docs/UserDataApi.md#delete_all_user_data)<br/>**DELETE** /user_data<br/>
 *UserDataApi* | [**delete_user_data**](docs/UserDataApi.md#delete_user_data)<br/>**DELETE** /user_data/{id}<br/>

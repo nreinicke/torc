@@ -33,6 +33,7 @@ __all__ = [
     "SlurmSchedulersApi",
     "SlurmStatsApi",
     "SystemApi",
+    "TasksApi",
     "UserDataApi",
     "WorkflowActionsApi",
     "WorkflowsApi",
@@ -132,6 +133,7 @@ from torc.openapi_client.api.scheduled_compute_nodes_api import ScheduledCompute
 from torc.openapi_client.api.slurm_schedulers_api import SlurmSchedulersApi as SlurmSchedulersApi
 from torc.openapi_client.api.slurm_stats_api import SlurmStatsApi as SlurmStatsApi
 from torc.openapi_client.api.system_api import SystemApi as SystemApi
+from torc.openapi_client.api.tasks_api import TasksApi as TasksApi
 from torc.openapi_client.api.user_data_api import UserDataApi as UserDataApi
 from torc.openapi_client.api.workflow_actions_api import WorkflowActionsApi as WorkflowActionsApi
 from torc.openapi_client.api.workflows_api import WorkflowsApi as WorkflowsApi

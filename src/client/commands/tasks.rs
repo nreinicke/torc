@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::client::apis::Error as ApiError;
 use crate::client::apis::configuration::Configuration;
-use crate::client::apis::default_api;
+use crate::client::apis::tasks_api;
 use crate::client::sse_client::{SseConnection, SseError};
 use crate::models::{EventSeverity, TaskModel, TaskStatus};
 
@@ -104,7 +104,7 @@ fn handle_wait(
 
         // If SSE notifies us, refresh the task state immediately.
         if rx.try_recv().is_ok() {
-            match default_api::get_task(config, task_id) {
+            match tasks_api::get_task(config, task_id) {
                 Ok(task) => {
                     backoff.reset();
                     print_task_result(&task, format);
@@ -126,7 +126,7 @@ fn handle_wait(
             }
         }
 
-        match default_api::get_task(config, task_id) {
+        match tasks_api::get_task(config, task_id) {
             Ok(task) => {
                 backoff.reset();
                 if is_task_terminal(&task) {
@@ -196,7 +196,7 @@ fn get_task_with_retry(
             std::process::exit(1);
         }
 
-        match default_api::get_task(config, task_id) {
+        match tasks_api::get_task(config, task_id) {
             Ok(task) => return task,
             Err(e) if is_retryable_get_task_error(&e) => {
                 let delay = backoff.next_delay();
@@ -214,7 +214,7 @@ fn get_task_with_retry(
     }
 }
 
-fn is_retryable_get_task_error(err: &ApiError<default_api::GetTaskError>) -> bool {
+fn is_retryable_get_task_error(err: &ApiError<tasks_api::GetTaskError>) -> bool {
     match err {
         ApiError::Reqwest(_) | ApiError::Io(_) => true,
         ApiError::Serde(_) => false,

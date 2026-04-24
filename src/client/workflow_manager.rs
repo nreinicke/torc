@@ -1,6 +1,5 @@
 use crate::client::apis;
 use crate::client::apis::configuration::Configuration;
-use crate::client::apis::default_api;
 use crate::client::errors::TorcError;
 use crate::config::TorcConfig;
 use log::{self, debug, error, info, warn};
@@ -171,7 +170,7 @@ impl WorkflowManager {
     pub fn initialize_async(&self, force: bool) -> Result<TaskModel, TorcError> {
         self.check_workflow(force)?;
         self.cleanup_output_files(false)?;
-        match default_api::reset_workflow_status(&self.config, self.workflow_id, None, None) {
+        match apis::workflows_api::reset_workflow_status(&self.config, self.workflow_id, None) {
             Ok(_) => {}
             Err(err) => {
                 error!(
@@ -181,7 +180,7 @@ impl WorkflowManager {
                 return Err(TorcError::ApiError(err.to_string()));
             }
         }
-        match default_api::reset_job_status(&self.config, self.workflow_id, Some(false), None) {
+        match apis::workflows_api::reset_job_status(&self.config, self.workflow_id, Some(false)) {
             Ok(_) => {}
             Err(err) => {
                 error!(
@@ -386,7 +385,7 @@ impl WorkflowManager {
         }
 
         self.bump_run_id()?;
-        match default_api::reset_workflow_status(&self.config, self.workflow_id, None, None) {
+        match apis::workflows_api::reset_workflow_status(&self.config, self.workflow_id, None) {
             Ok(_) => {
                 info!("Reset status of workflow_id={}", self.workflow_id);
             }
@@ -408,13 +407,12 @@ impl WorkflowManager {
     }
 
     fn initialize_jobs_async(&self, only_uninitialized: bool) -> Result<TaskModel, TorcError> {
-        match default_api::initialize_jobs_with_async(
+        match apis::workflows_api::initialize_jobs(
             &self.config,
             self.workflow_id,
             Some(only_uninitialized),
             Some(false),
             Some(true),
-            None,
         ) {
             Ok(value) => serde_json::from_value::<TaskModel>(value)
                 .map_err(|e| TorcError::ApiError(format!("Failed to parse task response: {}", e))),
