@@ -490,7 +490,12 @@ Archive or unarchive one or more workflows
 
 ## `torc workflows init`
 
-Initialize a workflow, including all job statuses
+Initialize a workflow, including all job statuses.
+
+Initialization runs asynchronously on the server. By default the command blocks until the
+server-side work finishes (using SSE, with polling as a fallback) and exits non-zero if the task
+fails. Use `--async` to return the task handle immediately — useful for scripting where you want to
+do other work and resume with [`torc tasks wait`](#torc-tasks) later.
 
 **Usage:** `torc workflows init [OPTIONS] [WORKFLOW_ID]`
 
@@ -503,6 +508,9 @@ Initialize a workflow, including all job statuses
 - `--force` — If false, fail the operation if missing data is present. Default: `false`
 - `--no-prompts` — Skip confirmation prompt
 - `--dry-run` — Perform a dry run without making changes
+- `--async` — Return immediately with a task handle instead of waiting for init to finish
+- `--wait-timeout <SECONDS>` — When waiting (default mode), give up after this many seconds. If the
+  timeout expires, the task keeps running on the server; resume with `torc tasks wait <id>`
 
 ## `torc workflows reinit`
 

@@ -355,6 +355,12 @@ EXAMPLES:
         /// Perform a dry run without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Return immediately with a task handle instead of waiting for init to finish.
+        #[arg(long = "async")]
+        async_: bool,
+        /// When waiting, give up after this many seconds (default: wait forever)
+        #[arg(long)]
+        wait_timeout: Option<u64>,
     },
     /// Reinitialize a workflow after changes
     ///
@@ -1699,6 +1705,125 @@ fn handle_reset_status(
     }
 }
 
+/// Print a task handle and return without waiting. Used when callers pass `--async`.
+fn print_async_task_handle(
+    workflow_id: i64,
+    task: &models::TaskModel,
+    operation_label: &str,
+    format: &str,
+) {
+    if format == "json" {
+        let response = serde_json::json!({
+            "status": "success",
+            "message": format!("{} task created", operation_label),
+            "workflow_id": workflow_id,
+            "task_id": task.id,
+            "task_status": task.status,
+            "task_operation": task.operation,
+        });
+        println!("{}", serde_json::to_string_pretty(&response).unwrap());
+    } else {
+        eprintln!("{} task created:", operation_label);
+        println!("  Workflow ID: {}", workflow_id);
+        println!("  Task ID: {}", task.id);
+        println!("  Status: {}", task.status);
+        println!("  Next: torc tasks wait {}", task.id);
+    }
+}
+
+/// Wait for an async workflow task, print the outcome, and exit the process if it failed or
+/// timed out. Returns normally on success so the caller can continue printing its own summary.
+fn wait_for_workflow_task_or_exit(
+    config: &Configuration,
+    workflow_id: i64,
+    task: &models::TaskModel,
+    wait_timeout: Option<u64>,
+    operation_label: &str,
+    format: &str,
+) -> models::TaskModel {
+    if format != "json" {
+        eprintln!(
+            "{} workflow {} (task {})...",
+            operation_label, workflow_id, task.id
+        );
+    }
+    match crate::client::commands::tasks::wait_for_task(config, task.id, wait_timeout, 10) {
+        Ok(final_task) => {
+            let succeeded = final_task.status == models::TaskStatus::Succeeded;
+            if format == "json" {
+                let response = serde_json::json!({
+                    "status": if succeeded { "success" } else { "error" },
+                    "message": if succeeded {
+                        format!("{} task completed", operation_label)
+                    } else {
+                        format!("{} task finished with status {}", operation_label, final_task.status)
+                    },
+                    "workflow_id": workflow_id,
+                    "task_id": final_task.id,
+                    "task_status": final_task.status,
+                    "task_operation": final_task.operation,
+                    "error": final_task.error,
+                });
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            } else if !succeeded {
+                eprintln!(
+                    "{} task {} finished with status {}{}",
+                    operation_label,
+                    final_task.id,
+                    final_task.status,
+                    final_task
+                        .error
+                        .as_deref()
+                        .map(|e| format!(": {}", e))
+                        .unwrap_or_default()
+                );
+            }
+            if !succeeded {
+                std::process::exit(1);
+            }
+            final_task
+        }
+        Err(crate::client::commands::tasks::WaitError::Timeout) => {
+            if format == "json" {
+                let response = serde_json::json!({
+                    "status": "error",
+                    "message": format!(
+                        "Timeout waiting for {} task; it is still running",
+                        operation_label
+                    ),
+                    "workflow_id": workflow_id,
+                    "task_id": task.id,
+                    "hint": format!("torc tasks wait {}", task.id),
+                });
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            } else {
+                eprintln!(
+                    "Timeout waiting for {} task {} (still running); resume with: torc tasks wait {}",
+                    operation_label, task.id, task.id
+                );
+            }
+            std::process::exit(1);
+        }
+        Err(crate::client::commands::tasks::WaitError::Api(msg)) => {
+            if format == "json" {
+                let response = serde_json::json!({
+                    "status": "error",
+                    "message": format!("Error waiting for task: {}", msg),
+                    "workflow_id": workflow_id,
+                    "task_id": task.id,
+                });
+                println!("{}", serde_json::to_string_pretty(&response).unwrap());
+            } else {
+                eprintln!(
+                    "Error waiting for {} task {}: {}",
+                    operation_label, task.id, msg
+                );
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
 pub fn handle_reinitialize(
     config: &Configuration,
     workflow_id: &Option<i64>,
@@ -1810,116 +1935,23 @@ pub fn handle_reinitialize(
                 };
 
                 if async_ {
-                    // User explicitly asked for a handle; return it without waiting.
-                    if format == "json" {
-                        let success_response = serde_json::json!({
-                            "status": "success",
-                            "message": "Reinitialize task created",
-                            "workflow_id": selected_workflow_id,
-                            "task_id": task.id,
-                            "task_status": task.status,
-                            "task_operation": task.operation
-                        });
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&success_response).unwrap()
-                        );
-                    } else {
-                        eprintln!("Reinitialize task created:");
-                        println!("  Workflow ID: {}", selected_workflow_id);
-                        println!("  Task ID: {}", task.id);
-                        println!("  Status: {}", task.status);
-                        println!("  Next: torc tasks wait {}", task.id);
-                    }
+                    print_async_task_handle(selected_workflow_id, &task, "Reinitialize", format);
                     return;
                 }
 
-                // Default: block until the server-side reinit finishes.
+                wait_for_workflow_task_or_exit(
+                    config,
+                    selected_workflow_id,
+                    &task,
+                    wait_timeout,
+                    "Reinitializing",
+                    format,
+                );
                 if format != "json" {
                     eprintln!(
-                        "Reinitializing workflow {} (task {})...",
-                        selected_workflow_id, task.id
+                        "Successfully reinitialized workflow {}",
+                        selected_workflow_id
                     );
-                }
-                match crate::client::commands::tasks::wait_for_task(
-                    config,
-                    task.id,
-                    wait_timeout,
-                    10,
-                ) {
-                    Ok(final_task) => {
-                        let succeeded = final_task.status == crate::models::TaskStatus::Succeeded;
-                        if format == "json" {
-                            let response = serde_json::json!({
-                                "status": if succeeded { "success" } else { "error" },
-                                "message": if succeeded {
-                                    "Reinitialize task completed".to_string()
-                                } else {
-                                    format!(
-                                        "Reinitialize task finished with status {}",
-                                        final_task.status
-                                    )
-                                },
-                                "workflow_id": selected_workflow_id,
-                                "task_id": final_task.id,
-                                "task_status": final_task.status,
-                                "task_operation": final_task.operation,
-                                "error": final_task.error,
-                            });
-                            println!("{}", serde_json::to_string_pretty(&response).unwrap());
-                        } else if succeeded {
-                            eprintln!(
-                                "Successfully reinitialized workflow {}",
-                                selected_workflow_id
-                            );
-                        } else {
-                            eprintln!(
-                                "Reinitialize task {} finished with status {}{}",
-                                final_task.id,
-                                final_task.status,
-                                final_task
-                                    .error
-                                    .as_deref()
-                                    .map(|e| format!(": {}", e))
-                                    .unwrap_or_default()
-                            );
-                        }
-                        if !succeeded {
-                            std::process::exit(1);
-                        }
-                    }
-                    Err(crate::client::commands::tasks::WaitError::Timeout) => {
-                        if format == "json" {
-                            let response = serde_json::json!({
-                                "status": "error",
-                                "message": "Timeout waiting for reinitialize task; it is still running",
-                                "workflow_id": selected_workflow_id,
-                                "task_id": task.id,
-                                "hint": format!("torc tasks wait {}", task.id),
-                            });
-                            println!("{}", serde_json::to_string_pretty(&response).unwrap());
-                        } else {
-                            eprintln!(
-                                "Timeout waiting for reinitialize task {} (still running); resume with: torc tasks wait {}",
-                                task.id, task.id
-                            );
-                        }
-                        std::process::exit(1);
-                    }
-                    Err(crate::client::commands::tasks::WaitError::Api(msg)) => {
-                        if format == "json" {
-                            let response = serde_json::json!({
-                                "status": "error",
-                                "message": format!("Error waiting for task: {}", msg),
-                                "workflow_id": selected_workflow_id,
-                                "task_id": task.id,
-                            });
-                            println!("{}", serde_json::to_string_pretty(&response).unwrap());
-                        } else {
-                            eprintln!("Error waiting for reinitialize task {}: {}", task.id, msg);
-                        }
-                        std::process::exit(1);
-                    }
                 }
             }
         }
@@ -1930,12 +1962,15 @@ pub fn handle_reinitialize(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_initialize(
     config: &Configuration,
     workflow_id: &Option<i64>,
     force: bool,
     no_prompts: bool,
     dry_run: bool,
+    async_: bool,
+    wait_timeout: Option<u64>,
     format: &str,
 ) {
     let user_name = get_env_user_name();
@@ -2048,29 +2083,8 @@ pub fn handle_initialize(
                         std::process::exit(1);
                     }
                 }
-                match workflow_manager.initialize_async(force) {
-                    Ok(task) => {
-                        if format == "json" {
-                            let success_response = serde_json::json!({
-                                "status": "success",
-                                "message": "Initialization task created",
-                                "workflow_id": selected_workflow_id,
-                                "task_id": task.id,
-                                "task_status": task.status,
-                                "task_operation": task.operation
-                            });
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&success_response).unwrap()
-                            );
-                        } else {
-                            println!("Initialization task created:");
-                            println!("  Workflow ID: {}", selected_workflow_id);
-                            println!("  Task ID: {}", task.id);
-                            println!("  Status: {}", task.status);
-                            println!("  Next: torc tasks wait {}", task.id);
-                        }
-                    }
+                let task = match workflow_manager.initialize_async(force) {
+                    Ok(task) => task,
                     Err(e) => {
                         if format == "json" {
                             let error_response = serde_json::json!({
@@ -2087,6 +2101,23 @@ pub fn handle_initialize(
                         }
                         std::process::exit(1);
                     }
+                };
+
+                if async_ {
+                    print_async_task_handle(selected_workflow_id, &task, "Initialization", format);
+                    return;
+                }
+
+                wait_for_workflow_task_or_exit(
+                    config,
+                    selected_workflow_id,
+                    &task,
+                    wait_timeout,
+                    "Initializing",
+                    format,
+                );
+                if format != "json" {
+                    eprintln!("Successfully initialized workflow {}", selected_workflow_id);
                 }
             }
         }
@@ -2980,8 +3011,19 @@ pub fn handle_workflow_commands(config: &Configuration, command: &WorkflowComman
             force,
             no_prompts,
             dry_run,
+            async_,
+            wait_timeout,
         } => {
-            handle_initialize(config, workflow_id, *force, *no_prompts, *dry_run, format);
+            handle_initialize(
+                config,
+                workflow_id,
+                *force,
+                *no_prompts,
+                *dry_run,
+                *async_,
+                *wait_timeout,
+                format,
+            );
         }
         WorkflowCommands::Reinitialize {
             workflow_id,

@@ -3029,3 +3029,75 @@ fn test_reinitialize_async_with_file_change_runs_task_and_updates_statuses(
         "postprocess should be Blocked waiting on work1 to run again"
     );
 }
+
+/// Covers `torc workflows init`'s underlying async path: WorkflowManager::initialize_async
+/// returns a TaskModel, and waiting on that task takes the workflow's jobs from
+/// Uninitialized to Ready/Blocked.
+#[rstest]
+fn test_initialize_async_with_dependencies_completes_task_and_readies_jobs(
+    start_server: &ServerProcess,
+) {
+    let config = start_server.config.clone();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let jobs = create_diamond_workflow(&config, false, temp_dir.path());
+    let preprocess_id = jobs.get("preprocess").unwrap().id.unwrap();
+    let work1_id = jobs.get("work1").unwrap().id.unwrap();
+    let work2_id = jobs.get("work2").unwrap().id.unwrap();
+    let postprocess_id = jobs.get("postprocess").unwrap().id.unwrap();
+    let workflow_id = jobs.get("preprocess").unwrap().workflow_id;
+
+    // The diamond workflow's f1 input must exist on disk for init to proceed without force.
+    fs::write(temp_dir.path().join("f1.json"), r#"{"seed": 1}"#).expect("Failed to write f1");
+
+    let workflow =
+        apis::workflows_api::get_workflow(&config, workflow_id).expect("Failed to get workflow");
+    let torc_config = TorcConfig::load().unwrap_or_default();
+    let manager = WorkflowManager::new(config.clone(), torc_config, workflow);
+
+    // Before init the jobs sit uninitialized.
+    for id in [preprocess_id, work1_id, work2_id, postprocess_id] {
+        let job = apis::jobs_api::get_job(&config, id).expect("get_job");
+        assert_eq!(
+            job.status,
+            Some(models::JobStatus::Uninitialized),
+            "job {} should start Uninitialized, got {:?}",
+            id,
+            job.status
+        );
+    }
+
+    let task = manager
+        .initialize_async(false)
+        .expect("initialize_async should return a task");
+
+    assert_eq!(task.workflow_id, workflow_id);
+    assert_eq!(task.operation, "initialize_jobs");
+    assert_eq!(task.status, models::TaskStatus::Queued);
+
+    let final_task = wait_for_task_completion(&config, task.id, 30);
+    assert_eq!(
+        final_task.status,
+        models::TaskStatus::Succeeded,
+        "init task should succeed; error: {:?}",
+        final_task.error
+    );
+
+    // The root job is ready; downstream jobs are blocked on it.
+    let preprocess = apis::jobs_api::get_job(&config, preprocess_id).expect("get preprocess");
+    assert_eq!(
+        preprocess.status,
+        Some(models::JobStatus::Ready),
+        "preprocess should be Ready once dependencies are resolved"
+    );
+    for id in [work1_id, work2_id, postprocess_id] {
+        let job = apis::jobs_api::get_job(&config, id).expect("get_job");
+        assert_eq!(
+            job.status,
+            Some(models::JobStatus::Blocked),
+            "downstream job {} should be Blocked, got {:?}",
+            id,
+            job.status
+        );
+    }
+}
