@@ -167,7 +167,17 @@ impl WorkflowManager {
     ///
     /// Performs the same client-side pre-steps as `initialize()`, but runs the server-side
     /// initialization (`initialize_jobs`) asynchronously and returns a task record.
+    ///
+    /// If an async task is already in-flight for this workflow, returns that existing task
+    /// without mutating state — the pre-steps are owned by whoever started that task.
     pub fn initialize_async(&self, force: bool) -> Result<TaskModel, TorcError> {
+        if let Some(active) = self.get_active_task()? {
+            info!(
+                "workflow_id={} already has an active {} task (id={}); returning it",
+                self.workflow_id, active.operation, active.id
+            );
+            return Ok(active);
+        }
         self.check_workflow(force)?;
         self.cleanup_output_files(false)?;
         match apis::workflows_api::reset_workflow_status(&self.config, self.workflow_id, None) {
@@ -384,6 +394,17 @@ impl WorkflowManager {
             return Ok(None);
         }
 
+        // If an async task is already running for this workflow, return it without mutating
+        // state — the pre-steps below (bump_run_id, reset, process_changed_*) would otherwise
+        // double-apply on top of whatever that task is doing.
+        if let Some(active) = self.get_active_task()? {
+            info!(
+                "workflow_id={} already has an active {} task (id={}); returning it",
+                self.workflow_id, active.operation, active.id
+            );
+            return Ok(Some(active));
+        }
+
         self.bump_run_id()?;
         match apis::workflows_api::reset_workflow_status(&self.config, self.workflow_id, None) {
             Ok(_) => {
@@ -404,6 +425,14 @@ impl WorkflowManager {
 
         let task = self.initialize_jobs_async(true)?;
         Ok(Some(task))
+    }
+
+    /// Return the single active async task for this workflow, if any.
+    fn get_active_task(&self) -> Result<Option<TaskModel>, TorcError> {
+        match apis::workflows_api::get_active_task_for_workflow(&self.config, self.workflow_id) {
+            Ok(resp) => Ok(resp.task),
+            Err(err) => Err(TorcError::ApiError(err.to_string())),
+        }
     }
 
     fn initialize_jobs_async(&self, only_uninitialized: bool) -> Result<TaskModel, TorcError> {

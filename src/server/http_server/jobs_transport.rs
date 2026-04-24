@@ -421,13 +421,11 @@ where
                 Err(CreateTaskError::Conflict {
                     existing_task_id,
                     existing_operation,
+                    reason,
                 }) => {
                     let payload = serde_json::json!({
                         "error": "Conflict",
-                        "message": format!(
-                            "workflow already has an active {} task",
-                            existing_operation
-                        ),
+                        "message": reason,
                         "existing_task_id": existing_task_id,
                         "existing_operation": existing_operation,
                     });

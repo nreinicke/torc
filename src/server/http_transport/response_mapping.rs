@@ -561,6 +561,12 @@ map_response_std!(
     SuccessfulResponse
 );
 map_response_not_found_only!(get_task_response, GetTaskResponse, SuccessfulResponse);
+
+map_response_not_found_only!(
+    get_active_task_response,
+    GetActiveTaskResponse,
+    SuccessfulResponse
+);
 map_response_accepted_conflict!(
     initialize_jobs_response,
     InitializeJobsResponse,

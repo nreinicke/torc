@@ -3,6 +3,7 @@
 
 include("models/model_AccessCheckResponse.jl")
 include("models/model_AccessGroupModel.jl")
+include("models/model_ActiveTaskResponse.jl")
 include("models/model_ClaimActionRequest.jl")
 include("models/model_ClaimActionResponse.jl")
 include("models/model_ClaimJobsBasedOnResources.jl")

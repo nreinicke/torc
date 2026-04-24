@@ -48,6 +48,7 @@ __all__ = [
     "ApiException",
     "AccessCheckResponse",
     "AccessGroupModel",
+    "ActiveTaskResponse",
     "ClaimActionRequest",
     "ClaimActionResponse",
     "ClaimJobsBasedOnResources",
@@ -152,6 +153,7 @@ from torc.openapi_client.exceptions import ApiException as ApiException
 # import models into sdk package
 from torc.openapi_client.models.access_check_response import AccessCheckResponse as AccessCheckResponse
 from torc.openapi_client.models.access_group_model import AccessGroupModel as AccessGroupModel
+from torc.openapi_client.models.active_task_response import ActiveTaskResponse as ActiveTaskResponse
 from torc.openapi_client.models.claim_action_request import ClaimActionRequest as ClaimActionRequest
 from torc.openapi_client.models.claim_action_response import ClaimActionResponse as ClaimActionResponse
 from torc.openapi_client.models.claim_jobs_based_on_resources import ClaimJobsBasedOnResources as ClaimJobsBasedOnResources

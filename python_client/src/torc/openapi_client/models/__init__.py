@@ -15,6 +15,7 @@
 # import models into model package
 from torc.openapi_client.models.access_check_response import AccessCheckResponse
 from torc.openapi_client.models.access_group_model import AccessGroupModel
+from torc.openapi_client.models.active_task_response import ActiveTaskResponse
 from torc.openapi_client.models.claim_action_request import ClaimActionRequest
 from torc.openapi_client.models.claim_action_response import ClaimActionResponse
 from torc.openapi_client.models.claim_jobs_based_on_resources import ClaimJobsBasedOnResources

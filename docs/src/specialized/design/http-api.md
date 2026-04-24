@@ -98,11 +98,26 @@ scoped to `status IN ('queued', 'running')` enforces at most one active task per
 Different async operations on the same workflow would conflict on overlapping state, so they are
 serialized at the workflow level rather than per-operation.
 
-Repeated async requests of the **same** operation (e.g. two `initialize_jobs?async=true` calls on
-the same workflow) are idempotent: the server returns the existing task with `202 Accepted` rather
-than starting a new one. `409 Conflict` is reserved for cross-operation contention — when we add
-more async operations, asking for operation B while operation A is active will return the active A
-task and `409`.
+Repeated async requests of the **same** operation with the **same** parameters (e.g. two
+`initialize_jobs?async=true&only_uninitialized=false` calls on the same workflow) are idempotent:
+the server returns the existing task with `202 Accepted` rather than starting a new one.
+
+`409 Conflict` is returned when a task is already active and the new request can't safely be folded
+into it:
+
+- A different async operation is active (future-proofing for when more async operations exist).
+- The same operation is active but with different parameters — silently returning it would mean the
+  second caller gets different semantics than it asked for.
+
+The 409 response body includes `existing_task_id`, `existing_operation`, and a human-readable
+`message` explaining which case fired.
+
+### Probing without mutating
+
+`GET /workflows/{id}/active_task` returns `{ "task": TaskModel | null }`. Clients use this to detect
+an in-flight task before running their own pre-steps, so they don't double-apply side effects (like
+bumping the workflow's `run_id`) on top of someone else's task. Always 200; the body distinguishes
+"active task exists" from "workflow is idle" via `task == null`.
 
 If the server restarts while a task is in-flight, the task is reconciled to `failed` on startup so
 clients never see it stuck in `running`.

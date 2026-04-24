@@ -4197,6 +4197,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClaimActionResponse'
+  /workflows/{id}/active_task:
+    get:
+      tags:
+      - workflows
+      operationId: get_active_task_for_workflow
+      parameters:
+      - name: id
+        in: path
+        description: Workflow ID
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: 'Returns { task: null } when no task is active'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveTaskResponse'
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /workflows/{id}/cancel:
     put:
       tags:
@@ -5093,6 +5125,17 @@ components:
           format: int64
         name:
           type: string
+    ActiveTaskResponse:
+      type: object
+      description: |-
+        Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body,
+        even when the workflow currently has no active async task.
+      properties:
+        task:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/TaskModel'
+            description: The active task for this workflow, or null if none is in-flight.
     ClaimActionRequest:
       type: object
       properties:

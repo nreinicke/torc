@@ -112,6 +112,10 @@ pub fn app_router(state: LiveRouterState) -> Router {
         )
         .route("/torc-service/v1/ping", get(ping))
         .route("/torc-service/v1/tasks/{id}", get(get_task))
+        .route(
+            "/torc-service/v1/workflows/{id}/active_task",
+            get(get_active_task_for_workflow),
+        )
         .route("/torc-service/v1/version", get(version))
         .route(
             "/torc-service/v1/compute_nodes",
@@ -3311,6 +3315,34 @@ pub async fn get_task(
 ) -> Response<Body> {
     match state.server.get_task(id, &context).await {
         Ok(response) => get_task_response(response),
+        Err(err) => error_response(StatusCode::INTERNAL_SERVER_ERROR, err.0),
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "workflows",
+    path = "/workflows/{id}/active_task",
+    operation_id = "get_active_task_for_workflow",
+    params(("id" = i64, Path, description = "Workflow ID")),
+    responses(
+        (status = 200, body = models::ActiveTaskResponse,
+         description = "Returns { task: null } when no task is active"),
+        (status = 404, body = models::ErrorResponse, description = "Workflow not found"),
+        (status = 500, body = models::ErrorResponse)
+    )
+)]
+pub async fn get_active_task_for_workflow(
+    State(state): State<LiveRouterState>,
+    Path(id): Path<i64>,
+    Extension(context): Extension<EmptyContext>,
+) -> Response<Body> {
+    match state
+        .server
+        .get_active_task_for_workflow(id, &context)
+        .await
+    {
+        Ok(response) => get_active_task_response(response),
         Err(err) => error_response(StatusCode::INTERNAL_SERVER_ERROR, err.0),
     }
 }

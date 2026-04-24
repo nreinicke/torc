@@ -27,10 +27,13 @@ fn full_version() -> String {
 
 #[derive(Debug)]
 enum CreateTaskError {
-    /// A different async operation is already active for this workflow.
+    /// An async task is already active and the new request is incompatible with it.
+    /// Reasons: a different operation is in-flight, or the same operation was requested
+    /// with different parameters.
     Conflict {
         existing_task_id: i64,
         existing_operation: String,
+        reason: String,
     },
     Api(ApiError),
 }
@@ -354,13 +357,25 @@ impl<C> Server<C> {
     }
 
     /// Load the single active async task for a workflow, if any.
-    async fn get_active_task(
+    pub(super) async fn get_active_task(
         &self,
         workflow_id: i64,
     ) -> Result<Option<models::TaskModel>, ApiError> {
+        Ok(self
+            .get_active_task_with_request(workflow_id)
+            .await?
+            .map(|(task, _)| task))
+    }
+
+    /// Like `get_active_task` but also returns the serialized request parameters that
+    /// created the task, so callers can detect parameter mismatches on idempotent returns.
+    async fn get_active_task_with_request(
+        &self,
+        workflow_id: i64,
+    ) -> Result<Option<(models::TaskModel, Option<String>)>, ApiError> {
         let row = sqlx::query(
             r#"
-            SELECT id, workflow_id, operation, status, created_at_ms, started_at_ms, finished_at_ms
+            SELECT id, workflow_id, operation, status, created_at_ms, started_at_ms, finished_at_ms, request_json
             FROM async_handle
             WHERE workflow_id = ?1
               AND status IN ('queued', 'running')
@@ -388,7 +403,7 @@ impl<C> Server<C> {
                 ApiError("Database error".to_string())
             })?;
 
-        Ok(Some(models::TaskModel {
+        let task = models::TaskModel {
             id: row.get("id"),
             workflow_id: row.get("workflow_id"),
             operation: row.get("operation"),
@@ -397,7 +412,8 @@ impl<C> Server<C> {
             started_at_ms: row.get("started_at_ms"),
             finished_at_ms: row.get("finished_at_ms"),
             error: None,
-        }))
+        };
+        Ok(Some((task, row.get("request_json"))))
     }
 
     async fn create_or_get_initialize_jobs_task(
@@ -438,10 +454,11 @@ impl<C> Server<C> {
                 created_at_ms,
             ))),
             Err(e) if Self::is_sqlite_unique_constraint(&e) => {
-                // Another active task exists for this workflow. If it's also initialize_jobs,
-                // return it idempotently; if it's a different operation, that's a real conflict.
-                let existing = self
-                    .get_active_task(workflow_id)
+                // Another active task exists for this workflow. Return it idempotently only if
+                // it is the same operation AND was started with the same parameters — otherwise
+                // the new caller would silently get someone else's task and see the wrong work.
+                let (existing, existing_request_json) = self
+                    .get_active_task_with_request(workflow_id)
                     .await
                     .map_err(CreateTaskError::Api)?
                     .ok_or_else(|| {
@@ -449,14 +466,35 @@ impl<C> Server<C> {
                             "unique constraint violated but no active task found".to_string(),
                         ))
                     })?;
-                if existing.operation == "initialize_jobs" {
-                    Ok(TaskCreation::Existing(existing))
-                } else {
-                    Err(CreateTaskError::Conflict {
+
+                if existing.operation != "initialize_jobs" {
+                    return Err(CreateTaskError::Conflict {
                         existing_task_id: existing.id,
                         existing_operation: existing.operation,
-                    })
+                        reason: "different async operation is already active".to_string(),
+                    });
                 }
+
+                let new_params = serde_json::json!({
+                    "only_uninitialized": only_uninitialized,
+                    "clear_ephemeral_user_data": clear_ephemeral_user_data,
+                });
+                let existing_params = existing_request_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                if existing_params != new_params {
+                    return Err(CreateTaskError::Conflict {
+                        existing_task_id: existing.id,
+                        existing_operation: existing.operation,
+                        reason: format!(
+                            "initialize_jobs task already active with different parameters: existing={}, requested={}",
+                            existing_params, new_params
+                        ),
+                    });
+                }
+
+                Ok(TaskCreation::Existing(existing))
             }
             Err(e) => Err(CreateTaskError::Api(ApiError(format!(
                 "Database error: {}",
@@ -1770,6 +1808,32 @@ where
         context: &C,
     ) -> Result<GetWorkflowStatusResponse, ApiError> {
         self.transport_get_workflow_status(id, context).await
+    }
+
+    async fn get_active_task_for_workflow(
+        &self,
+        workflow_id: i64,
+        context: &C,
+    ) -> Result<GetActiveTaskResponse, ApiError> {
+        match self
+            .check_workflow_access_for_context(workflow_id, context)
+            .await
+        {
+            AccessCheckResult::Allowed => {}
+            AccessCheckResult::Denied(_) | AccessCheckResult::NotFound(_) => {
+                return Ok(GetActiveTaskResponse::NotFoundErrorResponse(
+                    not_found_error!("Workflow not found".to_string()),
+                ));
+            }
+            AccessCheckResult::InternalError(reason) => {
+                return Err(ApiError(reason));
+            }
+        }
+
+        let task = self.get_active_task(workflow_id).await?;
+        Ok(GetActiveTaskResponse::SuccessfulResponse(
+            models::ActiveTaskResponse { task },
+        ))
     }
 
     async fn get_task(&self, id: i64, context: &C) -> Result<GetTaskResponse, ApiError> {

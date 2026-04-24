@@ -215,6 +215,112 @@ fn test_wait_for_task_returns_succeeded(start_server: &ServerProcess) {
 
 #[rstest]
 #[serial]
+fn test_initialize_jobs_async_mismatched_params_returns_409(start_server: &ServerProcess) {
+    // P2: if a task is already running with one parameter set, a concurrent request with a
+    // different parameter set must be rejected rather than silently returned the existing task.
+    let server = start_server;
+    let workflow = common::create_test_workflow(&server.config, "tasks-test-param-mismatch");
+    let workflow_id = workflow.id.unwrap();
+
+    // Enough jobs to keep the first task running while the second request arrives.
+    for i in 0..50 {
+        let job_name = format!("job_{i}");
+        let _job = common::create_test_job(&server.config, workflow_id, &job_name);
+    }
+
+    // First request: only_uninitialized=false, clear_ephemeral_user_data=false
+    let first = workflows_api::initialize_jobs(
+        &server.config,
+        workflow_id,
+        Some(false),
+        Some(false),
+        Some(true),
+    )
+    .expect("first async init should be accepted");
+    let first_task: TaskModel = serde_json::from_value(first).expect("TaskModel");
+
+    // Second request with a different only_uninitialized value while the first is still active.
+    let second = workflows_api::initialize_jobs(
+        &server.config,
+        workflow_id,
+        Some(true), // mismatched
+        Some(false),
+        Some(true),
+    );
+
+    match second {
+        Err(ApiError::ResponseError(resp)) => {
+            assert_eq!(
+                resp.status.as_u16(),
+                409,
+                "expected 409 for parameter mismatch; got {}",
+                resp.status
+            );
+            assert!(
+                resp.content.contains("different parameters"),
+                "expected reason to mention different parameters, got: {}",
+                resp.content
+            );
+            assert!(
+                resp.content.contains(&first_task.id.to_string()),
+                "expected existing_task_id in payload, got: {}",
+                resp.content
+            );
+        }
+        Ok(value) => panic!("expected 409, got success: {}", value),
+        Err(err) => panic!("expected ResponseError 409, got: {}", err),
+    }
+}
+
+#[rstest]
+#[serial]
+fn test_get_active_task_returns_none_when_idle(start_server: &ServerProcess) {
+    let server = start_server;
+    let workflow = common::create_test_workflow(&server.config, "tasks-test-active-idle");
+    let workflow_id = workflow.id.unwrap();
+
+    let resp = workflows_api::get_active_task_for_workflow(&server.config, workflow_id)
+        .expect("active_task endpoint should succeed");
+    assert!(
+        resp.task.is_none(),
+        "expected no active task on an untouched workflow, got {:?}",
+        resp.task
+    );
+}
+
+#[rstest]
+#[serial]
+fn test_get_active_task_returns_running_task(start_server: &ServerProcess) {
+    let server = start_server;
+    let workflow = common::create_test_workflow(&server.config, "tasks-test-active-busy");
+    let workflow_id = workflow.id.unwrap();
+
+    for i in 0..50 {
+        let job_name = format!("job_{i}");
+        let _job = common::create_test_job(&server.config, workflow_id, &job_name);
+    }
+
+    let started = workflows_api::initialize_jobs(
+        &server.config,
+        workflow_id,
+        Some(false),
+        Some(false),
+        Some(true),
+    )
+    .expect("async init should be accepted");
+    let started_task: TaskModel = serde_json::from_value(started).expect("TaskModel");
+
+    let resp = workflows_api::get_active_task_for_workflow(&server.config, workflow_id)
+        .expect("active_task endpoint should succeed");
+    let active = resp
+        .task
+        .expect("expected an active task while init is running");
+    assert_eq!(active.id, started_task.id);
+    assert_eq!(active.operation, "initialize_jobs");
+}
+
+#[rstest]
+#[serial]
 fn test_wait_for_task_times_out_for_unknown_task(start_server: &ServerProcess) {
     // A far-future nonexistent task id: server returns 404, which is non-retryable,
     // so wait_for_task should fail fast with Api, not hang.

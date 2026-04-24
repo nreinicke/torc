@@ -2167,3 +2167,13 @@ impl TaskModel {
         }
     }
 }
+
+/// Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body,
+/// even when the workflow currently has no active async task.
+#[cfg_attr(feature = "openapi-codegen", derive(utoipa::ToSchema))]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ActiveTaskResponse {
+    /// The active task for this workflow, or null if none is in-flight.
+    #[serde(rename = "task")]
+    pub task: Option<TaskModel>,
+}

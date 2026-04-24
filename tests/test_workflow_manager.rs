@@ -3030,6 +3030,60 @@ fn test_reinitialize_async_with_file_change_runs_task_and_updates_statuses(
     );
 }
 
+/// P1: reinitialize_async must NOT mutate workflow state (bump_run_id, reset status,
+/// process changed files, etc.) when an async task is already in-flight for this workflow.
+/// If it did, a client calling reinit while the previous reinit was still running would
+/// double-apply those side effects on top of the active task.
+#[rstest]
+fn test_reinitialize_async_returns_existing_task_without_mutating(start_server: &ServerProcess) {
+    let config = start_server.config.clone();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let jobs = create_diamond_workflow(&config, false, temp_dir.path());
+    let workflow_id = jobs.get("preprocess").unwrap().workflow_id;
+
+    // f1 must exist on disk so reinit's pre-steps don't fail on missing input.
+    fs::write(temp_dir.path().join("f1.json"), r#"{"seed": 1}"#).expect("Failed to write f1");
+
+    let workflow =
+        apis::workflows_api::get_workflow(&config, workflow_id).expect("Failed to get workflow");
+    let torc_config = TorcConfig::load().unwrap_or_default();
+    let manager = WorkflowManager::new(config.clone(), torc_config, workflow);
+
+    // First reinit: creates the task AND bumps run_id.
+    let first = manager
+        .reinitialize_async(false, false)
+        .expect("first reinit should succeed")
+        .expect("non-dry-run should return a task");
+
+    let status_after_first = apis::workflows_api::get_workflow_status(&config, workflow_id)
+        .expect("get_workflow_status");
+    let run_id_after_first = status_after_first.run_id;
+
+    // Second reinit while the first task is still active: must return the existing task
+    // with the *same* task id and NOT bump run_id again.
+    let second = manager
+        .reinitialize_async(false, false)
+        .expect("second reinit should be idempotent while first is active")
+        .expect("non-dry-run should return a task");
+
+    assert_eq!(
+        second.id, first.id,
+        "second reinit should return the existing task's id, not a new one"
+    );
+
+    let status_after_second = apis::workflows_api::get_workflow_status(&config, workflow_id)
+        .expect("get_workflow_status");
+    assert_eq!(
+        status_after_second.run_id, run_id_after_first,
+        "run_id must not be bumped again when a task is already active; got {} then {}",
+        run_id_after_first, status_after_second.run_id
+    );
+
+    // Let the task finish so the test doesn't leak.
+    let _final_task = wait_for_task_completion(&config, first.id, 30);
+}
+
 /// Covers `torc workflows init`'s underlying async path: WorkflowManager::initialize_async
 /// returns a TaskModel, and waiting on that task takes the workflow's jobs from
 /// Uninitialized to Ready/Blocked.

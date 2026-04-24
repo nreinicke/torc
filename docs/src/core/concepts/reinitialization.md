@@ -122,8 +122,13 @@ A few properties worth knowing:
 
 - **One active task per workflow.** At most one async task is in-flight for a given workflow at a
   time (different async operations would conflict on overlapping state, so they are serialized).
-  Calling `reinit` while a previous reinit is still running is idempotent: you receive the existing
-  task instead of a new one.
+  Calling `reinit` while a previous reinit is still running is idempotent: the client checks for an
+  active task first and returns it, so client-side pre-steps (run_id bump, status reset,
+  changed-file processing) don't double-apply on top of whatever that task is doing.
+- **Mismatched parameters return 409.** If a reinit is active with one set of parameters and a
+  second caller asks with different parameters (e.g. a different `only_uninitialized`), the server
+  refuses with `409 Conflict` rather than silently returning the running task with the wrong
+  semantics.
 - **Crash-safe.** Tasks are persisted server-side. If the server restarts while a reinit is
   in-flight, the task is marked `failed` with an explanatory error on startup, so clients polling or
   waiting receive a terminal state rather than hanging.
