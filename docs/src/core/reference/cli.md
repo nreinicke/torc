@@ -14,6 +14,7 @@ This document contains the help content for the `torc` command-line program.
 - [`torc compute-nodes`](#torc-compute-nodes)
 - [`torc files`](#torc-files)
 - [`torc jobs`](#torc-jobs)
+- [`torc tasks`](#torc-tasks)
 - [`torc job-dependencies`](#torc-job-dependencies)
 - [`torc resource-requirements`](#torc-resource-requirements)
 - [`torc events`](#torc-events)
@@ -509,6 +510,9 @@ Reinitialize a workflow. This will reinitialize all jobs with a status of cancel
 pending, or terminated. Jobs with a status of done will also be reinitialized if an input_file or
 user_data record has changed.
 
+Reinitialization runs asynchronously on the server: the command returns a task ID as soon as the
+work is queued. Use [`torc tasks wait`](#torc-tasks) to block until it completes.
+
 **Usage:** `torc workflows reinit [OPTIONS] [WORKFLOW_ID]`
 
 ###### **Arguments:**
@@ -745,6 +749,41 @@ torc workflows correct-resources 123 --memory-multiplier 1.5 --cpu-multiplier 1.
 
 # Output as JSON for programmatic use
 torc -f json workflows correct-resources 123 --dry-run
+```
+
+## `torc tasks`
+
+Wait for async tasks created by commands such as `torc workflows reinit`.
+
+**Usage:** `torc tasks <COMMAND>`
+
+###### **Commands:**
+
+- `wait` — Block until a task reaches a terminal state (`succeeded` or `failed`)
+
+### `torc tasks wait`
+
+Wait for a task to complete. Uses the workflow SSE stream to wake early on completion, with periodic
+polling as a fallback. Exits with status 0 when the task succeeded, or 1 if it failed or the timeout
+expired.
+
+**Usage:** `torc tasks wait [OPTIONS] <ID>`
+
+###### **Arguments:**
+
+- `<ID>` — Task ID returned by the async operation that created it
+
+###### **Options:**
+
+- `--timeout <SECONDS>` — Give up after this many seconds (default: wait forever)
+- `--poll-fallback-interval <SECONDS>` — How often to poll if no SSE event arrives. Default: `10`
+
+###### **Example:**
+
+```bash
+# Reinitialize and block until the server-side work finishes
+task_id=$(torc -f json workflows reinit 123 | jq -r .task_id)
+torc tasks wait --timeout 300 "$task_id"
 ```
 
 ## `torc compute-nodes`

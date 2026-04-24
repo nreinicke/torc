@@ -101,6 +101,32 @@ Dry run: 5 jobs would be reset due to changed inputs
   - generate_report
 ```
 
+## Async Reinitialization
+
+Reinitialization runs asynchronously on the server: `torc workflows reinit` returns as soon as the
+work is queued, with a task ID that identifies the background operation. This matters for workflows
+with many jobs, where rebuilding the dependency graph can take several seconds to minutes.
+
+To block on completion, use `torc tasks wait`:
+
+```bash
+# Capture the task ID from the reinit response
+task_id=$(torc -f json workflows reinit <workflow_id> | jq -r .task_id)
+
+# Wake on SSE completion, with polling as a fallback
+torc tasks wait --timeout 300 "$task_id"
+```
+
+A few properties worth knowing:
+
+- **One active task per workflow operation.** If you invoke `reinit` again while a previous task is
+  still running, the second call returns `409 Conflict` with the existing task's ID. Wait on that
+  task instead of starting a new one.
+- **Crash-safe.** Tasks are persisted server-side. If the server restarts while a reinit is
+  in-flight, the task is marked `failed` with an explanatory error on startup, so clients polling or
+  waiting receive a terminal state rather than hanging.
+- **Dry-run is synchronous.** `--dry-run` does not create a task; it returns the preview directly.
+
 ## Retrying Failed Jobs
 
 **Important:** Reinitialization does not automatically retry failed jobs. To retry failed jobs, use

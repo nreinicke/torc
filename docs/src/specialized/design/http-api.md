@@ -70,6 +70,7 @@ POST   /workflows/{id}/reset_status              # Reset workflow state
 POST   /workflows/{id}/process_changed_job_inputs # Detect and handle input changes
 POST   /jobs/{id}/complete                       # Mark job completed
 POST   /jobs/{id}/manage_status_change           # Transition job status
+GET    /tasks/{id}                               # Poll async task status
 ```
 
 **When to use action endpoints:**
@@ -78,6 +79,26 @@ POST   /jobs/{id}/manage_status_change           # Transition job status
 - Operations requiring atomicity (like `claim_next_jobs`)
 - State machine transitions
 - Batch operations
+
+### Asynchronous Actions
+
+Some actions are long-running and can be invoked asynchronously by passing `?async=true`. The server
+persists a task row, returns `202 Accepted` with a `TaskModel`, and performs the work in the
+background. Currently supported on `POST /workflows/{id}/initialize_jobs`.
+
+```
+POST /workflows/{id}/initialize_jobs?async=true
+  → 202 Accepted { id, workflow_id, operation, status: "queued", created_at_ms, ... }
+  → 409 Conflict if an active task already exists for this (workflow, operation)
+```
+
+Clients then either poll `GET /tasks/{id}` or listen on the workflow SSE stream for a
+`task_completed` event (the event's `data.task_id` identifies the task). A partial unique index
+scoped to `status IN ('queued', 'running')` enforces at most one active task per
+`(workflow_id, operation)`. If the server restarts while a task is in-flight, the task is reconciled
+to `failed` on startup so clients never see it stuck in `running`.
+
+Task `status` progresses through `queued → running → succeeded | failed`.
 
 ## HTTP Methods
 
@@ -184,9 +205,11 @@ Or with additional context:
 | ---- | --------------------- | -------------------------------------------------------------- |
 | 200  | OK                    | Successful GET, PUT, PATCH, DELETE, or POST action             |
 | 201  | Created               | Resource created (some POST endpoints)                         |
+| 202  | Accepted              | Async action queued; response body is a `TaskModel`            |
 | 400  | Bad Request           | Malformed JSON, missing required fields                        |
 | 403  | Forbidden             | User lacks permission for this resource                        |
 | 404  | Not Found             | Resource doesn't exist                                         |
+| 409  | Conflict              | Async action already has an active task for this resource      |
 | 422  | Unprocessable Entity  | Valid JSON but invalid semantics (e.g., bad status transition) |
 | 500  | Internal Server Error | Unexpected server failure                                      |
 
