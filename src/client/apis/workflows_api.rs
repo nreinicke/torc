@@ -78,6 +78,10 @@ pub enum GetWorkflowStatusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InitializeJobsError {
+    Status403(models::ErrorResponse),
+    Status404(models::ErrorResponse),
+    Status409(models::ErrorResponse),
+    Status500(models::ErrorResponse),
     UnknownValue(serde_json::Value),
 }
 
@@ -654,11 +658,13 @@ pub fn initialize_jobs(
     id: i64,
     only_uninitialized: Option<bool>,
     clear_ephemeral_user_data: Option<bool>,
+    r#async: Option<bool>,
 ) -> Result<serde_json::Value, Error<InitializeJobsError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_path_id = id;
     let p_query_only_uninitialized = only_uninitialized;
     let p_query_clear_ephemeral_user_data = clear_ephemeral_user_data;
+    let p_query_async = r#async;
 
     let uri_str = format!(
         "{}/workflows/{id}/initialize_jobs",
@@ -674,6 +680,9 @@ pub fn initialize_jobs(
     }
     if let Some(ref param_value) = p_query_clear_ephemeral_user_data {
         req_builder = req_builder.query(&[("clear_ephemeral_user_data", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_async {
+        req_builder = req_builder.query(&[("async", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());

@@ -2236,6 +2236,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2258,6 +2259,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2284,6 +2287,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2292,6 +2296,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2310,6 +2319,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2332,6 +2342,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2358,6 +2370,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2366,6 +2379,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2384,6 +2402,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2406,6 +2425,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2432,6 +2453,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2440,6 +2462,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2453,6 +2480,7 @@ class WorkflowsApi:
         id,
         only_uninitialized,
         clear_ephemeral_user_data,
+        var_async,
         _request_auth,
         _content_type,
         _headers,
@@ -2484,6 +2512,10 @@ class WorkflowsApi:
         if clear_ephemeral_user_data is not None:
             
             _query_params.append(('clear_ephemeral_user_data', clear_ephemeral_user_data))
+            
+        if var_async is not None:
+            
+            _query_params.append(('async', var_async))
             
         # process the header parameters
         # process the form parameters

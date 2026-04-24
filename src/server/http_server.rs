@@ -348,7 +348,7 @@ impl<C> Server<C> {
         let row = sqlx::query(
             r#"
             SELECT id
-            FROM async_handles
+            FROM async_handle
             WHERE workflow_id = ?1
               AND operation = 'initialize_jobs'
               AND status IN ('queued', 'running')
@@ -380,7 +380,7 @@ impl<C> Server<C> {
 
         let result = sqlx::query(
             r#"
-            INSERT INTO async_handles
+            INSERT INTO async_handle
               (workflow_id, operation, status, created_at_ms, requested_by, request_json)
             VALUES
               (?1, 'initialize_jobs', 'queued', ?2, ?3, ?4)
@@ -429,7 +429,7 @@ impl<C> Server<C> {
     async fn update_task_running(&self, task_id: i64) -> Result<(), ApiError> {
         sqlx::query(
             r#"
-            UPDATE async_handles
+            UPDATE async_handle
             SET status = 'running', started_at_ms = ?2
             WHERE id = ?1
             "#,
@@ -460,7 +460,7 @@ impl<C> Server<C> {
 
         sqlx::query(
             r#"
-            UPDATE async_handles
+            UPDATE async_handle
             SET status = ?2,
                 finished_at_ms = ?3,
                 result_json = ?4,
@@ -1721,7 +1721,7 @@ where
         let row = sqlx::query(
             r#"
             SELECT id, workflow_id, operation, status, created_at_ms, started_at_ms, finished_at_ms, error
-            FROM async_handles
+            FROM async_handle
             WHERE id = ?1
             "#,
         )
@@ -1759,7 +1759,7 @@ where
             .get::<String, _>("status")
             .parse::<models::TaskStatus>()
             .map_err(|e| {
-                error!("Invalid async_handles.status for task_id={}: {}", id, e);
+                error!("Invalid async_handle.status for task_id={}: {}", id, e);
                 ApiError("Database error".to_string())
             })?;
 

@@ -4333,12 +4333,49 @@ paths:
           type:
           - boolean
           - 'null'
+      - name: async
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
           content:
             application/json:
               schema: {}
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskModel'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /workflows/{id}/is_complete:
     get:
       tags:
@@ -6502,6 +6539,49 @@ components:
         workflow_id:
           type: integer
           format: int64
+    TaskModel:
+      type: object
+      required:
+      - id
+      - workflow_id
+      - operation
+      - status
+      - created_at_ms
+      properties:
+        created_at_ms:
+          type: integer
+          format: int64
+        error:
+          type:
+          - string
+          - 'null'
+        finished_at_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        id:
+          type: integer
+          format: int64
+        operation:
+          type: string
+        started_at_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        workflow_id:
+          type: integer
+          format: int64
+    TaskStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - succeeded
+      - failed
     UserDataModel:
       type: object
       required:

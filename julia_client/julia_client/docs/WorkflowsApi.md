@@ -274,8 +274,8 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 # **initialize_jobs**
-> initialize_jobs(_api::WorkflowsApi, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, _mediaType=nothing) -> Any, OpenAPI.Clients.ApiResponse <br/>
-> initialize_jobs(_api::WorkflowsApi, response_stream::Channel, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, _mediaType=nothing) -> Channel{ Any }, OpenAPI.Clients.ApiResponse
+> initialize_jobs(_api::WorkflowsApi, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, async=nothing, _mediaType=nothing) -> Any, OpenAPI.Clients.ApiResponse <br/>
+> initialize_jobs(_api::WorkflowsApi, response_stream::Channel, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, async=nothing, _mediaType=nothing) -> Channel{ Any }, OpenAPI.Clients.ApiResponse
 
 
 
@@ -292,6 +292,7 @@ Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **only_uninitialized** | **Bool** |  | [default to nothing]
  **clear_ephemeral_user_data** | **Bool** |  | [default to nothing]
+ **async** | **Bool** |  | [default to nothing]
 
 ### Return type
 

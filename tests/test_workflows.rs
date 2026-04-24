@@ -507,7 +507,7 @@ fn test_workflows_reset_status_command_json(start_server: &ServerProcess) {
     );
 
     // Initialize jobs
-    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None, None)
         .expect("Failed to initialize jobs");
 
     // Verify job statuses are now Ready
@@ -568,7 +568,7 @@ fn test_workflows_reset_status_depends_on_submitted_jobs(start_server: &ServerPr
     let job2_id = created_job2.id.unwrap();
 
     // Initialize jobs so they become Ready
-    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None, None)
         .expect("Failed to initialize jobs");
 
     // Get workflow status to get run_id
@@ -1001,7 +1001,7 @@ fn test_workflows_is_uninitialized(start_server: &ServerProcess) {
     );
 
     // Initialize jobs
-    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None, None)
         .expect("Failed to initialize jobs");
 
     // Check that workflow is no longer uninitialized (jobs are now Ready)
@@ -1068,7 +1068,7 @@ fn test_workflows_is_uninitialized_with_disabled_jobs(start_server: &ServerProce
     );
 
     // Initialize jobs (only the uninitialized one will change to Ready)
-    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None)
+    let _result = apis::workflows_api::initialize_jobs(config, workflow_id, None, None, None)
         .expect("Failed to initialize jobs");
 
     // Check that workflow is no longer uninitialized (job1 is now Ready, job2 is still Disabled)

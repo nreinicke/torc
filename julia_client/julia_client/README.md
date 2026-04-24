@@ -207,6 +207,8 @@ Class | Method
  - [ScheduledComputeNodesModel](docs/ScheduledComputeNodesModel.md)
  - [SlurmSchedulerModel](docs/SlurmSchedulerModel.md)
  - [SlurmStatsModel](docs/SlurmStatsModel.md)
+ - [TaskModel](docs/TaskModel.md)
+ - [TaskStatus](docs/TaskStatus.md)
  - [UserDataModel](docs/UserDataModel.md)
  - [UserGroupMembershipModel](docs/UserGroupMembershipModel.md)
  - [VersionResponse](docs/VersionResponse.md)

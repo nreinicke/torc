@@ -948,7 +948,7 @@ fn test_update_jobs_on_file_change_only_completed_jobs_reset(start_server: &Serv
     let ready_id = created_ready.id.unwrap();
 
     // Initialize and set different statuses
-    apis::workflows_api::initialize_jobs(&config, workflow_id, None, None)
+    apis::workflows_api::initialize_jobs(&config, workflow_id, None, None, None)
         .expect("Failed to initialize jobs");
 
     apis::jobs_api::manage_status_change(&config, running_id, models::JobStatus::Running, run_id)

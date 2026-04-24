@@ -666,6 +666,7 @@ impl WorkflowManager {
             self.workflow_id,
             Some(only_uninitialized),
             Some(false),
+            Some(false),
         ) {
             Ok(_) => {
                 info!(

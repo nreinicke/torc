@@ -73,6 +73,8 @@ from torc.openapi_client.models.ro_crate_entity_model import RoCrateEntityModel
 from torc.openapi_client.models.scheduled_compute_nodes_model import ScheduledComputeNodesModel
 from torc.openapi_client.models.slurm_scheduler_model import SlurmSchedulerModel
 from torc.openapi_client.models.slurm_stats_model import SlurmStatsModel
+from torc.openapi_client.models.task_model import TaskModel
+from torc.openapi_client.models.task_status import TaskStatus
 from torc.openapi_client.models.user_data_model import UserDataModel
 from torc.openapi_client.models.user_group_membership_model import UserGroupMembershipModel
 from torc.openapi_client.models.version_response import VersionResponse

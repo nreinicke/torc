@@ -466,7 +466,7 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
         // Async handles are persisted; SSE events are ephemeral.
         if let Ok(result) = sqlx::query(
             r#"
-            UPDATE async_handles
+            UPDATE async_handle
             SET status = 'failed',
                 finished_at_ms = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
                 error = COALESCE(error, 'server restarted while task was in progress')
