@@ -1,4 +1,6 @@
 use clap::Subcommand;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
@@ -104,6 +106,15 @@ pub fn wait_for_task(
     let sse_config = config.clone();
     let workflow_id = initial_task.workflow_id;
 
+    // Shutdown flag so the SSE listener can exit when `wait_for_task` returns. The thread
+    // only observes it between events (the inner `read_line` blocks), so this is best-effort:
+    // it prevents thread accumulation across many `wait_for_task` calls in a long-lived
+    // process, but a thread stuck on a silent connection will persist until the next event
+    // or connection close. For CLI users that's fine (the process exits either way).
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let sse_shutdown = Arc::clone(&shutdown);
+    let _guard = ShutdownGuard(Arc::clone(&shutdown));
+
     thread::spawn(move || {
         let mut conn =
             match SseConnection::connect(&sse_config, workflow_id, Some(EventSeverity::Info)) {
@@ -118,8 +129,14 @@ pub fn wait_for_task(
             };
 
         loop {
+            if sse_shutdown.load(Ordering::Relaxed) {
+                return;
+            }
             match conn.next_event() {
                 Ok(Some(event)) => {
+                    if sse_shutdown.load(Ordering::Relaxed) {
+                        return;
+                    }
                     if event.event_type == "task_completed"
                         && event.data.get("task_id").and_then(|v| v.as_i64()) == Some(task_id)
                     {
@@ -202,6 +219,16 @@ fn sleep_or_wake(rx: &mpsc::Receiver<()>, wait: Duration) {
 pub enum WaitError {
     Timeout,
     Api(String),
+}
+
+/// Sets the shutdown flag on drop so the SSE listener thread can exit cleanly when
+/// `wait_for_task` returns (either via Ok, Err, or panic).
+struct ShutdownGuard(Arc<AtomicBool>);
+
+impl Drop for ShutdownGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 #[derive(Debug, Clone)]

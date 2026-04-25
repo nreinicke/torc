@@ -433,6 +433,9 @@ impl<C> Server<C> {
         // (queued, running) between our failed INSERT and the follow-up SELECT, the partial
         // unique index no longer blocks us and the second INSERT will succeed.
         for attempt in 0..2 {
+            // Capture created_at_ms once per attempt so the persisted row and the returned
+            // TaskModel agree.
+            let created_at_ms = Self::now_ms();
             let insert_result = sqlx::query(
                 r#"
                 INSERT INTO async_handle
@@ -442,7 +445,7 @@ impl<C> Server<C> {
                 "#,
             )
             .bind(workflow_id)
-            .bind(Self::now_ms())
+            .bind(created_at_ms)
             .bind(requested_by.clone())
             .bind(&request_json)
             .execute(self.pool.as_ref())
@@ -455,7 +458,7 @@ impl<C> Server<C> {
                         workflow_id,
                         "initialize_jobs".to_string(),
                         models::TaskStatus::Queued,
-                        Self::now_ms(),
+                        created_at_ms,
                     )));
                 }
                 Err(e) if Self::is_sqlite_unique_constraint(&e) => {

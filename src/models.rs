@@ -2169,11 +2169,13 @@ impl TaskModel {
 }
 
 /// Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body,
-/// even when the workflow currently has no active async task.
+/// even when the workflow currently has no active async task. The `task` field is the
+/// active task for this workflow, or null if none is in-flight.
 #[cfg_attr(feature = "openapi-codegen", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ActiveTaskResponse {
-    /// The active task for this workflow, or null if none is in-flight.
+    // The `///` doc comment is intentionally on the struct, not here: utoipa would otherwise
+    // emit the description as a sibling of `$ref` inside `oneOf`, which is invalid OpenAPI 3.1.
     #[serde(rename = "task")]
     pub task: Option<TaskModel>,
 }

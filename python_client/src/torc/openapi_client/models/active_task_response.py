@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from typing import Any, ClassVar, Dict, List, Optional
 from torc.openapi_client.models.task_model import TaskModel
 from typing import Optional, Set
@@ -25,9 +25,9 @@ from typing_extensions import Self
 
 class ActiveTaskResponse(BaseModel):
     """
-    Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body, even when the workflow currently has no active async task.
+    Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body, even when the workflow currently has no active async task. The `task` field is the active task for this workflow, or null if none is in-flight.
     """ # noqa: E501
-    task: Optional[TaskModel] = Field(default=None, description="The active task for this workflow, or null if none is in-flight.")
+    task: Optional[TaskModel] = None
     __properties: ClassVar[List[str]] = ["task"]
 
     model_config = ConfigDict(

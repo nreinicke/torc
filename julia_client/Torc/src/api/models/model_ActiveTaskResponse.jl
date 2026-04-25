@@ -3,13 +3,13 @@
 
 
 @doc raw"""ActiveTaskResponse
-Wrapper for &#x60;GET /workflows/{id}/active_task&#x60; so the response always has a JSON body, even when the workflow currently has no active async task.
+Wrapper for &#x60;GET /workflows/{id}/active_task&#x60; so the response always has a JSON body, even when the workflow currently has no active async task. The &#x60;task&#x60; field is the active task for this workflow, or null if none is in-flight.
 
     ActiveTaskResponse(;
         task=nothing,
     )
 
-    - task::TaskModel : The active task for this workflow, or null if none is in-flight.
+    - task::TaskModel
 """
 Base.@kwdef mutable struct ActiveTaskResponse <: OpenAPI.APIModel
     task = nothing # spec type: Union{ Nothing, TaskModel }

@@ -5129,13 +5129,13 @@ components:
       type: object
       description: |-
         Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body,
-        even when the workflow currently has no active async task.
+        even when the workflow currently has no active async task. The `task` field is the
+        active task for this workflow, or null if none is in-flight.
       properties:
         task:
           oneOf:
           - type: 'null'
           - $ref: '#/components/schemas/TaskModel'
-            description: The active task for this workflow, or null if none is in-flight.
     ClaimActionRequest:
       type: object
       properties:
