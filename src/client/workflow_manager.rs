@@ -171,6 +171,8 @@ impl WorkflowManager {
     /// If an async task is already in-flight for this workflow, returns that existing task
     /// without mutating state — the pre-steps are owned by whoever started that task.
     pub fn initialize_async(&self, force: bool) -> Result<TaskModel, TorcError> {
+        // Probe for an active task before running check_workflow so a second caller
+        // gets the existing task handle even if local validation would have failed.
         if let Some(active) = self.get_active_task()? {
             info!(
                 "workflow_id={} already has an active {} task (id={}); returning it",
@@ -388,21 +390,22 @@ impl WorkflowManager {
         force: bool,
         dry_run: bool,
     ) -> Result<Option<TaskModel>, TorcError> {
-        self.check_workflow(force)?;
-        if dry_run {
-            self.reinitialize_jobs(true)?;
-            return Ok(None);
-        }
-
-        // If an async task is already running for this workflow, return it without mutating
-        // state — the pre-steps below (bump_run_id, reset, process_changed_*) would otherwise
-        // double-apply on top of whatever that task is doing.
-        if let Some(active) = self.get_active_task()? {
+        // Probe for an in-flight task before doing any local validation. If one is active,
+        // its initial caller has already validated the workflow and owns the pre-steps —
+        // running check_workflow here would be redundant and could fail spuriously, denying
+        // the second caller the existing task handle.
+        if !dry_run && let Some(active) = self.get_active_task()? {
             info!(
                 "workflow_id={} already has an active {} task (id={}); returning it",
                 self.workflow_id, active.operation, active.id
             );
             return Ok(Some(active));
+        }
+
+        self.check_workflow(force)?;
+        if dry_run {
+            self.reinitialize_jobs(true)?;
+            return Ok(None);
         }
 
         self.bump_run_id()?;
