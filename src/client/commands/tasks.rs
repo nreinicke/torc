@@ -1,5 +1,6 @@
 use clap::Subcommand;
 use std::sync::mpsc;
+use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -50,11 +51,31 @@ fn handle_wait(
             exit_for_task(&task);
         }
         Err(WaitError::Timeout) => {
-            eprintln!("Timeout waiting for task {}", task_id);
+            if format == "json" {
+                let payload = serde_json::json!({
+                    "status": "error",
+                    "error": "Timeout",
+                    "message": format!("Timeout waiting for task {}", task_id),
+                    "task_id": task_id,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+            } else {
+                eprintln!("Timeout waiting for task {}", task_id);
+            }
             std::process::exit(1);
         }
         Err(WaitError::Api(msg)) => {
-            eprintln!("Error getting task {}: {}", task_id, msg);
+            if format == "json" {
+                let payload = serde_json::json!({
+                    "status": "error",
+                    "error": "ApiError",
+                    "message": format!("Error getting task {}: {}", task_id, msg),
+                    "task_id": task_id,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+            } else {
+                eprintln!("Error getting task {}: {}", task_id, msg);
+            }
             std::process::exit(1);
         }
     }
@@ -136,7 +157,7 @@ pub fn wait_for_task(
                         "Warning: transient error getting task {} (SSE wake): {}; retrying in {:?}",
                         task_id, e, delay
                     );
-                    let _ = rx.recv_timeout(delay);
+                    sleep_or_wake(&rx, delay);
                     continue;
                 }
                 Err(e) => return Err(WaitError::Api(e.to_string())),
@@ -156,7 +177,7 @@ pub fn wait_for_task(
                     "Warning: transient error getting task {}: {}; retrying in {:?}",
                     task_id, e, delay
                 );
-                let _ = rx.recv_timeout(delay);
+                sleep_or_wake(&rx, delay);
                 continue;
             }
             Err(e) => return Err(WaitError::Api(e.to_string())),
@@ -164,7 +185,16 @@ pub fn wait_for_task(
 
         let wait = Duration::from_secs(poll_interval_secs.max(1));
         // If we can receive SSE completion within the interval, we wake early.
-        let _ = rx.recv_timeout(wait);
+        sleep_or_wake(&rx, wait);
+    }
+}
+
+/// Block for up to `wait` or until the SSE thread notifies. If the SSE thread has already
+/// exited (`Disconnected`), fall back to `thread::sleep` so we don't spin.
+fn sleep_or_wake(rx: &mpsc::Receiver<()>, wait: Duration) {
+    match rx.recv_timeout(wait) {
+        Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+        Err(RecvTimeoutError::Disconnected) => thread::sleep(wait),
     }
 }
 

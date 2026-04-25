@@ -114,10 +114,12 @@ The 409 response body includes `existing_task_id`, `existing_operation`, and a h
 
 ### Probing without mutating
 
-`GET /workflows/{id}/active_task` returns `{ "task": TaskModel | null }`. Clients use this to detect
-an in-flight task before running their own pre-steps, so they don't double-apply side effects (like
-bumping the workflow's `run_id`) on top of someone else's task. Always 200; the body distinguishes
-"active task exists" from "workflow is idle" via `task == null`.
+On a successful `200` response, `GET /workflows/{id}/active_task` returns an object of the form
+`{ "task": TaskModel | null }`. Clients use this to detect an in-flight task before running their
+own pre-steps, so they don't double-apply side effects (like bumping the workflow's `run_id`) on top
+of someone else's task. Within that `200` response, the body distinguishes "active task exists" from
+"workflow is idle" via `task == null`. The endpoint can still return `404` if the workflow doesn't
+exist or isn't accessible to the caller, and `500` for unexpected server errors.
 
 If the server restarts while a task is in-flight, the task is reconciled to `failed` on startup so
 clients never see it stuck in `running`.

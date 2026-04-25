@@ -3045,6 +3045,13 @@ fn test_reinitialize_async_returns_existing_task_without_mutating(start_server: 
     // f1 must exist on disk so reinit's pre-steps don't fail on missing input.
     fs::write(temp_dir.path().join("f1.json"), r#"{"seed": 1}"#).expect("Failed to write f1");
 
+    // Pad the workflow with extra jobs so the server's initialize_jobs task takes long enough
+    // for the second client call to race with it (the diamond workflow alone is a handful of
+    // microseconds to initialize).
+    for i in 0..200 {
+        let _ = common::create_test_job(&config, workflow_id, &format!("filler_{i}"));
+    }
+
     let workflow =
         apis::workflows_api::get_workflow(&config, workflow_id).expect("Failed to get workflow");
     let torc_config = TorcConfig::load().unwrap_or_default();

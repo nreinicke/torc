@@ -423,84 +423,101 @@ impl<C> Server<C> {
         clear_ephemeral_user_data: Option<bool>,
         requested_by: Option<String>,
     ) -> Result<TaskCreation, CreateTaskError> {
-        let created_at_ms = Self::now_ms();
-        let request_json = serde_json::json!({
+        let new_params = serde_json::json!({
             "only_uninitialized": only_uninitialized,
             "clear_ephemeral_user_data": clear_ephemeral_user_data,
-        })
-        .to_string();
+        });
+        let request_json = new_params.to_string();
 
-        let insert_result = sqlx::query(
-            r#"
-            INSERT INTO async_handle
-              (workflow_id, operation, status, created_at_ms, requested_by, request_json)
-            VALUES
-              (?1, 'initialize_jobs', 'queued', ?2, ?3, ?4)
-            "#,
-        )
-        .bind(workflow_id)
-        .bind(created_at_ms)
-        .bind(requested_by)
-        .bind(request_json)
-        .execute(self.pool.as_ref())
-        .await;
+        // Retry once to close a narrow race: if the conflicting task transitions out of
+        // (queued, running) between our failed INSERT and the follow-up SELECT, the partial
+        // unique index no longer blocks us and the second INSERT will succeed.
+        for attempt in 0..2 {
+            let insert_result = sqlx::query(
+                r#"
+                INSERT INTO async_handle
+                  (workflow_id, operation, status, created_at_ms, requested_by, request_json)
+                VALUES
+                  (?1, 'initialize_jobs', 'queued', ?2, ?3, ?4)
+                "#,
+            )
+            .bind(workflow_id)
+            .bind(Self::now_ms())
+            .bind(requested_by.clone())
+            .bind(&request_json)
+            .execute(self.pool.as_ref())
+            .await;
 
-        match insert_result {
-            Ok(result) => Ok(TaskCreation::Created(models::TaskModel::new(
-                result.last_insert_rowid(),
-                workflow_id,
-                "initialize_jobs".to_string(),
-                models::TaskStatus::Queued,
-                created_at_ms,
-            ))),
-            Err(e) if Self::is_sqlite_unique_constraint(&e) => {
-                // Another active task exists for this workflow. Return it idempotently only if
-                // it is the same operation AND was started with the same parameters — otherwise
-                // the new caller would silently get someone else's task and see the wrong work.
-                let (existing, existing_request_json) = self
-                    .get_active_task_with_request(workflow_id)
-                    .await
-                    .map_err(CreateTaskError::Api)?
-                    .ok_or_else(|| {
-                        CreateTaskError::Api(ApiError(
-                            "unique constraint violated but no active task found".to_string(),
-                        ))
-                    })?;
-
-                if existing.operation != "initialize_jobs" {
-                    return Err(CreateTaskError::Conflict {
-                        existing_task_id: existing.id,
-                        existing_operation: existing.operation,
-                        reason: "different async operation is already active".to_string(),
-                    });
+            match insert_result {
+                Ok(result) => {
+                    return Ok(TaskCreation::Created(models::TaskModel::new(
+                        result.last_insert_rowid(),
+                        workflow_id,
+                        "initialize_jobs".to_string(),
+                        models::TaskStatus::Queued,
+                        Self::now_ms(),
+                    )));
                 }
+                Err(e) if Self::is_sqlite_unique_constraint(&e) => {
+                    // Another active task exists for this workflow. Return it idempotently only
+                    // if it is the same operation AND was started with the same parameters —
+                    // otherwise the new caller would silently get someone else's task.
+                    let Some((existing, existing_request_json)) = self
+                        .get_active_task_with_request(workflow_id)
+                        .await
+                        .map_err(CreateTaskError::Api)?
+                    else {
+                        // The conflicting task finished between INSERT failure and this SELECT.
+                        // Retry the INSERT once; if it still fails there's a deeper problem.
+                        if attempt == 0 {
+                            continue;
+                        }
+                        return Err(CreateTaskError::Api(ApiError(
+                            "unique constraint violated but no active task found after retry"
+                                .to_string(),
+                        )));
+                    };
 
-                let new_params = serde_json::json!({
-                    "only_uninitialized": only_uninitialized,
-                    "clear_ephemeral_user_data": clear_ephemeral_user_data,
-                });
-                let existing_params = existing_request_json
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .unwrap_or(serde_json::Value::Null);
-                if existing_params != new_params {
-                    return Err(CreateTaskError::Conflict {
-                        existing_task_id: existing.id,
-                        existing_operation: existing.operation,
-                        reason: format!(
-                            "initialize_jobs task already active with different parameters: existing={}, requested={}",
-                            existing_params, new_params
-                        ),
-                    });
+                    if existing.operation != "initialize_jobs" {
+                        return Err(CreateTaskError::Conflict {
+                            existing_task_id: existing.id,
+                            existing_operation: existing.operation,
+                            reason: "different async operation is already active".to_string(),
+                        });
+                    }
+
+                    let existing_params = existing_request_json
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                        .unwrap_or(serde_json::Value::Null);
+                    if existing_params != new_params {
+                        return Err(CreateTaskError::Conflict {
+                            existing_task_id: existing.id,
+                            existing_operation: existing.operation,
+                            reason: format!(
+                                "initialize_jobs task already active with different parameters: existing={}, requested={}",
+                                existing_params, new_params
+                            ),
+                        });
+                    }
+
+                    return Ok(TaskCreation::Existing(existing));
                 }
-
-                Ok(TaskCreation::Existing(existing))
+                Err(e) => {
+                    return Err(CreateTaskError::Api(ApiError(format!(
+                        "Database error: {}",
+                        e
+                    ))));
+                }
             }
-            Err(e) => Err(CreateTaskError::Api(ApiError(format!(
-                "Database error: {}",
-                e
-            )))),
         }
+
+        // Loop can only fall through if both attempts hit the "no active task after unique
+        // constraint" branch, which is already handled above. Keep this as a belt-and-suspenders
+        // guard so the function always returns explicitly.
+        Err(CreateTaskError::Api(ApiError(
+            "create_or_get_initialize_jobs_task: exhausted retries".to_string(),
+        )))
     }
 
     fn is_sqlite_unique_constraint(err: &sqlx::Error) -> bool {
