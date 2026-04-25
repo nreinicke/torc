@@ -106,6 +106,26 @@ pub fn validate_env_map(
     Ok(())
 }
 
+/// Begin a SQLite transaction with `BEGIN IMMEDIATE`, taking the write lock up front.
+///
+/// In WAL mode, `pool.begin()` issues plain `BEGIN` (= `BEGIN DEFERRED`), which only
+/// takes the database write lock when the first write statement runs. If a `SELECT`
+/// runs first inside the transaction, the connection acquires a WAL read snapshot,
+/// and a subsequent `INSERT`/`UPDATE`/`DELETE` can fail with `SQLITE_BUSY_SNAPSHOT`
+/// (extended code 517) the moment any other connection commits in between. The
+/// connection's `busy_timeout` does **not** retry `SQLITE_BUSY_SNAPSHOT` -- it
+/// returns immediately.
+///
+/// `BEGIN IMMEDIATE` takes the write lock up front, so the full `busy_timeout`
+/// applies to lock acquisition and the snapshot-conflict path is impossible. Use
+/// this helper for any handler that mixes reads and writes inside a single
+/// transaction.
+pub async fn begin_immediate(
+    pool: &SqlitePool,
+) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
+    pool.begin_with("BEGIN IMMEDIATE").await
+}
+
 /// Escape SQL LIKE wildcard characters in user input.
 /// Escapes `%`, `_`, and `\` with a backslash prefix.
 pub fn escape_like_pattern(input: &str) -> String {
