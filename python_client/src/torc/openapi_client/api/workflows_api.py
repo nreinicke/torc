@@ -19,6 +19,7 @@ from typing_extensions import Annotated
 from pydantic import Field, StrictBool, StrictInt, StrictStr
 from typing import Any, Optional
 from typing_extensions import Annotated
+from torc.openapi_client.models.active_task_response import ActiveTaskResponse
 from torc.openapi_client.models.claim_jobs_based_on_resources import ClaimJobsBasedOnResources
 from torc.openapi_client.models.claim_next_jobs_response import ClaimNextJobsResponse
 from torc.openapi_client.models.compute_nodes_resources import ComputeNodesResources
@@ -1443,6 +1444,269 @@ class WorkflowsApi:
 
 
     @validate_call
+    def get_active_task_for_workflow(
+        self,
+        id: Annotated[StrictInt, Field(description="Workflow ID")],
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ActiveTaskResponse:
+        """get_active_task_for_workflow
+
+
+        :param id: Workflow ID (required)
+        :type id: int
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._get_active_task_for_workflow_serialize(
+            id=id,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "ActiveTaskResponse",
+            '404': "ErrorResponse",
+            '500': "ErrorResponse",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call
+    def get_active_task_for_workflow_with_http_info(
+        self,
+        id: Annotated[StrictInt, Field(description="Workflow ID")],
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[ActiveTaskResponse]:
+        """get_active_task_for_workflow
+
+
+        :param id: Workflow ID (required)
+        :type id: int
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._get_active_task_for_workflow_serialize(
+            id=id,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "ActiveTaskResponse",
+            '404': "ErrorResponse",
+            '500': "ErrorResponse",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call
+    def get_active_task_for_workflow_without_preload_content(
+        self,
+        id: Annotated[StrictInt, Field(description="Workflow ID")],
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """get_active_task_for_workflow
+
+
+        :param id: Workflow ID (required)
+        :type id: int
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._get_active_task_for_workflow_serialize(
+            id=id,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "ActiveTaskResponse",
+            '404': "ErrorResponse",
+            '500': "ErrorResponse",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _get_active_task_for_workflow_serialize(
+        self,
+        id,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        if id is not None:
+            _path_params['id'] = id
+        # process the query parameters
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json'
+                ]
+            )
+
+
+        # authentication setting
+        _auth_settings: List[str] = [
+        ]
+
+        return self.api_client.param_serialize(
+            method='GET',
+            resource_path='/workflows/{id}/active_task',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call
     def get_ready_job_requirements(
         self,
         id: Annotated[StrictInt, Field(description="Workflow ID")],
@@ -2236,6 +2500,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2258,6 +2523,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2284,6 +2551,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2292,6 +2560,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2310,6 +2583,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2332,6 +2606,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2358,6 +2634,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2366,6 +2643,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2384,6 +2666,7 @@ class WorkflowsApi:
         id: Annotated[StrictInt, Field(description="Workflow ID")],
         only_uninitialized: Optional[StrictBool] = None,
         clear_ephemeral_user_data: Optional[StrictBool] = None,
+        var_async: Optional[StrictBool] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2406,6 +2689,8 @@ class WorkflowsApi:
         :type only_uninitialized: bool
         :param clear_ephemeral_user_data:
         :type clear_ephemeral_user_data: bool
+        :param var_async:
+        :type var_async: bool
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -2432,6 +2717,7 @@ class WorkflowsApi:
             id=id,
             only_uninitialized=only_uninitialized,
             clear_ephemeral_user_data=clear_ephemeral_user_data,
+            var_async=var_async,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -2440,6 +2726,11 @@ class WorkflowsApi:
 
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
+            '202': "TaskModel",
+            '403': "ErrorResponse",
+            '404': "ErrorResponse",
+            '409': "ErrorResponse",
+            '500': "ErrorResponse",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -2453,6 +2744,7 @@ class WorkflowsApi:
         id,
         only_uninitialized,
         clear_ephemeral_user_data,
+        var_async,
         _request_auth,
         _content_type,
         _headers,
@@ -2484,6 +2776,10 @@ class WorkflowsApi:
         if clear_ephemeral_user_data is not None:
             
             _query_params.append(('clear_ephemeral_user_data', clear_ephemeral_user_data))
+            
+        if var_async is not None:
+            
+            _query_params.append(('async', var_async))
             
         # process the header parameters
         # process the form parameters

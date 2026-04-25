@@ -3416,6 +3416,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /tasks/{id}:
+    get:
+      tags:
+      - tasks
+      operationId: get_task
+      parameters:
+      - name: id
+        in: path
+        description: Task ID
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskModel'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /user_data:
     get:
       tags:
@@ -4165,6 +4197,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClaimActionResponse'
+  /workflows/{id}/active_task:
+    get:
+      tags:
+      - workflows
+      operationId: get_active_task_for_workflow
+      parameters:
+      - name: id
+        in: path
+        description: Workflow ID
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: 'Returns { task: null } when no task is active'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveTaskResponse'
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /workflows/{id}/cancel:
     put:
       tags:
@@ -4333,12 +4397,49 @@ paths:
           type:
           - boolean
           - 'null'
+      - name: async
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
           content:
             application/json:
               schema: {}
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskModel'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /workflows/{id}/is_complete:
     get:
       tags:
@@ -5024,6 +5125,17 @@ components:
           format: int64
         name:
           type: string
+    ActiveTaskResponse:
+      type: object
+      description: |-
+        Wrapper for `GET /workflows/{id}/active_task` so the response always has a JSON body,
+        even when the workflow currently has no active async task. The `task` field is the
+        active task for this workflow, or null if none is in-flight.
+      properties:
+        task:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/TaskModel'
     ClaimActionRequest:
       type: object
       properties:
@@ -6502,6 +6614,49 @@ components:
         workflow_id:
           type: integer
           format: int64
+    TaskModel:
+      type: object
+      required:
+      - id
+      - workflow_id
+      - operation
+      - status
+      - created_at_ms
+      properties:
+        created_at_ms:
+          type: integer
+          format: int64
+        error:
+          type:
+          - string
+          - 'null'
+        finished_at_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        id:
+          type: integer
+          format: int64
+        operation:
+          type: string
+        started_at_ms:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        workflow_id:
+          type: integer
+          format: int64
+    TaskStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - succeeded
+      - failed
     UserDataModel:
       type: object
       required:

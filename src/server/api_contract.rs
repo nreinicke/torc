@@ -710,12 +710,25 @@ pub trait TransportApiCore<C: Send + Sync> {
         context: &C,
     ) -> Result<GetWorkflowStatusResponse, ApiError>;
 
+    /// Return the status of a background task.
+    async fn get_task(&self, id: i64, context: &C) -> Result<GetTaskResponse, ApiError>;
+
+    /// Return the single active (queued or running) async task for a workflow, if any.
+    /// Lets clients probe before issuing a new async request so they can avoid mutating
+    /// state when a task is already in-flight.
+    async fn get_active_task_for_workflow(
+        &self,
+        workflow_id: i64,
+        context: &C,
+    ) -> Result<GetActiveTaskResponse, ApiError>;
+
     /// Initialize job relationships based on file and user_data relationships.
     async fn initialize_jobs(
         &self,
         id: i64,
         only_uninitialized: Option<bool>,
         clear_ephemeral_user_data: Option<bool>,
+        async_: Option<bool>,
         context: &C,
     ) -> Result<InitializeJobsResponse, ApiError>;
 

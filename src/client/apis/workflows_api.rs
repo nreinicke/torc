@@ -53,6 +53,15 @@ pub enum DeleteWorkflowError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`get_active_task_for_workflow`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetActiveTaskForWorkflowError {
+    Status404(models::ErrorResponse),
+    Status500(models::ErrorResponse),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_ready_job_requirements`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -78,6 +87,10 @@ pub enum GetWorkflowStatusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InitializeJobsError {
+    Status403(models::ErrorResponse),
+    Status404(models::ErrorResponse),
+    Status409(models::ErrorResponse),
+    Status500(models::ErrorResponse),
     UnknownValue(serde_json::Value),
 }
 
@@ -480,6 +493,62 @@ pub fn delete_workflow(
     }
 }
 
+pub fn get_active_task_for_workflow(
+    configuration: &configuration::Configuration,
+    id: i64,
+) -> Result<models::ActiveTaskResponse, Error<GetActiveTaskForWorkflowError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_path_id = id;
+
+    let uri_str = format!(
+        "{}/workflows/{id}/active_task",
+        configuration.base_path,
+        id = p_path_id
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    req_builder = configuration.apply_auth(req_builder);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => {
+                return Err(Error::from(serde_json::Error::custom(
+                    "Received `text/plain` content type response that cannot be converted to `models::ActiveTaskResponse`",
+                )));
+            }
+            ContentType::Unsupported(unknown_type) => {
+                return Err(Error::from(serde_json::Error::custom(format!(
+                    "Received `{unknown_type}` content type response that cannot be converted to `models::ActiveTaskResponse`"
+                ))));
+            }
+        }
+    } else {
+        let content = resp.text()?;
+        let entity: Option<GetActiveTaskForWorkflowError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
 pub fn get_ready_job_requirements(
     configuration: &configuration::Configuration,
     id: i64,
@@ -654,11 +723,13 @@ pub fn initialize_jobs(
     id: i64,
     only_uninitialized: Option<bool>,
     clear_ephemeral_user_data: Option<bool>,
+    r#async: Option<bool>,
 ) -> Result<serde_json::Value, Error<InitializeJobsError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_path_id = id;
     let p_query_only_uninitialized = only_uninitialized;
     let p_query_clear_ephemeral_user_data = clear_ephemeral_user_data;
+    let p_query_async = r#async;
 
     let uri_str = format!(
         "{}/workflows/{id}/initialize_jobs",
@@ -674,6 +745,9 @@ pub fn initialize_jobs(
     }
     if let Some(ref param_value) = p_query_clear_ephemeral_user_data {
         req_builder = req_builder.query(&[("clear_ephemeral_user_data", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_async {
+        req_builder = req_builder.query(&[("async", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());

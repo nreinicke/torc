@@ -67,15 +67,18 @@ pub mod scheduling {
 }
 
 pub mod system {
-    pub use crate::server::api_responses::{GetVersionResponse, PingResponse, ReloadAuthResponse};
+    pub use crate::server::api_responses::{
+        GetTaskResponse, GetVersionResponse, PingResponse, ReloadAuthResponse,
+    };
 }
 
 pub mod workflows {
     pub use crate::server::api_responses::{
         CancelWorkflowResponse, ClaimActionResponse, CreateWorkflowActionResponse,
-        CreateWorkflowResponse, DeleteWorkflowResponse, GetPendingActionsResponse,
-        GetWorkflowActionsResponse, GetWorkflowResponse, GetWorkflowStatusResponse,
-        IsWorkflowCompleteResponse, IsWorkflowUninitializedResponse, ListWorkflowsResponse,
-        ResetWorkflowStatusResponse, UpdateWorkflowResponse, UpdateWorkflowStatusResponse,
+        CreateWorkflowResponse, DeleteWorkflowResponse, GetActiveTaskResponse,
+        GetPendingActionsResponse, GetWorkflowActionsResponse, GetWorkflowResponse,
+        GetWorkflowStatusResponse, IsWorkflowCompleteResponse, IsWorkflowUninitializedResponse,
+        ListWorkflowsResponse, ResetWorkflowStatusResponse, UpdateWorkflowResponse,
+        UpdateWorkflowStatusResponse,
     };
 }

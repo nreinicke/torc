@@ -110,6 +110,7 @@ Class | Method
 *SlurmStatsApi* | [**list_slurm_stats**](docs/SlurmStatsApi.md#list_slurm_stats)<br/>**GET** /slurm_stats<br/>
 *SystemApi* | [**get_version**](docs/SystemApi.md#get_version)<br/>**GET** /version<br/>
 *SystemApi* | [**ping**](docs/SystemApi.md#ping)<br/>**GET** /ping<br/>
+*TasksApi* | [**get_task**](docs/TasksApi.md#get_task)<br/>**GET** /tasks/{id}<br/>
 *UserDataApi* | [**create_user_data**](docs/UserDataApi.md#create_user_data)<br/>**POST** /user_data<br/>
 *UserDataApi* | [**delete_all_user_data**](docs/UserDataApi.md#delete_all_user_data)<br/>**DELETE** /user_data<br/>
 *UserDataApi* | [**delete_user_data**](docs/UserDataApi.md#delete_user_data)<br/>**DELETE** /user_data/{id}<br/>
@@ -125,6 +126,7 @@ Class | Method
 *WorkflowsApi* | [**claim_next_jobs**](docs/WorkflowsApi.md#claim_next_jobs)<br/>**POST** /workflows/{id}/claim_next_jobs<br/>
 *WorkflowsApi* | [**create_workflow**](docs/WorkflowsApi.md#create_workflow)<br/>**POST** /workflows<br/>
 *WorkflowsApi* | [**delete_workflow**](docs/WorkflowsApi.md#delete_workflow)<br/>**DELETE** /workflows/{id}<br/>
+*WorkflowsApi* | [**get_active_task_for_workflow**](docs/WorkflowsApi.md#get_active_task_for_workflow)<br/>**GET** /workflows/{id}/active_task<br/>
 *WorkflowsApi* | [**get_ready_job_requirements**](docs/WorkflowsApi.md#get_ready_job_requirements)<br/>**GET** /workflows/{id}/ready_job_requirements<br/>
 *WorkflowsApi* | [**get_workflow**](docs/WorkflowsApi.md#get_workflow)<br/>**GET** /workflows/{id}<br/>
 *WorkflowsApi* | [**get_workflow_status**](docs/WorkflowsApi.md#get_workflow_status)<br/>**GET** /workflows/{id}/status<br/>
@@ -149,6 +151,7 @@ Class | Method
 
  - [AccessCheckResponse](docs/AccessCheckResponse.md)
  - [AccessGroupModel](docs/AccessGroupModel.md)
+ - [ActiveTaskResponse](docs/ActiveTaskResponse.md)
  - [ClaimActionRequest](docs/ClaimActionRequest.md)
  - [ClaimActionResponse](docs/ClaimActionResponse.md)
  - [ClaimJobsBasedOnResources](docs/ClaimJobsBasedOnResources.md)
@@ -207,6 +210,8 @@ Class | Method
  - [ScheduledComputeNodesModel](docs/ScheduledComputeNodesModel.md)
  - [SlurmSchedulerModel](docs/SlurmSchedulerModel.md)
  - [SlurmStatsModel](docs/SlurmStatsModel.md)
+ - [TaskModel](docs/TaskModel.md)
+ - [TaskStatus](docs/TaskStatus.md)
  - [UserDataModel](docs/UserDataModel.md)
  - [UserGroupMembershipModel](docs/UserGroupMembershipModel.md)
  - [VersionResponse](docs/VersionResponse.md)

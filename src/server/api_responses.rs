@@ -919,11 +919,40 @@ pub enum GetWorkflowStatusResponse {
 pub enum InitializeJobsResponse {
     /// Successful response
     SuccessfulResponse(serde_json::Value),
+    /// Accepted - initialization task created
+    AcceptedResponse(models::TaskModel),
     /// Forbidden - user does not have access
     ForbiddenErrorResponse(models::ErrorResponse),
     /// Not found error response
     NotFoundErrorResponse(models::ErrorResponse),
+    /// Conflict error response
+    ConflictErrorResponse(models::ErrorResponse),
     /// Default error response
+    DefaultErrorResponse(models::ErrorResponse),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[must_use]
+pub enum GetTaskResponse {
+    /// Successful response
+    SuccessfulResponse(models::TaskModel),
+    /// Not found error response
+    NotFoundErrorResponse(models::ErrorResponse),
+    /// Default error response
+    DefaultErrorResponse(models::ErrorResponse),
+}
+
+/// Response for `GET /workflows/{id}/active_task`. The body is an `ActiveTaskResponse`
+/// with `task: Option<TaskModel>`, so the response is always a JSON object even when no
+/// active task exists.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[must_use]
+pub enum GetActiveTaskResponse {
+    /// 200 OK with an `ActiveTaskResponse` body.
+    SuccessfulResponse(models::ActiveTaskResponse),
+    /// Workflow not found or caller is not authorized.
+    NotFoundErrorResponse(models::ErrorResponse),
+    /// Default error response.
     DefaultErrorResponse(models::ErrorResponse),
 }
 

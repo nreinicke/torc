@@ -33,6 +33,7 @@ __all__ = [
     "SlurmSchedulersApi",
     "SlurmStatsApi",
     "SystemApi",
+    "TasksApi",
     "UserDataApi",
     "WorkflowActionsApi",
     "WorkflowsApi",
@@ -47,6 +48,7 @@ __all__ = [
     "ApiException",
     "AccessCheckResponse",
     "AccessGroupModel",
+    "ActiveTaskResponse",
     "ClaimActionRequest",
     "ClaimActionResponse",
     "ClaimJobsBasedOnResources",
@@ -105,6 +107,8 @@ __all__ = [
     "ScheduledComputeNodesModel",
     "SlurmSchedulerModel",
     "SlurmStatsModel",
+    "TaskModel",
+    "TaskStatus",
     "UserDataModel",
     "UserGroupMembershipModel",
     "VersionResponse",
@@ -130,6 +134,7 @@ from torc.openapi_client.api.scheduled_compute_nodes_api import ScheduledCompute
 from torc.openapi_client.api.slurm_schedulers_api import SlurmSchedulersApi as SlurmSchedulersApi
 from torc.openapi_client.api.slurm_stats_api import SlurmStatsApi as SlurmStatsApi
 from torc.openapi_client.api.system_api import SystemApi as SystemApi
+from torc.openapi_client.api.tasks_api import TasksApi as TasksApi
 from torc.openapi_client.api.user_data_api import UserDataApi as UserDataApi
 from torc.openapi_client.api.workflow_actions_api import WorkflowActionsApi as WorkflowActionsApi
 from torc.openapi_client.api.workflows_api import WorkflowsApi as WorkflowsApi
@@ -148,6 +153,7 @@ from torc.openapi_client.exceptions import ApiException as ApiException
 # import models into sdk package
 from torc.openapi_client.models.access_check_response import AccessCheckResponse as AccessCheckResponse
 from torc.openapi_client.models.access_group_model import AccessGroupModel as AccessGroupModel
+from torc.openapi_client.models.active_task_response import ActiveTaskResponse as ActiveTaskResponse
 from torc.openapi_client.models.claim_action_request import ClaimActionRequest as ClaimActionRequest
 from torc.openapi_client.models.claim_action_response import ClaimActionResponse as ClaimActionResponse
 from torc.openapi_client.models.claim_jobs_based_on_resources import ClaimJobsBasedOnResources as ClaimJobsBasedOnResources
@@ -206,6 +212,8 @@ from torc.openapi_client.models.ro_crate_entity_model import RoCrateEntityModel 
 from torc.openapi_client.models.scheduled_compute_nodes_model import ScheduledComputeNodesModel as ScheduledComputeNodesModel
 from torc.openapi_client.models.slurm_scheduler_model import SlurmSchedulerModel as SlurmSchedulerModel
 from torc.openapi_client.models.slurm_stats_model import SlurmStatsModel as SlurmStatsModel
+from torc.openapi_client.models.task_model import TaskModel as TaskModel
+from torc.openapi_client.models.task_status import TaskStatus as TaskStatus
 from torc.openapi_client.models.user_data_model import UserDataModel as UserDataModel
 from torc.openapi_client.models.user_group_membership_model import UserGroupMembershipModel as UserGroupMembershipModel
 from torc.openapi_client.models.version_response import VersionResponse as VersionResponse

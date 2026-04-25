@@ -1089,7 +1089,7 @@ fn test_retry_job_from_running_status(start_server: &ServerProcess) {
     let job_id = job.id.unwrap();
 
     // Initialize workflow to get run_id and make job Ready
-    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false))
+    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false), None)
         .expect("Failed to initialize jobs");
 
     // Get run_id
@@ -1129,7 +1129,7 @@ fn test_retry_job_from_failed_status(start_server: &ServerProcess) {
     let job_id = job.id.unwrap();
 
     // Initialize workflow
-    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false))
+    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false), None)
         .expect("Failed to initialize jobs");
 
     // Get run_id
@@ -1184,7 +1184,7 @@ fn test_retry_job_invalid_status(start_server: &ServerProcess) {
     let job_id = job.id.unwrap();
 
     // Initialize workflow
-    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false))
+    apis::workflows_api::initialize_jobs(config, workflow_id, Some(false), Some(false), None)
         .expect("Failed to initialize jobs");
 
     // Get run_id

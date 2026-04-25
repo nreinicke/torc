@@ -326,7 +326,7 @@ async fn claim_backfill_jobs(
 #[allow(clippy::too_many_arguments)]
 impl<C> Server<C>
 where
-    C: Has<XSpanIdString> + Has<Option<Authorization>> + Send + Sync,
+    C: Has<XSpanIdString> + Has<Option<Authorization>> + Send + Sync + 'static,
 {
     pub(super) async fn transport_create_job(
         &self,
@@ -389,218 +389,78 @@ where
         id: i64,
         only_uninitialized: Option<bool>,
         clear_ephemeral_user_data: Option<bool>,
+        async_: Option<bool>,
         context: &C,
     ) -> Result<InitializeJobsResponse, ApiError> {
         info!(
-            "initialize_jobs({}, {:?}, {:?}) - X-Span-ID: {:?}",
+            "initialize_jobs({}, {:?}, {:?}, async={:?}) - X-Span-ID: {:?}",
             id,
             only_uninitialized,
             clear_ephemeral_user_data,
+            async_,
             Has::<XSpanIdString>::get(context).0.clone()
         );
         authorize_workflow!(self, id, context, InitializeJobsResponse);
-
-        if let Ok(mut set) = self.workflows_with_failures.write() {
-            set.remove(&id);
-        }
-
-        let mut tx = match self.pool.begin().await {
-            Ok(tx) => tx,
-            Err(e) => {
-                error!("Failed to begin transaction for initialize_jobs: {}", e);
-                return Err(ApiError("Database error".to_string()));
-            }
-        };
-
-        if let Err(e) = self
-            .add_depends_on_associations_from_files(&mut *tx, id)
-            .await
-        {
-            error!("Failed to add depends-on associations from files: {}", e);
-            let _ = tx.rollback().await;
-            return Err(e);
-        }
-
-        if let Err(e) = self
-            .add_depends_on_associations_from_user_data(&mut *tx, id)
-            .await
-        {
-            error!(
-                "Failed to add depends-on associations from user_data: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return Err(e);
-        }
-
-        let only_uninit = only_uninitialized.unwrap_or(false);
-        if only_uninit && let Err(e) = self.uninitialize_blocked_jobs(&mut *tx, id).await {
-            error!("Failed to uninitialize blocked jobs: {}", e);
-            let _ = tx.rollback().await;
-            return Err(e);
-        }
-
-        if let Err(e) = self
-            .initialize_blocked_jobs_to_blocked(&mut *tx, id, only_uninit)
-            .await
-        {
-            error!("Failed to initialize blocked jobs to blocked: {}", e);
-            let _ = tx.rollback().await;
-            return Err(e);
-        }
-
-        if let Err(e) = self.initialize_unblocked_jobs(&mut *tx, id).await {
-            error!("Failed to initialize unblocked jobs: {}", e);
-            let _ = tx.rollback().await;
-            return Err(e);
-        }
-
-        let completed_status = models::JobStatus::Completed.to_int();
-        let failed_status = models::JobStatus::Failed.to_int();
-        let canceled_status = models::JobStatus::Canceled.to_int();
-        let terminated_status = models::JobStatus::Terminated.to_int();
-
-        match sqlx::query!(
-            r#"
-            DELETE FROM workflow_result
-            WHERE workflow_id = $1
-              AND job_id IN (
-                SELECT id FROM job
-                WHERE workflow_id = $1
-                  AND status NOT IN ($2, $3, $4, $5)
-              )
-            "#,
-            id,
-            completed_status,
-            failed_status,
-            canceled_status,
-            terminated_status
-        )
-        .execute(&mut *tx)
-        .await
-        {
-            Ok(result) => {
-                debug!(
-                    "Deleted {} workflow_result records for incomplete jobs in workflow {}",
-                    result.rows_affected(),
-                    id
-                );
-            }
-            Err(e) => {
-                error!(
-                    "Failed to delete workflow_result records for incomplete jobs: {}",
-                    e
-                );
-                let _ = tx.rollback().await;
-                return Err(ApiError("Database error".to_string()));
-            }
-        }
-
-        if let Err(e) = tx.commit().await {
-            error!("Failed to commit transaction for initialize_jobs: {}", e);
-            return Err(ApiError("Database error".to_string()));
-        }
-
-        self.jobs_api.compute_and_store_all_input_hashes(id).await?;
-
-        match sqlx::query!("SELECT enable_ro_crate FROM workflow WHERE id = $1", id)
-            .fetch_optional(self.pool.as_ref())
-            .await
-        {
-            Ok(Some(row)) if row.enable_ro_crate == Some(1) => {
-                debug!(
-                    "enable_ro_crate is true for workflow {}, creating input file entities",
-                    id
-                );
-                if let Err(e) = self.ro_crate_api.create_entities_for_input_files(id).await {
-                    warn!("Failed to create RO-Crate entities for input files: {}", e);
-                }
-            }
-            Ok(_) => {}
-            Err(e) => warn!("Failed to check enable_ro_crate flag: {}", e),
-        }
-
-        if let Err(e) = self.ro_crate_api.create_server_software_entity(id).await {
-            warn!("Failed to create torc-server software entity: {}", e);
-        }
-
-        if let Err(e) = self
-            .workflow_actions_api
-            .reset_actions_for_reinitialize(id)
-            .await
-        {
-            error!(
-                "Failed to reset workflow actions for workflow {}: {}",
-                id, e
-            );
-        }
-
-        if let Err(e) = self
-            .workflow_actions_api
-            .check_and_trigger_actions(id, "on_workflow_start", None)
-            .await
-        {
-            error!(
-                "Failed to check_and_trigger_actions for on_workflow_start: {}",
-                e
-            );
-        }
-
-        for trigger_type in &["on_worker_start", "on_worker_complete"] {
-            match sqlx::query(
-                "UPDATE workflow_action SET trigger_count = required_triggers WHERE workflow_id = ? AND trigger_type = ?"
-            )
-            .bind(id)
-            .bind(trigger_type)
-            .execute(self.pool.as_ref())
-            .await
-            {
-                Ok(result) => {
-                    let count = result.rows_affected();
-                    if count > 0 {
-                        debug!("Activated {} {} actions for workflow {}", count, trigger_type, id);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to activate {} actions for workflow {}: {}", trigger_type, id, e);
-                }
-            }
-        }
-
-        if let Err(e) = self
-            .workflow_actions_api
-            .check_and_trigger_actions(id, "on_jobs_ready", None)
-            .await
-        {
-            error!(
-                "Failed to check_and_trigger_actions for on_jobs_ready: {}",
-                e
-            );
-        }
-
-        let event_type = if only_uninitialized.unwrap_or(false) {
-            "workflow_started"
-        } else {
-            "workflow_reinitialized"
-        };
 
         let auth: Option<Authorization> = Has::<Option<Authorization>>::get(context).clone();
         let username = auth
             .map(|a| a.subject)
             .unwrap_or_else(|| "unknown".to_string());
 
-        self.event_broadcaster.broadcast(BroadcastEvent {
-            workflow_id: id,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            event_type: event_type.to_string(),
-            severity: models::EventSeverity::Info,
-            data: serde_json::json!({
-                "category": "workflow",
-                "type": event_type,
-                "user": username,
-                "message": format!("{} workflow {}", event_type.replace('_', " "), id),
-            }),
-        });
+        if async_.unwrap_or(false) {
+            let outcome = match self
+                .create_or_get_initialize_jobs_task(
+                    id,
+                    only_uninitialized,
+                    clear_ephemeral_user_data,
+                    Some(username.clone()),
+                )
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(CreateTaskError::Conflict {
+                    existing_task_id,
+                    existing_operation,
+                    reason,
+                }) => {
+                    let payload = serde_json::json!({
+                        "error": "Conflict",
+                        "message": reason,
+                        "existing_task_id": existing_task_id,
+                        "existing_operation": existing_operation,
+                    });
+                    return Ok(InitializeJobsResponse::ConflictErrorResponse(
+                        models::ErrorResponse::new(payload),
+                    ));
+                }
+                Err(CreateTaskError::Api(err)) => return Err(err),
+            };
+
+            let task = match outcome {
+                TaskCreation::Created(task) => {
+                    let server = self.clone();
+                    let task_id = task.id;
+                    tokio::spawn(async move {
+                        server
+                            .run_initialize_jobs_task(
+                                task_id,
+                                id,
+                                only_uninitialized,
+                                clear_ephemeral_user_data,
+                                username,
+                            )
+                            .await;
+                    });
+                    task
+                }
+                TaskCreation::Existing(task) => task,
+            };
+
+            return Ok(InitializeJobsResponse::AcceptedResponse(task));
+        }
+
+        self.initialize_jobs_core(id, only_uninitialized, clear_ephemeral_user_data, username)
+            .await?;
 
         Ok(InitializeJobsResponse::SuccessfulResponse(
             serde_json::json!({"message": "Initialized job status"}),

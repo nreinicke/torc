@@ -9,6 +9,7 @@ Method | HTTP request | Description
 [**claim_next_jobs**](WorkflowsApi.md#claim_next_jobs) | **POST** /workflows/{id}/claim_next_jobs | 
 [**create_workflow**](WorkflowsApi.md#create_workflow) | **POST** /workflows | 
 [**delete_workflow**](WorkflowsApi.md#delete_workflow) | **DELETE** /workflows/{id} | 
+[**get_active_task_for_workflow**](WorkflowsApi.md#get_active_task_for_workflow) | **GET** /workflows/{id}/active_task | 
 [**get_ready_job_requirements**](WorkflowsApi.md#get_ready_job_requirements) | **GET** /workflows/{id}/ready_job_requirements | 
 [**get_workflow**](WorkflowsApi.md#get_workflow) | **GET** /workflows/{id} | 
 [**get_workflow_status**](WorkflowsApi.md#get_workflow_status) | **GET** /workflows/{id}/status | 
@@ -183,6 +184,34 @@ No authorization required
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
+# **get_active_task_for_workflow**
+> get_active_task_for_workflow(_api::WorkflowsApi, id::Int64; _mediaType=nothing) -> ActiveTaskResponse, OpenAPI.Clients.ApiResponse <br/>
+> get_active_task_for_workflow(_api::WorkflowsApi, response_stream::Channel, id::Int64; _mediaType=nothing) -> Channel{ ActiveTaskResponse }, OpenAPI.Clients.ApiResponse
+
+
+
+### Required Parameters
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **_api** | **WorkflowsApi** | API context | 
+**id** | **Int64** | Workflow ID |
+
+### Return type
+
+[**ActiveTaskResponse**](ActiveTaskResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
 # **get_ready_job_requirements**
 > get_ready_job_requirements(_api::WorkflowsApi, id::Int64; scheduler_config_id=nothing, _mediaType=nothing) -> GetReadyJobRequirementsResponse, OpenAPI.Clients.ApiResponse <br/>
 > get_ready_job_requirements(_api::WorkflowsApi, response_stream::Channel, id::Int64; scheduler_config_id=nothing, _mediaType=nothing) -> Channel{ GetReadyJobRequirementsResponse }, OpenAPI.Clients.ApiResponse
@@ -274,8 +303,8 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 # **initialize_jobs**
-> initialize_jobs(_api::WorkflowsApi, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, _mediaType=nothing) -> Any, OpenAPI.Clients.ApiResponse <br/>
-> initialize_jobs(_api::WorkflowsApi, response_stream::Channel, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, _mediaType=nothing) -> Channel{ Any }, OpenAPI.Clients.ApiResponse
+> initialize_jobs(_api::WorkflowsApi, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, async=nothing, _mediaType=nothing) -> Any, OpenAPI.Clients.ApiResponse <br/>
+> initialize_jobs(_api::WorkflowsApi, response_stream::Channel, id::Int64; only_uninitialized=nothing, clear_ephemeral_user_data=nothing, async=nothing, _mediaType=nothing) -> Channel{ Any }, OpenAPI.Clients.ApiResponse
 
 
 
@@ -292,6 +321,7 @@ Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **only_uninitialized** | **Bool** |  | [default to nothing]
  **clear_ephemeral_user_data** | **Bool** |  | [default to nothing]
+ **async** | **Bool** |  | [default to nothing]
 
 ### Return type
 

@@ -131,21 +131,21 @@ mod openapi_workflow_action_paths {
 mod openapi_workflow_paths {
     pub use crate::server::live_router::{
         __path_cancel_workflow, __path_claim_jobs_based_on_resources, __path_claim_next_jobs,
-        __path_create_workflow, __path_delete_workflow, __path_get_ready_job_requirements,
-        __path_get_workflow, __path_get_workflow_status, __path_initialize_jobs,
-        __path_is_workflow_complete, __path_is_workflow_uninitialized,
+        __path_create_workflow, __path_delete_workflow, __path_get_active_task_for_workflow,
+        __path_get_ready_job_requirements, __path_get_workflow, __path_get_workflow_status,
+        __path_initialize_jobs, __path_is_workflow_complete, __path_is_workflow_uninitialized,
         __path_list_job_dependencies, __path_list_job_file_relationships, __path_list_job_ids,
         __path_list_job_user_data_relationships, __path_list_missing_user_data,
         __path_list_required_existing_files, __path_list_workflows,
         __path_process_changed_job_inputs, __path_reset_job_status, __path_reset_workflow_status,
         __path_update_workflow, __path_update_workflow_status, cancel_workflow,
         claim_jobs_based_on_resources, claim_next_jobs, create_workflow, delete_workflow,
-        get_ready_job_requirements, get_workflow, get_workflow_status, initialize_jobs,
-        is_workflow_complete, is_workflow_uninitialized, list_job_dependencies,
-        list_job_file_relationships, list_job_ids, list_job_user_data_relationships,
-        list_missing_user_data, list_required_existing_files, list_workflows,
-        process_changed_job_inputs, reset_job_status, reset_workflow_status, update_workflow,
-        update_workflow_status,
+        get_active_task_for_workflow, get_ready_job_requirements, get_workflow,
+        get_workflow_status, initialize_jobs, is_workflow_complete, is_workflow_uninitialized,
+        list_job_dependencies, list_job_file_relationships, list_job_ids,
+        list_job_user_data_relationships, list_missing_user_data, list_required_existing_files,
+        list_workflows, process_changed_job_inputs, reset_job_status, reset_workflow_status,
+        update_workflow, update_workflow_status,
     };
 }
 
@@ -217,6 +217,11 @@ mod openapi_ro_crate_paths {
         delete_ro_crate_entity, get_ro_crate_entity, list_ro_crate_entities,
         update_ro_crate_entity,
     };
+}
+
+#[allow(unused_imports)]
+mod openapi_task_paths {
+    pub use crate::server::live_router::{__path_get_task, get_task};
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -526,12 +531,14 @@ fn resolve_schema_properties<'a>(
         openapi_workflow_paths::process_changed_job_inputs,
         openapi_workflow_paths::get_ready_job_requirements,
         openapi_workflow_paths::list_required_existing_files,
+        openapi_workflow_paths::get_active_task_for_workflow,
         openapi_user_data_paths::create_user_data,
         openapi_user_data_paths::delete_all_user_data,
         openapi_user_data_paths::list_user_data,
         openapi_user_data_paths::delete_user_data,
         openapi_user_data_paths::get_user_data,
-        openapi_user_data_paths::update_user_data
+        openapi_user_data_paths::update_user_data,
+        openapi_task_paths::get_task
     ),
     components(schemas(
         PingResponse,
