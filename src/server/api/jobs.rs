@@ -22,8 +22,9 @@ use crate::server::api_responses::{
 use crate::models::{self as models, JobStatus};
 
 use super::{
-    ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, database_error_with_msg,
-    deserialize_env_map, normalize_env_map, serialize_env_map, validate_env_map,
+    ApiContext, MAX_RECORD_TRANSFER_COUNT, SqlQueryBuilder, begin_immediate,
+    database_error_with_msg, deserialize_env_map, normalize_env_map, serialize_env_map,
+    validate_env_map,
 };
 
 /// Trait defining job-related API operations
@@ -617,9 +618,10 @@ impl JobsApiImpl {
 
         let uninitialized_status = JobStatus::Uninitialized.to_int();
 
-        // Begin a transaction with immediate lock to ensure atomicity
-        // SQLx automatically uses BEGIN IMMEDIATE for SQLite when the first write occurs
-        let mut tx = match self.context.pool.begin().await {
+        // Acquire the SQLite write lock up front. We read `workflow_id` before
+        // the recursive UPDATE, which would risk SQLITE_BUSY_SNAPSHOT under
+        // BEGIN DEFERRED if another writer commits in between.
+        let mut tx = match begin_immediate(&self.context.pool).await {
             Ok(tx) => tx,
             Err(e) => {
                 error!("Failed to begin transaction for completion reversal: {}", e);
@@ -710,7 +712,7 @@ impl JobsApiImpl {
                     "Database error during completion reversal for job {}: {}",
                     job_id, e
                 );
-                // Transaction will be automatically rolled back when tx is dropped
+                // Transaction is rolled back automatically when `tx` is dropped.
                 Err(ApiError("Database error".to_string()))
             }
         }
@@ -1193,8 +1195,10 @@ where
         let status_int = status.to_int();
         job.status = Some(status);
 
-        // Begin a transaction to ensure job and all relationships are created atomically
-        let mut tx = match self.context.pool.begin().await {
+        // Acquire the SQLite write lock up front. `fetch_workflow_env` reads
+        // before the INSERT, which would risk SQLITE_BUSY_SNAPSHOT under
+        // BEGIN DEFERRED if another writer commits in between.
+        let mut tx = match begin_immediate(&self.context.pool).await {
             Ok(tx) => tx,
             Err(e) => {
                 return Err(database_error_with_msg(e, "Failed to begin transaction"));
@@ -1395,8 +1399,10 @@ where
 
         let mut added_jobs = Vec::new();
 
-        // Use a transaction for all operations to ensure consistency
-        let mut transaction = match self.context.pool.begin().await {
+        // Acquire the SQLite write lock up front. `fetch_workflow_env` reads
+        // before the per-job INSERTs, which would risk SQLITE_BUSY_SNAPSHOT
+        // under BEGIN DEFERRED if another writer commits in between.
+        let mut transaction = match begin_immediate(&self.context.pool).await {
             Ok(tx) => tx,
             Err(e) => return Err(database_error_with_msg(e, "Failed to begin transaction")),
         };
