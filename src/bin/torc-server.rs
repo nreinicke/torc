@@ -415,6 +415,37 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
         env::var("DATABASE_URL").expect("DATABASE_URL must be set or --database must be provided")
     };
 
+    // Detect supported SQLite in-memory URLs:
+    //  - `sqlite::memory:` is what our own `-d :memory:` produces via the
+    //    `format!("sqlite:{}", ...)` above, and is also the canonical sqlx
+    //    URL form for in-memory.
+    //  - `:memory:` is the bare SQLite spelling, which users naturally type
+    //    when setting `DATABASE_URL` directly.
+    //  - Any URL containing `file::memory:` is the shared-cache in-memory
+    //    SQLite URI form. We rewrite bare `:memory:` to one of these below,
+    //    but a power user can also supply it directly (e.g.
+    //    `sqlite:file::memory:?cache=shared`); without this branch they'd
+    //    miss `min_connections(1)` and the pool could drop the only
+    //    connection and destroy their data between requests.
+    // A bare `:memory:` URI gives each pool connection its own private database,
+    // which silently breaks data sharing across connections and prevents
+    // VACUUM INTO snapshots from observing any data. Only the bare forms get
+    // rewritten — a user who supplied an explicit shared-cache URI should
+    // have it preserved verbatim.
+    let needs_rewrite = matches!(database_url.as_str(), ":memory:" | "sqlite::memory:");
+    let in_memory = needs_rewrite || database_url.contains("file::memory:");
+    let database_url = if needs_rewrite {
+        info!(
+            "Using shared-cache in-memory database. Send SIGUSR1 to the server \
+             to snapshot the database to disk. Configure with \
+             TORC_SERVER_SNAPSHOT_PATH (default ./torc-server-snapshot.db) and \
+             TORC_SERVER_SNAPSHOT_KEEP (default 5)."
+        );
+        "sqlite:file::memory:?cache=shared".to_string()
+    } else {
+        database_url
+    };
+
     // Build Tokio runtime with user-specified thread count
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(config.threads as usize)
@@ -422,15 +453,23 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
         .build()?;
 
     runtime.block_on(async {
-        // Configure SQLite connection with WAL journal mode for better concurrency
-        // and foreign key constraints enabled
+        // Configure SQLite connection. On-disk databases use WAL for
+        // concurrency; in-memory databases use Memory journal mode (WAL is
+        // silently ignored for `:memory:` and would mislead operators
+        // reading the startup log).
+        let journal_mode = if in_memory {
+            SqliteJournalMode::Memory
+        } else {
+            SqliteJournalMode::Wal
+        };
         let connect_options = SqliteConnectOptions::from_str(&database_url)?
-            .journal_mode(SqliteJournalMode::Wal)
+            .journal_mode(journal_mode)
             .foreign_keys(true)
             .create_if_missing(true)
             .busy_timeout(std::time::Duration::from_secs(45))
             // NORMAL synchronous is safe with WAL and avoids fsync on every commit,
-            // reducing latency for concurrent claim/complete operations
+            // reducing latency for concurrent claim/complete operations.
+            // For in-memory mode this pragma is harmless (no fsync to elide).
             .pragma("synchronous", "NORMAL")
             // 16MB page cache (default is 2MB)
             .pragma("cache_size", "-16000");
@@ -440,10 +479,13 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
         // - The background unblock task (1 connection)
         // - Concurrent read queries while write transactions hold connections
         let max_connections = config.threads.max(2) + 2;
-        let pool = SqlitePoolOptions::new()
-            .max_connections(max_connections)
-            .connect_with(connect_options)
-            .await?;
+        let mut pool_options = SqlitePoolOptions::new().max_connections(max_connections);
+        if in_memory {
+            // Shared-cache in-memory databases are destroyed when the last
+            // connection closes, so keep at least one connection alive.
+            pool_options = pool_options.min_connections(1);
+        }
+        let pool = pool_options.connect_with(connect_options).await?;
 
         let version = env!("CARGO_PKG_VERSION");
         let git_hash = env!("GIT_HASH");
@@ -452,7 +494,10 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
             version, git_hash
         );
         info!("Connected to database: {}", database_url);
-        info!("Database configured with WAL journal mode and foreign key constraints");
+        info!(
+            "Database configured with {} journal mode and foreign key constraints",
+            if in_memory { "Memory" } else { "WAL" }
+        );
 
         // Run embedded migrations
         info!("Running database migrations...");
