@@ -111,9 +111,16 @@ fn is_retryable_error(error_str: &str) -> bool {
         || s.contains("unreachable")
         // HTTP server errors (formatted as "status code NNN" by the generated client)
         || is_5xx_response_error(&s)
-        // Database contention
-        || s.contains("database is locked")
-        || s.contains("database is busy")
+        // Database contention (server may surface this via database_lock_aware_error)
+        || is_database_lock_error(&s)
+}
+
+/// Check whether an error string indicates SQLite lock contention on the server.
+/// Lock errors typically clear in milliseconds, so the caller can retry quickly
+/// instead of falling back to the slow ping-and-wait path used for outages.
+fn is_database_lock_error(error_str: &str) -> bool {
+    let s = error_str.to_ascii_lowercase();
+    s.contains("database is locked") || s.contains("database is busy") || s.contains("sqlite_busy")
 }
 
 fn is_5xx_response_error(s: &str) -> bool {
@@ -140,61 +147,95 @@ where
     F: FnMut() -> Result<T, E>,
     E: std::fmt::Display,
 {
-    match api_call() {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            let error_str = e.to_string();
-            if !is_retryable_error(&error_str) {
-                return Err(e);
-            }
+    // Fast-retry phase for SQLite lock contention. Lock errors typically clear in
+    // milliseconds; the slow ping-and-wait loop below assumes the server is down
+    // and would waste throughput by sleeping 30s before each retry. We try a few
+    // times with short exponential backoff before falling through.
+    const FAST_RETRY_ATTEMPTS: u32 = 6;
+    const FAST_RETRY_INITIAL_MS: u64 = 50;
+    const FAST_RETRY_MAX_MS: u64 = 2000;
 
-            warn!(
-                "Transient error detected: {}. Entering retry loop for up to {} minutes.",
-                e, wait_for_healthy_database_minutes
-            );
+    let mut e = match api_call() {
+        Ok(result) => return Ok(result),
+        Err(e) => e,
+    };
 
-            let start_time = Instant::now();
-            let timeout_duration = Duration::from_secs(wait_for_healthy_database_minutes * 60);
-
-            loop {
-                if start_time.elapsed() >= timeout_duration {
-                    error!(
-                        "Retry timeout exceeded ({} minutes). Giving up.",
-                        wait_for_healthy_database_minutes
+    if is_database_lock_error(&e.to_string()) {
+        let mut delay_ms = FAST_RETRY_INITIAL_MS;
+        for attempt in 1..=FAST_RETRY_ATTEMPTS {
+            thread::sleep(Duration::from_millis(delay_ms));
+            match api_call() {
+                Ok(result) => {
+                    debug!(
+                        "Recovered from database lock after {} fast retries",
+                        attempt
                     );
-                    return Err(e);
+                    return Ok(result);
                 }
+                Err(retry_err) => {
+                    if !is_database_lock_error(&retry_err.to_string()) {
+                        // Different error class; stop fast-retrying and let the
+                        // generic path handle it.
+                        e = retry_err;
+                        break;
+                    }
+                    e = retry_err;
+                    delay_ms = (delay_ms.saturating_mul(2)).min(FAST_RETRY_MAX_MS);
+                }
+            }
+        }
+    }
 
-                thread::sleep(Duration::from_secs(PING_INTERVAL_SECONDS));
+    let error_str = e.to_string();
+    if !is_retryable_error(&error_str) {
+        return Err(e);
+    }
 
-                // Try to ping the server first to confirm it's reachable
-                match apis::system_api::ping(config) {
-                    Ok(_) => {
-                        info!("Server is responding. Retrying original API call.");
-                        match api_call() {
-                            Ok(result) => return Ok(result),
-                            Err(retry_err) => {
-                                let retry_str = retry_err.to_string();
-                                if is_retryable_error(&retry_str) {
-                                    warn!(
-                                        "Retry attempt failed with transient error: {}. \
-                                         Will keep retrying.",
-                                        retry_err
-                                    );
-                                    continue;
-                                }
-                                return Err(retry_err);
-                            }
+    warn!(
+        "Transient error detected: {}. Entering retry loop for up to {} minutes.",
+        e, wait_for_healthy_database_minutes
+    );
+
+    let start_time = Instant::now();
+    let timeout_duration = Duration::from_secs(wait_for_healthy_database_minutes * 60);
+
+    loop {
+        if start_time.elapsed() >= timeout_duration {
+            error!(
+                "Retry timeout exceeded ({} minutes). Giving up.",
+                wait_for_healthy_database_minutes
+            );
+            return Err(e);
+        }
+
+        thread::sleep(Duration::from_secs(PING_INTERVAL_SECONDS));
+
+        // Try to ping the server first to confirm it's reachable
+        match apis::system_api::ping(config) {
+            Ok(_) => {
+                info!("Server is responding. Retrying original API call.");
+                match api_call() {
+                    Ok(result) => return Ok(result),
+                    Err(retry_err) => {
+                        let retry_str = retry_err.to_string();
+                        if is_retryable_error(&retry_str) {
+                            warn!(
+                                "Retry attempt failed with transient error: {}. \
+                                 Will keep retrying.",
+                                retry_err
+                            );
+                            continue;
                         }
-                    }
-                    Err(ping_error) => {
-                        debug!(
-                            "Server still unreachable: {}. Continuing to wait...",
-                            ping_error
-                        );
-                        continue;
+                        return Err(retry_err);
                     }
                 }
+            }
+            Err(ping_error) => {
+                debug!(
+                    "Server still unreachable: {}. Continuing to wait...",
+                    ping_error
+                );
+                continue;
             }
         }
     }
@@ -506,6 +547,10 @@ mod tests {
         // Database contention
         assert!(is_retryable_error("database is locked"));
         assert!(is_retryable_error("database is busy"));
+        assert!(is_retryable_error(
+            "Failed to create result record: database is locked"
+        ));
+        assert!(is_retryable_error("SQLITE_BUSY: snapshot conflict"));
 
         // Non-retryable errors
         // reqwest builder errors are deterministic (invalid URL, etc.)
@@ -522,6 +567,22 @@ mod tests {
         assert!(!is_retryable_error(
             "error in response: status code 403: forbidden"
         ));
+    }
+
+    #[test]
+    fn test_is_database_lock_error() {
+        assert!(is_database_lock_error("database is locked"));
+        assert!(is_database_lock_error("Database Is Locked"));
+        assert!(is_database_lock_error("database is busy"));
+        assert!(is_database_lock_error("SQLITE_BUSY: snapshot conflict"));
+        assert!(is_database_lock_error(
+            "Failed to create result record: database is locked"
+        ));
+        assert!(!is_database_lock_error(
+            "error in response: status code 500: internal error"
+        ));
+        assert!(!is_database_lock_error("connection refused"));
+        assert!(!is_database_lock_error("timeout"));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use super::*;
-use crate::server::api::{EventsApi, JobsApi, ResultsApi, WorkflowsApi, database_error_with_msg};
+use crate::server::api::{
+    EventsApi, JobsApi, ResultsApi, WorkflowsApi, begin_immediate, database_lock_aware_error,
+};
 
 const RESOURCE_CLAIM_ORDER_BY: &str = "\
     ORDER BY \
@@ -1233,10 +1235,9 @@ where
                 )));
             }
             Err(e) => {
-                return Err(CompletionMutationError::Transport(database_error_with_msg(
-                    e,
-                    "Failed to fetch job for completion",
-                )));
+                return Err(CompletionMutationError::Transport(
+                    database_lock_aware_error(e, "Failed to fetch job for completion"),
+                ));
             }
         };
 
@@ -1336,7 +1337,7 @@ where
         .fetch_optional(&mut **tx)
         .await
         .map_err(|e| {
-            CompletionMutationError::Transport(database_error_with_msg(
+            CompletionMutationError::Transport(database_lock_aware_error(
                 e,
                 "Failed to fetch workflow run_id",
             ))
@@ -1421,7 +1422,7 @@ where
         .fetch_one(&mut **tx)
         .await
         .map_err(|e| {
-            CompletionMutationError::Transport(database_error_with_msg(
+            CompletionMutationError::Transport(database_lock_aware_error(
                 e,
                 "Failed to create result record",
             ))
@@ -1440,7 +1441,7 @@ where
         .execute(&mut **tx)
         .await
         .map_err(|e| {
-            CompletionMutationError::Transport(database_error_with_msg(
+            CompletionMutationError::Transport(database_lock_aware_error(
                 e,
                 "Failed to create workflow_result record",
             ))
@@ -1466,14 +1467,14 @@ where
         )
         .execute(&mut **tx)
         .await
-        .map_err(|e| CompletionMutationError::Transport(database_error_with_msg(e, "Failed to update job status")))?;
+        .map_err(|e| CompletionMutationError::Transport(database_lock_aware_error(e, "Failed to update job status")))?;
 
         if update_result.rows_affected() == 0 {
             let current = sqlx::query_scalar!("SELECT status FROM job WHERE id = ?", id)
                 .fetch_optional(&mut **tx)
                 .await
                 .map_err(|e| {
-                    CompletionMutationError::Transport(database_error_with_msg(
+                    CompletionMutationError::Transport(database_lock_aware_error(
                         e,
                         "Failed to re-check job status",
                     ))
@@ -1654,8 +1655,12 @@ where
         let mut completed = Vec::new();
         let mut errors = Vec::new();
         let mut completion_records = Vec::new();
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            database_error_with_msg(e, "Failed to begin batch completion transaction")
+        // Use BEGIN IMMEDIATE: apply_job_completion_state_tx reads from `job` before
+        // writing, and a deferred transaction's read snapshot can be invalidated by a
+        // concurrent committer, surfacing SQLITE_BUSY_SNAPSHOT (517) which busy_timeout
+        // does not retry. See server/api.rs::begin_immediate.
+        let mut tx = begin_immediate(&self.pool).await.map_err(|e| {
+            database_lock_aware_error(e, "Failed to begin batch completion transaction")
         })?;
 
         for entry in body.completions {
@@ -1695,7 +1700,7 @@ where
         }
 
         tx.commit().await.map_err(|e| {
-            database_error_with_msg(e, "Failed to commit batch completion transaction")
+            database_lock_aware_error(e, "Failed to commit batch completion transaction")
         })?;
 
         if !completion_records.is_empty() {
