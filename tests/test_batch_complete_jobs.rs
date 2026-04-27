@@ -83,6 +83,14 @@ fn start_in_memory_server() -> InMemoryServer {
 
     let mut config = Configuration::new();
     config.base_path = get_server_url(port);
+    // The default `reqwest::blocking::Client` has no request timeout. If the deadlock
+    // regresses, an unbounded HTTP wait would let the assertion below never fire and
+    // the test could hang for the full CI timeout. Cap each request at 15s so a
+    // regression surfaces as a fast failure rather than a stalled run.
+    config.client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .expect("Failed to build blocking reqwest client");
     InMemoryServer { child, config }
 }
 
