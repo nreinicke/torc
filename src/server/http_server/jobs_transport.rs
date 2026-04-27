@@ -1203,7 +1203,6 @@ where
         status: models::JobStatus,
         run_id: i64,
         result: models::ResultModel,
-        context: &C,
     ) -> Result<CompletedJobRecord, CompletionMutationError> {
         if !status.is_terminal() {
             return Err(CompletionMutationError::Transport(ApiError(format!(
@@ -1212,35 +1211,61 @@ where
             ))));
         }
 
-        let job = match self.jobs_api.get_job(id, context).await {
-            Ok(response) => match response {
-                GetJobResponse::SuccessfulResponse(job) => job,
-                GetJobResponse::ForbiddenErrorResponse(err) => {
-                    return Err(CompletionMutationError::Response(Box::new(
-                        CompleteJobResponse::ForbiddenErrorResponse(err),
-                    )));
-                }
-                GetJobResponse::NotFoundErrorResponse(err) => {
-                    return Err(CompletionMutationError::Response(Box::new(
-                        CompleteJobResponse::NotFoundErrorResponse(err),
-                    )));
-                }
-                GetJobResponse::DefaultErrorResponse(err) => {
-                    return Err(CompletionMutationError::Response(Box::new(
-                        CompleteJobResponse::DefaultErrorResponse(err),
-                    )));
-                }
-            },
-            Err(error) => return Err(CompletionMutationError::Transport(error)),
+        // Read the job through the same transaction as the writes below. Going through
+        // jobs_api.get_job (which uses a fresh pool connection) deadlocks under shared-cache
+        // SQLite once an earlier iteration in this batch has written via tx: the new
+        // connection's SELECT blocks on the table-level lock that tx holds, while the only
+        // tokio worker is awaiting that SELECT before tx can release it.
+        let job_row = match sqlx::query!(
+            "SELECT workflow_id, name, command, status FROM job WHERE id = ?",
+            id
+        )
+        .fetch_optional(&mut **tx)
+        .await
+        {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                let error_response = models::ErrorResponse::new(serde_json::json!({
+                    "message": format!("Job not found with ID: {}", id)
+                }));
+                return Err(CompletionMutationError::Response(Box::new(
+                    CompleteJobResponse::NotFoundErrorResponse(error_response),
+                )));
+            }
+            Err(e) => {
+                return Err(CompletionMutationError::Transport(database_error_with_msg(
+                    e,
+                    "Failed to fetch job for completion",
+                )));
+            }
+        };
+
+        let job_workflow_id = job_row.workflow_id;
+        let job_name = job_row.name;
+        let job_command = job_row.command;
+        let status_i32 = i32::try_from(job_row.status).map_err(|e| {
+            CompletionMutationError::Transport(ApiError(format!(
+                "Job {} has out-of-range status value {} in database: {}",
+                id, job_row.status, e
+            )))
+        })?;
+        let current_status = match models::JobStatus::from_int(status_i32) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(CompletionMutationError::Transport(ApiError(format!(
+                    "Failed to parse job status for job {}: {}",
+                    id, e
+                ))));
+            }
         };
 
         if let Some(expected_workflow_id) = expected_workflow_id
-            && job.workflow_id != expected_workflow_id
+            && job_workflow_id != expected_workflow_id
         {
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!(
                     "Job {} belongs to workflow {} but batch target is workflow {}",
-                    id, job.workflow_id, expected_workflow_id
+                    id, job_workflow_id, expected_workflow_id
                 )
             }));
             return Err(CompletionMutationError::Response(Box::new(
@@ -1248,9 +1273,7 @@ where
             )));
         }
 
-        if let Some(current_status) = &job.status
-            && current_status.is_complete()
-        {
+        if current_status.is_complete() {
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!("Job {} is already complete with status {:?}", id, current_status)
             }));
@@ -1270,11 +1293,11 @@ where
                 CompleteJobResponse::UnprocessableContentErrorResponse(error_response),
             )));
         }
-        if result.workflow_id != job.workflow_id {
+        if result.workflow_id != job_workflow_id {
             let error_response = models::ErrorResponse::new(serde_json::json!({
                 "message": format!(
                     "ResultModel workflow_id {} does not match job's workflow_id {}",
-                    result.workflow_id, job.workflow_id
+                    result.workflow_id, job_workflow_id
                 )
             }));
             return Err(CompletionMutationError::Response(Box::new(
@@ -1304,11 +1327,44 @@ where
             )));
         }
 
-        if let Err(e) = self.validate_run_id(job.workflow_id, run_id).await {
-            let error_response = models::ErrorResponse::new(serde_json::json!({ "message": e }));
-            return Err(CompletionMutationError::Response(Box::new(
-                CompleteJobResponse::UnprocessableContentErrorResponse(error_response),
-            )));
+        // Inline run_id validation against tx for the same reason: validate_run_id uses a
+        // fresh pool connection and would deadlock against the in-flight transaction.
+        let workflow_run_id_row = sqlx::query!(
+            "SELECT run_id FROM workflow_status WHERE id = ?",
+            job_workflow_id
+        )
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| {
+            CompletionMutationError::Transport(database_error_with_msg(
+                e,
+                "Failed to fetch workflow run_id",
+            ))
+        })?;
+        match workflow_run_id_row {
+            Some(row) if row.run_id == run_id => {}
+            Some(row) => {
+                let error_response = models::ErrorResponse::new(serde_json::json!({
+                    "message": format!(
+                        "Run ID mismatch: provided {} but workflow status has {}",
+                        run_id, row.run_id
+                    )
+                }));
+                return Err(CompletionMutationError::Response(Box::new(
+                    CompleteJobResponse::UnprocessableContentErrorResponse(error_response),
+                )));
+            }
+            None => {
+                let error_response = models::ErrorResponse::new(serde_json::json!({
+                    "message": format!(
+                        "Workflow status not found for workflow ID: {}",
+                        job_workflow_id
+                    )
+                }));
+                return Err(CompletionMutationError::Response(Box::new(
+                    CompleteJobResponse::UnprocessableContentErrorResponse(error_response),
+                )));
+            }
         }
 
         if let Err(e) = sqlx::query!(
@@ -1377,7 +1433,7 @@ where
             INSERT OR REPLACE INTO workflow_result (workflow_id, job_id, result_id)
             VALUES (?, ?, ?)
             "#,
-            job.workflow_id,
+            job_workflow_id,
             id,
             result_id_value
         )
@@ -1449,13 +1505,38 @@ where
             }
         }
 
-        let mut completed_job = job.clone();
-        completed_job.status = Some(status);
+        // Construct a JobModel for the completion record from the row we already fetched
+        // through `tx`. Relationships and optional metadata are not needed by downstream
+        // consumers on the batch path (finalize_completed_jobs only reads `name`); leaving
+        // them unset avoids extra cross-table reads while keeping the populated scalar
+        // fields (id, workflow_id, name, command, status) accurate.
+        let completed_job = models::JobModel {
+            id: Some(id),
+            workflow_id: job_workflow_id,
+            name: job_name,
+            command: job_command,
+            invocation_script: None,
+            env: None,
+            status: Some(status),
+            schedule_compute_nodes: None,
+            cancel_on_blocking_job_failure: None,
+            supports_termination: None,
+            depends_on_job_ids: None,
+            input_file_ids: None,
+            output_file_ids: None,
+            input_user_data_ids: None,
+            output_user_data_ids: None,
+            resource_requirements_id: None,
+            scheduler_id: None,
+            failure_handler_id: None,
+            attempt_id: None,
+            priority: None,
+        };
 
         Ok(CompletedJobRecord {
             job: completed_job,
             job_id: id,
-            workflow_id: job.workflow_id,
+            workflow_id: job_workflow_id,
             status,
             result_return_code,
             result_id: result_id_value,
@@ -1587,7 +1668,6 @@ where
                     entry.status,
                     entry.run_id,
                     entry.result,
-                    context,
                 )
                 .await
             {
