@@ -112,15 +112,83 @@ fn is_retryable_error(error_str: &str) -> bool {
         // HTTP server errors (formatted as "status code NNN" by the generated client)
         || is_5xx_response_error(&s)
         // Database contention (server may surface this via database_lock_aware_error)
-        || is_database_lock_error(&s)
+        || is_database_lock_error_lowercased(&s)
 }
 
-/// Check whether an error string indicates SQLite lock contention on the server.
+/// Check whether a lowercased error string indicates SQLite lock contention.
 /// Lock errors typically clear in milliseconds, so the caller can retry quickly
 /// instead of falling back to the slow ping-and-wait path used for outages.
-fn is_database_lock_error(error_str: &str) -> bool {
-    let s = error_str.to_ascii_lowercase();
+///
+/// Caller must lowercase the input first. Naming `_lowercased` documents the
+/// precondition at call sites and avoids the repeated allocation that a
+/// case-insensitive helper would force on `is_retryable_error`.
+fn is_database_lock_error_lowercased(s: &str) -> bool {
     s.contains("database is locked") || s.contains("database is busy") || s.contains("sqlite_busy")
+}
+
+/// Tunable parameters for the fast-retry phase. Production callers should use
+/// `FastRetryConfig::production()`; tests can substitute zero delays so the
+/// fast path runs in microseconds.
+#[derive(Clone, Copy)]
+struct FastRetryConfig {
+    max_attempts: u32,
+    initial_delay: Duration,
+    max_delay: Duration,
+}
+
+impl FastRetryConfig {
+    const fn production() -> Self {
+        Self {
+            max_attempts: 6,
+            initial_delay: Duration::from_millis(50),
+            max_delay: Duration::from_secs(2),
+        }
+    }
+}
+
+/// Retry an API call quickly while it keeps failing with SQLite lock errors.
+///
+/// Returns `Ok` on the first successful call. Returns `Err` with the latest
+/// error if all attempts are exhausted, or if the call returns a non-lock
+/// error (in which case the caller can decide whether to fall through to a
+/// slower retry path). The first failure is passed in as `initial_err` so the
+/// helper does not double-call the api on entry.
+fn fast_retry_for_lock_errors<T, E, F>(
+    initial_err: E,
+    api_call: &mut F,
+    config: FastRetryConfig,
+) -> Result<T, E>
+where
+    F: FnMut() -> Result<T, E>,
+    E: std::fmt::Display,
+{
+    let mut e = initial_err;
+    let mut delay = config.initial_delay;
+
+    for attempt in 1..=config.max_attempts {
+        thread::sleep(delay);
+        match api_call() {
+            Ok(result) => {
+                debug!(
+                    "Recovered from database lock after {} fast retries",
+                    attempt
+                );
+                return Ok(result);
+            }
+            Err(retry_err) => {
+                let lower = retry_err.to_string().to_ascii_lowercase();
+                let is_lock = is_database_lock_error_lowercased(&lower);
+                e = retry_err;
+                if !is_lock {
+                    // Different error class; stop fast-retrying so the caller
+                    // can route it through the generic retry path.
+                    break;
+                }
+                delay = delay.saturating_mul(2).min(config.max_delay);
+            }
+        }
+    }
+    Err(e)
 }
 
 fn is_5xx_response_error(s: &str) -> bool {
@@ -149,40 +217,16 @@ where
 {
     // Fast-retry phase for SQLite lock contention. Lock errors typically clear in
     // milliseconds; the slow ping-and-wait loop below assumes the server is down
-    // and would waste throughput by sleeping 30s before each retry. We try a few
-    // times with short exponential backoff before falling through.
-    const FAST_RETRY_ATTEMPTS: u32 = 6;
-    const FAST_RETRY_INITIAL_MS: u64 = 50;
-    const FAST_RETRY_MAX_MS: u64 = 2000;
-
+    // and would waste throughput by sleeping 30s before each retry.
     let mut e = match api_call() {
         Ok(result) => return Ok(result),
         Err(e) => e,
     };
 
-    if is_database_lock_error(&e.to_string()) {
-        let mut delay_ms = FAST_RETRY_INITIAL_MS;
-        for attempt in 1..=FAST_RETRY_ATTEMPTS {
-            thread::sleep(Duration::from_millis(delay_ms));
-            match api_call() {
-                Ok(result) => {
-                    debug!(
-                        "Recovered from database lock after {} fast retries",
-                        attempt
-                    );
-                    return Ok(result);
-                }
-                Err(retry_err) => {
-                    if !is_database_lock_error(&retry_err.to_string()) {
-                        // Different error class; stop fast-retrying and let the
-                        // generic path handle it.
-                        e = retry_err;
-                        break;
-                    }
-                    e = retry_err;
-                    delay_ms = (delay_ms.saturating_mul(2)).min(FAST_RETRY_MAX_MS);
-                }
-            }
+    if is_database_lock_error_lowercased(&e.to_string().to_ascii_lowercase()) {
+        match fast_retry_for_lock_errors(e, &mut api_call, FastRetryConfig::production()) {
+            Ok(result) => return Ok(result),
+            Err(latest_err) => e = latest_err,
         }
     }
 
@@ -570,19 +614,109 @@ mod tests {
     }
 
     #[test]
-    fn test_is_database_lock_error() {
-        assert!(is_database_lock_error("database is locked"));
-        assert!(is_database_lock_error("Database Is Locked"));
-        assert!(is_database_lock_error("database is busy"));
-        assert!(is_database_lock_error("SQLITE_BUSY: snapshot conflict"));
-        assert!(is_database_lock_error(
-            "Failed to create result record: database is locked"
+    fn test_is_database_lock_error_lowercased() {
+        // Caller is responsible for lowercasing first.
+        assert!(is_database_lock_error_lowercased("database is locked"));
+        assert!(is_database_lock_error_lowercased("database is busy"));
+        assert!(is_database_lock_error_lowercased(
+            "sqlite_busy: snapshot conflict"
         ));
-        assert!(!is_database_lock_error(
+        assert!(is_database_lock_error_lowercased(
+            "failed to create result record: database is locked"
+        ));
+        assert!(!is_database_lock_error_lowercased(
             "error in response: status code 500: internal error"
         ));
-        assert!(!is_database_lock_error("connection refused"));
-        assert!(!is_database_lock_error("timeout"));
+        assert!(!is_database_lock_error_lowercased("connection refused"));
+        assert!(!is_database_lock_error_lowercased("timeout"));
+        // Contract: uppercase input does not match (must be pre-lowercased).
+        assert!(!is_database_lock_error_lowercased("Database Is Locked"));
+    }
+
+    #[derive(Debug)]
+    struct MockError(String);
+
+    impl std::fmt::Display for MockError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    fn test_config(max_attempts: u32) -> FastRetryConfig {
+        FastRetryConfig {
+            max_attempts,
+            initial_delay: Duration::ZERO,
+            max_delay: Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn fast_retry_recovers_after_transient_lock_errors() {
+        let mut count = 0u32;
+        let mut api_call = || -> Result<i32, MockError> {
+            count += 1;
+            if count < 3 {
+                Err(MockError("database is locked".to_string()))
+            } else {
+                Ok(42)
+            }
+        };
+
+        let result = fast_retry_for_lock_errors(
+            MockError("database is locked".to_string()),
+            &mut api_call,
+            test_config(6),
+        );
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(count, 3, "api_call should be invoked until it succeeds");
+    }
+
+    #[test]
+    fn fast_retry_exhausts_attempts_on_persistent_lock_errors() {
+        let mut count = 0u32;
+        let mut api_call = || -> Result<(), MockError> {
+            count += 1;
+            Err(MockError(format!("database is locked (call {count})")))
+        };
+
+        let result = fast_retry_for_lock_errors(
+            MockError("database is locked (initial)".to_string()),
+            &mut api_call,
+            test_config(4),
+        );
+
+        let err = result.expect_err("all retries should fail");
+        assert_eq!(count, 4, "api_call should be invoked max_attempts times");
+        assert_eq!(
+            err.0, "database is locked (call 4)",
+            "should return the most recent error, not the initial one"
+        );
+    }
+
+    #[test]
+    fn fast_retry_stops_when_error_class_changes() {
+        let mut count = 0u32;
+        let mut api_call = || -> Result<(), MockError> {
+            count += 1;
+            if count < 3 {
+                Err(MockError("database is locked".to_string()))
+            } else {
+                Err(MockError(
+                    "error in response: status code 500: internal error".to_string(),
+                ))
+            }
+        };
+
+        let result = fast_retry_for_lock_errors(
+            MockError("database is locked".to_string()),
+            &mut api_call,
+            test_config(6),
+        );
+
+        let err = result.expect_err("non-lock error should propagate");
+        assert_eq!(count, 3, "should stop after the first non-lock error");
+        assert_eq!(err.0, "error in response: status code 500: internal error");
     }
 
     #[test]
