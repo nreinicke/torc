@@ -481,9 +481,17 @@ fn run_server(cli_config: ServerConfig) -> Result<()> {
         let max_connections = config.threads.max(2) + 2;
         let mut pool_options = SqlitePoolOptions::new().max_connections(max_connections);
         if in_memory {
-            // Shared-cache in-memory databases are destroyed when the last
-            // connection closes, so keep at least one connection alive.
-            pool_options = pool_options.min_connections(1);
+            // Shared-cache in-memory databases are destroyed the moment the
+            // connection count hits zero. `min_connections(1)` targets a
+            // floor of one connection, but sqlx's reaper closes a connection
+            // *before* opening its replacement when `idle_timeout` or
+            // `max_lifetime` fires — that brief gap is enough to wipe the
+            // database. Disable both timers so the bootstrap connection
+            // lives for the lifetime of the process.
+            pool_options = pool_options
+                .min_connections(1)
+                .idle_timeout(None)
+                .max_lifetime(None);
         }
         let pool = pool_options.connect_with(connect_options).await?;
 
