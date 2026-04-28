@@ -10,6 +10,8 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
 };
 
+use crate::models::JobStatus;
+
 use super::app::{App, DetailViewType, Focus, PopupType, WorkflowSummary};
 use super::components::HelpPopup;
 
@@ -492,21 +494,33 @@ const STATUS_LABELS: [&str; 11] = [
     "PendingFailed",
 ];
 
-/// Color for a status, indexed by `JobStatus as usize`. Mirrors the scheme
-/// used by `draw_jobs_table` so the Summary view matches.
-fn status_color_idx(idx: usize) -> Color {
-    match idx {
-        5 => Color::Green,       // Completed
-        4 => Color::Yellow,      // Running
-        6 | 10 => Color::Red,    // Failed, PendingFailed
-        7 | 8 => Color::Magenta, // Canceled, Terminated
-        2 => Color::Cyan,        // Ready
-        1 => Color::DarkGray,    // Blocked
-        3 => Color::Blue,        // Pending
-        9 => Color::DarkGray,    // Disabled
-        _ => Color::White,       // Uninitialized + fallback
+fn status_color(status: JobStatus) -> Color {
+    match status {
+        JobStatus::Completed => Color::Green,
+        JobStatus::Running => Color::Yellow,
+        JobStatus::Failed | JobStatus::PendingFailed => Color::Red,
+        JobStatus::Canceled | JobStatus::Terminated => Color::Magenta,
+        JobStatus::Ready => Color::Cyan,
+        JobStatus::Blocked | JobStatus::Disabled => Color::DarkGray,
+        JobStatus::Pending => Color::Blue,
+        JobStatus::Uninitialized => Color::White,
     }
 }
+
+/// Order of `JobStatus` variants. Indices match `JobStatus as usize`.
+const STATUS_BY_INDEX: [JobStatus; 11] = [
+    JobStatus::Uninitialized,
+    JobStatus::Blocked,
+    JobStatus::Ready,
+    JobStatus::Pending,
+    JobStatus::Running,
+    JobStatus::Completed,
+    JobStatus::Failed,
+    JobStatus::Canceled,
+    JobStatus::Terminated,
+    JobStatus::Disabled,
+    JobStatus::PendingFailed,
+];
 
 /// Compute the high-level status badge text and color for a workflow summary.
 fn summary_badge(s: &WorkflowSummary) -> (&'static str, Color) {
@@ -662,7 +676,7 @@ fn draw_summary(f: &mut Frame, area: Rect, app: &mut App) {
             let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
             let bar: String =
                 "█".repeat(filled.min(bar_width)) + &"░".repeat(bar_width.saturating_sub(filled));
-            let color = status_color_idx(idx);
+            let color = status_color(STATUS_BY_INDEX[idx]);
             Row::new(vec![
                 Cell::from(Span::styled(STATUS_LABELS[idx], Style::default().fg(color))),
                 Cell::from(count.to_string()),
@@ -713,22 +727,9 @@ fn draw_jobs_table(f: &mut Frame, area: Rect, app: &mut App) {
     let rows = app.jobs.iter().map(|job| {
         let id = job.id.map(|i| i.to_string()).unwrap_or_default();
         let name = job.name.clone();
-        let status_str = job
-            .status
-            .as_ref()
-            .map(|s| format!("{:?}", s))
-            .unwrap_or_default();
-
-        // Color the status based on its value
-        let status_color = match status_str.as_str() {
-            "Completed" => Color::Green,
-            "Running" => Color::Yellow,
-            "Failed" => Color::Red,
-            "Canceled" | "Terminated" => Color::Magenta,
-            "Ready" => Color::Cyan,
-            "Blocked" => Color::DarkGray,
-            "Pending" | "Scheduled" => Color::Blue,
-            _ => Color::White,
+        let (status_str, color) = match job.status {
+            Some(s) => (format!("{:?}", s), status_color(s)),
+            None => (String::new(), Color::White),
         };
 
         let command = job.command.clone();
@@ -736,7 +737,7 @@ fn draw_jobs_table(f: &mut Frame, area: Rect, app: &mut App) {
         Row::new(vec![
             Cell::from(id),
             Cell::from(name),
-            Cell::from(Span::styled(status_str, Style::default().fg(status_color))),
+            Cell::from(Span::styled(status_str, Style::default().fg(color))),
             Cell::from(command),
         ])
     });
