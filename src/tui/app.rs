@@ -29,6 +29,7 @@ use super::dag::{DagLayout, JobNode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DetailViewType {
+    Summary,
     Jobs,
     Files,
     Events,
@@ -161,6 +162,7 @@ pub enum PendingAction {
 impl DetailViewType {
     pub fn as_str(&self) -> &str {
         match self {
+            Self::Summary => "◆ Summary",
             Self::Jobs => "▶ Jobs",
             Self::Files => "◫ Files",
             Self::Events => "⚡ Events",
@@ -174,6 +176,7 @@ impl DetailViewType {
 
     pub fn all() -> Vec<Self> {
         vec![
+            Self::Summary,
             Self::Jobs,
             Self::Files,
             Self::Events,
@@ -187,6 +190,7 @@ impl DetailViewType {
 
     pub fn next(&self) -> Self {
         match self {
+            Self::Summary => Self::Jobs,
             Self::Jobs => Self::Files,
             Self::Files => Self::Events,
             Self::Events => Self::Results,
@@ -194,13 +198,14 @@ impl DetailViewType {
             Self::ComputeNodes => Self::ScheduledNodes,
             Self::ScheduledNodes => Self::SlurmStats,
             Self::SlurmStats => Self::Dag,
-            Self::Dag => Self::Jobs,
+            Self::Dag => Self::Summary,
         }
     }
 
     pub fn previous(&self) -> Self {
         match self {
-            Self::Jobs => Self::Dag,
+            Self::Summary => Self::Dag,
+            Self::Jobs => Self::Summary,
             Self::Files => Self::Jobs,
             Self::Events => Self::Files,
             Self::Results => Self::Events,
@@ -227,6 +232,23 @@ pub enum Focus {
 pub struct Filter {
     pub column: String,
     pub value: String,
+}
+
+/// Aggregated high-level information about a single workflow, computed from
+/// list_jobs + get_workflow + is_workflow_complete and rendered by the
+/// Summary detail view.
+#[derive(Debug, Clone)]
+pub struct WorkflowSummary {
+    pub workflow_id: i64,
+    pub workflow_name: String,
+    pub workflow_user: String,
+    pub description: Option<String>,
+    pub is_complete: bool,
+    pub is_canceled: bool,
+    pub needs_completion_script: bool,
+    pub total_jobs: usize,
+    /// Counts indexed by `JobStatus as usize` (0 = Uninitialized .. 10 = PendingFailed).
+    pub counts: [usize; 11],
 }
 
 pub struct App {
@@ -260,6 +282,7 @@ pub struct App {
     pub slurm_stats_all: Vec<SlurmStatsModel>,
     pub slurm_stats_state: TableState,
     pub dag: Option<DagLayout>,
+    pub summary: Option<WorkflowSummary>,
     pub detail_view: DetailViewType,
     pub selected_workflow_id: Option<i64>,
     pub focus: Focus,
@@ -366,7 +389,8 @@ impl App {
             slurm_stats_all: Vec::new(),
             slurm_stats_state: TableState::default(),
             dag: None,
-            detail_view: DetailViewType::Jobs,
+            summary: None,
+            detail_view: DetailViewType::Summary,
             selected_workflow_id: None,
             focus: Focus::Workflows,
             previous_focus: Focus::Workflows,
@@ -454,7 +478,7 @@ impl App {
                     DetailViewType::SlurmStats => {
                         (&mut self.slurm_stats_state, self.slurm_stats.len())
                     }
-                    DetailViewType::Dag => return, // DAG view doesn't support table navigation
+                    DetailViewType::Summary | DetailViewType::Dag => return, // No table to navigate
                 };
                 if len > 0 {
                     state.select(Some(
@@ -499,7 +523,7 @@ impl App {
                     DetailViewType::SlurmStats => {
                         (&mut self.slurm_stats_state, self.slurm_stats.len())
                     }
-                    DetailViewType::Dag => return, // DAG view doesn't support table navigation
+                    DetailViewType::Summary | DetailViewType::Dag => return, // No table to navigate
                 };
                 if len > 0 {
                     state.select(Some(
@@ -526,6 +550,34 @@ impl App {
                 self.filter = None;
 
                 match self.detail_view {
+                    DetailViewType::Summary => {
+                        // Always re-fetch: jobs_all may be cached from a
+                        // previously selected workflow, so reusing it here
+                        // would render that workflow's counts under this
+                        // workflow's header.
+                        self.jobs_all = self.client.list_jobs(workflow_id)?;
+                        self.jobs = self.jobs_all.clone();
+                        let workflow = self.client.get_workflow(workflow_id)?;
+                        let completion = self.client.is_workflow_complete(workflow_id)?;
+
+                        let mut counts = [0usize; 11];
+                        for job in &self.jobs_all {
+                            if let Some(s) = &job.status {
+                                counts[*s as usize] += 1;
+                            }
+                        }
+                        self.summary = Some(WorkflowSummary {
+                            workflow_id,
+                            workflow_name: workflow.name,
+                            workflow_user: workflow.user,
+                            description: workflow.description,
+                            is_complete: completion.is_complete,
+                            is_canceled: completion.is_canceled,
+                            needs_completion_script: completion.needs_to_run_completion_script,
+                            total_jobs: self.jobs_all.len(),
+                            counts,
+                        });
+                    }
                     DetailViewType::Jobs => {
                         self.jobs_all = self.client.list_jobs(workflow_id)?;
                         self.jobs = self.jobs_all.clone();
@@ -644,6 +696,7 @@ impl App {
 
     pub fn get_filter_columns(&self) -> Vec<&str> {
         match self.detail_view {
+            DetailViewType::Summary => vec![], // Summary view doesn't support filtering
             DetailViewType::Jobs => vec!["Status", "Name", "Command"],
             DetailViewType::Files => vec!["Name", "Path"],
             DetailViewType::Events => vec!["Event Type", "Data"],
@@ -834,8 +887,8 @@ impl App {
                     self.slurm_stats_state.select(None);
                 }
             }
-            DetailViewType::Dag => {
-                // DAG view doesn't support filtering
+            DetailViewType::Summary | DetailViewType::Dag => {
+                // Summary and DAG views don't support filtering
             }
         }
 
@@ -887,8 +940,8 @@ impl App {
                     self.slurm_stats_state.select(Some(0));
                 }
             }
-            DetailViewType::Dag => {
-                // DAG view doesn't support filtering
+            DetailViewType::Summary | DetailViewType::Dag => {
+                // Summary and DAG views don't support filtering
             }
         }
     }

@@ -7,10 +7,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
 };
 
-use super::app::{App, DetailViewType, Focus, PopupType};
+use super::app::{App, DetailViewType, Focus, PopupType, WorkflowSummary};
 use super::components::HelpPopup;
 
 /// Format a timestamp (milliseconds since epoch) as a human-readable local time string
@@ -433,14 +433,15 @@ fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
     let titles: Vec<&str> = all_types.iter().map(|t| t.as_str()).collect();
 
     let selected = match app.detail_view {
-        DetailViewType::Jobs => 0,
-        DetailViewType::Files => 1,
-        DetailViewType::Events => 2,
-        DetailViewType::Results => 3,
-        DetailViewType::ComputeNodes => 4,
-        DetailViewType::ScheduledNodes => 5,
-        DetailViewType::SlurmStats => 6,
-        DetailViewType::Dag => 7,
+        DetailViewType::Summary => 0,
+        DetailViewType::Jobs => 1,
+        DetailViewType::Files => 2,
+        DetailViewType::Events => 3,
+        DetailViewType::Results => 4,
+        DetailViewType::ComputeNodes => 5,
+        DetailViewType::ScheduledNodes => 6,
+        DetailViewType::SlurmStats => 7,
+        DetailViewType::Dag => 8,
     };
 
     let tabs = Tabs::new(titles)
@@ -464,6 +465,7 @@ fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_detail_table(f: &mut Frame, area: Rect, app: &mut App) {
     match app.detail_view {
+        DetailViewType::Summary => draw_summary(f, area, app),
         DetailViewType::Jobs => draw_jobs_table(f, area, app),
         DetailViewType::Files => draw_files_table(f, area, app),
         DetailViewType::Events => draw_events_table(f, area, app),
@@ -473,6 +475,227 @@ fn draw_detail_table(f: &mut Frame, area: Rect, app: &mut App) {
         DetailViewType::SlurmStats => draw_slurm_stats_table(f, area, app),
         DetailViewType::Dag => draw_dag(f, area, app),
     }
+}
+
+/// Status display label indexed by `JobStatus as usize`.
+const STATUS_LABELS: [&str; 11] = [
+    "Uninitialized",
+    "Blocked",
+    "Ready",
+    "Pending",
+    "Running",
+    "Completed",
+    "Failed",
+    "Canceled",
+    "Terminated",
+    "Disabled",
+    "PendingFailed",
+];
+
+/// Color for a status, indexed by `JobStatus as usize`. Mirrors the scheme
+/// used by `draw_jobs_table` so the Summary view matches.
+fn status_color_idx(idx: usize) -> Color {
+    match idx {
+        5 => Color::Green,       // Completed
+        4 => Color::Yellow,      // Running
+        6 | 10 => Color::Red,    // Failed, PendingFailed
+        7 | 8 => Color::Magenta, // Canceled, Terminated
+        2 => Color::Cyan,        // Ready
+        1 => Color::DarkGray,    // Blocked
+        3 => Color::Blue,        // Pending
+        9 => Color::DarkGray,    // Disabled
+        _ => Color::White,       // Uninitialized + fallback
+    }
+}
+
+/// Compute the high-level status badge text and color for a workflow summary.
+fn summary_badge(s: &WorkflowSummary) -> (&'static str, Color) {
+    const FAILED: usize = 6;
+    const TERMINATED: usize = 8;
+    const PENDING_FAILED: usize = 10;
+    const RUNNING: usize = 4;
+    const PENDING: usize = 3;
+
+    if s.is_canceled {
+        ("CANCELED", Color::Magenta)
+    } else if s.is_complete {
+        if s.counts[FAILED] > 0 || s.counts[TERMINATED] > 0 || s.counts[PENDING_FAILED] > 0 {
+            ("COMPLETED WITH FAILURES", Color::Red)
+        } else {
+            ("COMPLETED", Color::Green)
+        }
+    } else if s.counts[RUNNING] > 0 || s.counts[PENDING] > 0 {
+        ("RUNNING", Color::Yellow)
+    } else {
+        ("READY", Color::Cyan)
+    }
+}
+
+fn draw_summary(f: &mut Frame, area: Rect, app: &mut App) {
+    let is_focused = app.focus == Focus::Details;
+    let (title, border_style) = if is_focused {
+        (
+            Line::from(vec![
+                Span::styled("◆ ", Style::default().fg(Color::Green)),
+                Span::styled("Summary", Style::default().fg(Color::White)),
+            ]),
+            Style::default().fg(Color::Green),
+        )
+    } else {
+        (
+            Line::from(vec![
+                Span::styled("◆ ", Style::default().fg(Color::Cyan)),
+                Span::styled("Summary", Style::default().fg(Color::White)),
+            ]),
+            Style::default().fg(Color::DarkGray),
+        )
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border_style);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let Some(summary) = app.summary.clone() else {
+        let p = Paragraph::new(Line::from(Span::styled(
+            "Loading summary…",
+            Style::default().fg(Color::DarkGray),
+        )));
+        f.render_widget(p, inner);
+        return;
+    };
+
+    // Vertical layout: header (3) | progress line (1) | status table (flex) | description (3)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(3),
+        ])
+        .split(inner);
+
+    // --- Header: name / id / user / badge ---
+    let (badge_text, badge_color) = summary_badge(&summary);
+    let mut badge_suffix = String::new();
+    if summary.needs_completion_script {
+        badge_suffix.push_str(" (completion script pending)");
+    }
+
+    let header_lines = vec![
+        Line::from(vec![
+            Span::styled(
+                summary.workflow_name.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  #{}  ", summary.workflow_id),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("user: {}", summary.workflow_user),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                badge_text,
+                Style::default()
+                    .fg(badge_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(badge_suffix, Style::default().fg(Color::DarkGray)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(header_lines), chunks[0]);
+
+    // --- Progress line ---
+    let completed = summary.counts[5]; // Completed
+    let progress_ratio = if summary.total_jobs == 0 {
+        0.0
+    } else {
+        completed as f64 / summary.total_jobs as f64
+    };
+    let progress_line = Line::from(vec![
+        Span::styled("Progress: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(
+                "{} / {} jobs ({:.1}%)",
+                completed,
+                summary.total_jobs,
+                progress_ratio * 100.0
+            ),
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(progress_line), chunks[1]);
+
+    // --- Per-status counts table (skip rows with count 0) ---
+    let header_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let header = Row::new(vec!["Status", "Count", "Share"])
+        .style(header_style)
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = summary
+        .counts
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c > 0)
+        .map(|(idx, count)| {
+            let pct = if summary.total_jobs == 0 {
+                0.0
+            } else {
+                (*count as f64 / summary.total_jobs as f64) * 100.0
+            };
+            let bar_width = 20usize;
+            let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+            let bar: String =
+                "█".repeat(filled.min(bar_width)) + &"░".repeat(bar_width.saturating_sub(filled));
+            let color = status_color_idx(idx);
+            Row::new(vec![
+                Cell::from(Span::styled(STATUS_LABELS[idx], Style::default().fg(color))),
+                Cell::from(count.to_string()),
+                Cell::from(Span::styled(
+                    format!("{}  {:>5.1}%", bar, pct),
+                    Style::default().fg(color),
+                )),
+            ])
+        })
+        .collect();
+
+    let counts_table = Table::new(
+        rows,
+        [
+            Constraint::Length(16),
+            Constraint::Length(8),
+            Constraint::Percentage(100),
+        ],
+    )
+    .header(header);
+    f.render_widget(counts_table, chunks[2]);
+
+    // --- Description (optional) ---
+    let desc_text = summary.description.unwrap_or_else(|| "—".to_string());
+    let desc = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "Description",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(desc_text, Style::default().fg(Color::White))),
+    ])
+    .wrap(Wrap { trim: true });
+    f.render_widget(desc, chunks[3]);
 }
 
 fn draw_jobs_table(f: &mut Frame, area: Rect, app: &mut App) {
