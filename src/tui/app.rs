@@ -260,6 +260,7 @@ pub struct App {
     pub workflows_state: TableState,
     pub jobs: Vec<JobModel>,
     pub jobs_all: Vec<JobModel>,
+    pub jobs_workflow_id: Option<i64>,
     pub jobs_state: TableState,
     pub files: Vec<FileModel>,
     pub files_all: Vec<FileModel>,
@@ -367,6 +368,7 @@ impl App {
             workflows_state: TableState::default(),
             jobs: Vec::new(),
             jobs_all: Vec::new(),
+            jobs_workflow_id: None,
             jobs_state: TableState::default(),
             files: Vec::new(),
             files_all: Vec::new(),
@@ -551,11 +553,10 @@ impl App {
 
                 match self.detail_view {
                     DetailViewType::Summary => {
-                        // Always re-fetch: jobs_all may be cached from a
-                        // previously selected workflow, so reusing it here
-                        // would render that workflow's counts under this
-                        // workflow's header.
-                        self.jobs_all = self.client.list_jobs(workflow_id)?;
+                        if self.jobs_workflow_id != Some(workflow_id) {
+                            self.jobs_all = self.client.list_jobs(workflow_id)?;
+                            self.jobs_workflow_id = Some(workflow_id);
+                        }
                         self.jobs = self.jobs_all.clone();
                         let workflow = self.client.get_workflow(workflow_id)?;
                         let completion = self.client.is_workflow_complete(workflow_id)?;
@@ -580,6 +581,7 @@ impl App {
                     }
                     DetailViewType::Jobs => {
                         self.jobs_all = self.client.list_jobs(workflow_id)?;
+                        self.jobs_workflow_id = Some(workflow_id);
                         self.jobs = self.jobs_all.clone();
                         if !self.jobs.is_empty() {
                             self.jobs_state.select(Some(0));
@@ -639,12 +641,11 @@ impl App {
                         self.rebuild_exec_time_map();
                     }
                     DetailViewType::Dag => {
-                        // Load jobs if not already loaded
-                        if self.jobs_all.is_empty() {
+                        if self.jobs_workflow_id != Some(workflow_id) {
                             self.jobs_all = self.client.list_jobs(workflow_id)?;
+                            self.jobs_workflow_id = Some(workflow_id);
                             self.jobs = self.jobs_all.clone();
                         }
-                        // Build the DAG
                         self.build_dag_from_jobs();
                     }
                 }
@@ -684,6 +685,12 @@ impl App {
     }
 
     pub fn start_filter(&mut self) {
+        if self.get_filter_columns().is_empty() {
+            self.set_status(StatusMessage::info(
+                "Filtering is not supported in this view",
+            ));
+            return;
+        }
         self.focus = Focus::FilterInput;
         self.filter_input.clear();
         self.filter_column_index = 0;
@@ -710,11 +717,19 @@ impl App {
 
     pub fn next_filter_column(&mut self) {
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.filter_column_index = 0;
+            return;
+        }
         self.filter_column_index = (self.filter_column_index + 1) % columns.len();
     }
 
     pub fn prev_filter_column(&mut self) {
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.filter_column_index = 0;
+            return;
+        }
         if self.filter_column_index == 0 {
             self.filter_column_index = columns.len() - 1;
         } else {
@@ -738,6 +753,10 @@ impl App {
         }
 
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.focus = Focus::Details;
+            return;
+        }
         let column = columns[self.filter_column_index].to_string();
         let value = self.filter_input.clone().to_lowercase();
 
@@ -1120,6 +1139,7 @@ impl App {
                 // Refresh jobs for the current workflow
                 if let Ok(jobs) = self.client.list_jobs(workflow_id) {
                     self.jobs_all = jobs.clone();
+                    self.jobs_workflow_id = Some(workflow_id);
                     self.jobs = jobs;
                     if !self.jobs.is_empty() {
                         self.jobs_state.select(Some(0));

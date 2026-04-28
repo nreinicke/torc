@@ -558,7 +558,7 @@ fn draw_summary(f: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let Some(summary) = app.summary.clone() else {
+    let Some(summary) = app.summary.as_ref() else {
         let p = Paragraph::new(Line::from(Span::styled(
             "Loading summary…",
             Style::default().fg(Color::DarkGray),
@@ -580,7 +580,7 @@ fn draw_summary(f: &mut Frame, area: Rect, app: &mut App) {
         .split(inner);
 
     // --- Header: name / id / user / badge ---
-    let (badge_text, badge_color) = summary_badge(&summary);
+    let (badge_text, badge_color) = summary_badge(summary);
     let mut badge_suffix = String::new();
     if summary.needs_completion_script {
         badge_suffix.push_str(" (completion script pending)");
@@ -686,7 +686,7 @@ fn draw_summary(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(counts_table, chunks[2]);
 
     // --- Description (optional) ---
-    let desc_text = summary.description.unwrap_or_else(|| "—".to_string());
+    let desc_text = summary.description.as_deref().unwrap_or("—");
     let desc = Paragraph::new(vec![
         Line::from(Span::styled(
             "Description",
