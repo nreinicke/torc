@@ -29,6 +29,7 @@ use super::dag::{DagLayout, JobNode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DetailViewType {
+    Summary,
     Jobs,
     Files,
     Events,
@@ -161,6 +162,7 @@ pub enum PendingAction {
 impl DetailViewType {
     pub fn as_str(&self) -> &str {
         match self {
+            Self::Summary => "◆ Summary",
             Self::Jobs => "▶ Jobs",
             Self::Files => "◫ Files",
             Self::Events => "⚡ Events",
@@ -174,6 +176,7 @@ impl DetailViewType {
 
     pub fn all() -> Vec<Self> {
         vec![
+            Self::Summary,
             Self::Jobs,
             Self::Files,
             Self::Events,
@@ -187,6 +190,7 @@ impl DetailViewType {
 
     pub fn next(&self) -> Self {
         match self {
+            Self::Summary => Self::Jobs,
             Self::Jobs => Self::Files,
             Self::Files => Self::Events,
             Self::Events => Self::Results,
@@ -194,13 +198,14 @@ impl DetailViewType {
             Self::ComputeNodes => Self::ScheduledNodes,
             Self::ScheduledNodes => Self::SlurmStats,
             Self::SlurmStats => Self::Dag,
-            Self::Dag => Self::Jobs,
+            Self::Dag => Self::Summary,
         }
     }
 
     pub fn previous(&self) -> Self {
         match self {
-            Self::Jobs => Self::Dag,
+            Self::Summary => Self::Dag,
+            Self::Jobs => Self::Summary,
             Self::Files => Self::Jobs,
             Self::Events => Self::Files,
             Self::Results => Self::Events,
@@ -229,6 +234,23 @@ pub struct Filter {
     pub value: String,
 }
 
+/// Aggregated high-level information about a single workflow, computed from
+/// list_jobs + get_workflow + is_workflow_complete and rendered by the
+/// Summary detail view.
+#[derive(Debug, Clone)]
+pub struct WorkflowSummary {
+    pub workflow_id: i64,
+    pub workflow_name: String,
+    pub workflow_user: String,
+    pub description: Option<String>,
+    pub is_complete: bool,
+    pub is_canceled: bool,
+    pub needs_completion_script: bool,
+    pub total_jobs: usize,
+    /// Counts indexed by `JobStatus as usize` (0 = Uninitialized .. 10 = PendingFailed).
+    pub counts: [usize; 11],
+}
+
 pub struct App {
     pub client: TorcClient,
     pub server_url: String,
@@ -238,6 +260,7 @@ pub struct App {
     pub workflows_state: TableState,
     pub jobs: Vec<JobModel>,
     pub jobs_all: Vec<JobModel>,
+    pub jobs_workflow_id: Option<i64>,
     pub jobs_state: TableState,
     pub files: Vec<FileModel>,
     pub files_all: Vec<FileModel>,
@@ -260,6 +283,7 @@ pub struct App {
     pub slurm_stats_all: Vec<SlurmStatsModel>,
     pub slurm_stats_state: TableState,
     pub dag: Option<DagLayout>,
+    pub summary: Option<WorkflowSummary>,
     pub detail_view: DetailViewType,
     pub selected_workflow_id: Option<i64>,
     pub focus: Focus,
@@ -344,6 +368,7 @@ impl App {
             workflows_state: TableState::default(),
             jobs: Vec::new(),
             jobs_all: Vec::new(),
+            jobs_workflow_id: None,
             jobs_state: TableState::default(),
             files: Vec::new(),
             files_all: Vec::new(),
@@ -366,7 +391,8 @@ impl App {
             slurm_stats_all: Vec::new(),
             slurm_stats_state: TableState::default(),
             dag: None,
-            detail_view: DetailViewType::Jobs,
+            summary: None,
+            detail_view: DetailViewType::Summary,
             selected_workflow_id: None,
             focus: Focus::Workflows,
             previous_focus: Focus::Workflows,
@@ -454,7 +480,7 @@ impl App {
                     DetailViewType::SlurmStats => {
                         (&mut self.slurm_stats_state, self.slurm_stats.len())
                     }
-                    DetailViewType::Dag => return, // DAG view doesn't support table navigation
+                    DetailViewType::Summary | DetailViewType::Dag => return, // No table to navigate
                 };
                 if len > 0 {
                     state.select(Some(
@@ -499,7 +525,7 @@ impl App {
                     DetailViewType::SlurmStats => {
                         (&mut self.slurm_stats_state, self.slurm_stats.len())
                     }
-                    DetailViewType::Dag => return, // DAG view doesn't support table navigation
+                    DetailViewType::Summary | DetailViewType::Dag => return, // No table to navigate
                 };
                 if len > 0 {
                     state.select(Some(
@@ -526,8 +552,36 @@ impl App {
                 self.filter = None;
 
                 match self.detail_view {
+                    DetailViewType::Summary => {
+                        if self.jobs_workflow_id != Some(workflow_id) {
+                            self.jobs_all = self.client.list_jobs(workflow_id)?;
+                            self.jobs_workflow_id = Some(workflow_id);
+                        }
+                        self.jobs = self.jobs_all.clone();
+                        let workflow = self.client.get_workflow(workflow_id)?;
+                        let completion = self.client.is_workflow_complete(workflow_id)?;
+
+                        let mut counts = [0usize; 11];
+                        for job in &self.jobs_all {
+                            if let Some(s) = &job.status {
+                                counts[*s as usize] += 1;
+                            }
+                        }
+                        self.summary = Some(WorkflowSummary {
+                            workflow_id,
+                            workflow_name: workflow.name,
+                            workflow_user: workflow.user,
+                            description: workflow.description,
+                            is_complete: completion.is_complete,
+                            is_canceled: completion.is_canceled,
+                            needs_completion_script: completion.needs_to_run_completion_script,
+                            total_jobs: self.jobs_all.len(),
+                            counts,
+                        });
+                    }
                     DetailViewType::Jobs => {
                         self.jobs_all = self.client.list_jobs(workflow_id)?;
+                        self.jobs_workflow_id = Some(workflow_id);
                         self.jobs = self.jobs_all.clone();
                         if !self.jobs.is_empty() {
                             self.jobs_state.select(Some(0));
@@ -587,12 +641,11 @@ impl App {
                         self.rebuild_exec_time_map();
                     }
                     DetailViewType::Dag => {
-                        // Load jobs if not already loaded
-                        if self.jobs_all.is_empty() {
+                        if self.jobs_workflow_id != Some(workflow_id) {
                             self.jobs_all = self.client.list_jobs(workflow_id)?;
+                            self.jobs_workflow_id = Some(workflow_id);
                             self.jobs = self.jobs_all.clone();
                         }
-                        // Build the DAG
                         self.build_dag_from_jobs();
                     }
                 }
@@ -632,6 +685,12 @@ impl App {
     }
 
     pub fn start_filter(&mut self) {
+        if self.get_filter_columns().is_empty() {
+            self.set_status(StatusMessage::info(
+                "Filtering is not supported in this view",
+            ));
+            return;
+        }
         self.focus = Focus::FilterInput;
         self.filter_input.clear();
         self.filter_column_index = 0;
@@ -644,6 +703,7 @@ impl App {
 
     pub fn get_filter_columns(&self) -> Vec<&str> {
         match self.detail_view {
+            DetailViewType::Summary => vec![], // Summary view doesn't support filtering
             DetailViewType::Jobs => vec!["Status", "Name", "Command"],
             DetailViewType::Files => vec!["Name", "Path"],
             DetailViewType::Events => vec!["Event Type", "Data"],
@@ -657,11 +717,19 @@ impl App {
 
     pub fn next_filter_column(&mut self) {
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.filter_column_index = 0;
+            return;
+        }
         self.filter_column_index = (self.filter_column_index + 1) % columns.len();
     }
 
     pub fn prev_filter_column(&mut self) {
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.filter_column_index = 0;
+            return;
+        }
         if self.filter_column_index == 0 {
             self.filter_column_index = columns.len() - 1;
         } else {
@@ -685,6 +753,10 @@ impl App {
         }
 
         let columns = self.get_filter_columns();
+        if columns.is_empty() {
+            self.focus = Focus::Details;
+            return;
+        }
         let column = columns[self.filter_column_index].to_string();
         let value = self.filter_input.clone().to_lowercase();
 
@@ -834,8 +906,8 @@ impl App {
                     self.slurm_stats_state.select(None);
                 }
             }
-            DetailViewType::Dag => {
-                // DAG view doesn't support filtering
+            DetailViewType::Summary | DetailViewType::Dag => {
+                // Summary and DAG views don't support filtering
             }
         }
 
@@ -887,8 +959,8 @@ impl App {
                     self.slurm_stats_state.select(Some(0));
                 }
             }
-            DetailViewType::Dag => {
-                // DAG view doesn't support filtering
+            DetailViewType::Summary | DetailViewType::Dag => {
+                // Summary and DAG views don't support filtering
             }
         }
     }
@@ -1067,6 +1139,7 @@ impl App {
                 // Refresh jobs for the current workflow
                 if let Ok(jobs) = self.client.list_jobs(workflow_id) {
                     self.jobs_all = jobs.clone();
+                    self.jobs_workflow_id = Some(workflow_id);
                     self.jobs = jobs;
                     if !self.jobs.is_empty() {
                         self.jobs_state.select(Some(0));
